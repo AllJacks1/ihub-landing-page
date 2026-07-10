@@ -1,3 +1,4 @@
+import FoodDrinksSection from "@/components/sections/FoodDrinksSection";
 import Hero from "@/components/sections/HeroSection";
 import ILoungeSection from "@/components/sections/ILoungeSection";
 import OffersSection from "@/components/sections/OffersSection";
@@ -12,6 +13,7 @@ export default function Home() {
       <WhySection/>
       <ILoungeSection/>
       <OffersSection/>
+      <FoodDrinksSection/>
     </div>
   );
 }
