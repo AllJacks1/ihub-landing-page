@@ -1,3 +1,4 @@
+import CTASection from "@/components/sections/CTASection";
 import EventsSection from "@/components/sections/EventsSection";
 import FoodDrinksSection from "@/components/sections/FoodDrinksSection";
 import Hero from "@/components/sections/HeroSection";
@@ -16,6 +17,7 @@ export default function Home() {
       <FoodDrinksSection />
       <EventsSection />
       <LocationSection />
+      <CTASection />
     </div>
   );
 }
