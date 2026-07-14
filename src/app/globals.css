@@ -128,3 +128,18 @@
     @apply font-sans;
   }
 }
+@layer utilities {
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Enable horizontal scroll with mouse wheel on desktop */
+  .scroll-x {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+}
