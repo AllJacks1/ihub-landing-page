@@ -1,11 +1,11 @@
 import CTASection from "@/components/sections/CTASection";
 import EventsSection from "@/components/sections/EventsSection";
 import FoodDrinksSection from "@/components/sections/FoodDrinksSection";
-import GallerySection from "@/components/sections/GallerySection";
 import Hero from "@/components/sections/HeroSection";
 import ILoungeSection from "@/components/sections/ILoungeSection";
 import LocationSection from "@/components/sections/LocationSection";
 import OffersSection from "@/components/sections/OffersSection";
+import VirtualTourSection from "@/components/sections/VirtualTourSection";
 import WhySection from "@/components/sections/WhySection";
 
 export default function Home() {
@@ -14,7 +14,7 @@ export default function Home() {
       <Hero />
       <WhySection />
       <ILoungeSection />
-      <GallerySection/>
+      <VirtualTourSection />
       <OffersSection />
       <FoodDrinksSection />
       <EventsSection />
