@@ -130,7 +130,7 @@ const drinkSubCategories = [
 const menuData: Record<string, MenuItem[]> = {
   bowls: [
     {
-      name: "Teriyaki Chicken Bowl",
+      name: "Chicken Teriyaki Bowl",
       description:
         "Grilled chicken thigh glazed with teriyaki, served over steamed rice with sautéed vegetables and sesame seeds.",
       variants: [
@@ -141,7 +141,7 @@ const menuData: Record<string, MenuItem[]> = {
       isPopular: true,
     },
     {
-      name: "Beef Bulgogi Bowl",
+      name: "Chicken Curry Bowl",
       description:
         "Korean-style marinated beef with kimchi, pickled radish, and a sunny-side-up egg.",
       variants: [
@@ -152,12 +152,36 @@ const menuData: Record<string, MenuItem[]> = {
       isNew: true,
     },
     {
-      name: "Salmon Poke Bowl",
+      name: "Pork Adobo Bowl",
       description:
         "Fresh salmon cubes, avocado, edamame, cucumber, and sesame over sushi rice.",
       price: "₱380",
       image: "/images/menu/poke-bowl.jpg",
       isPopular: true,
+    },
+    
+    {
+      name: "Pork Tonkatsu Bowl",
+      description:
+        "Korean-style marinated beef with kimchi, pickled radish, and a sunny-side-up egg.",
+      variants: [
+        { name: "Solo", price: "₱320" },
+        { name: "Plate", price: "₱390" },
+      ],
+      image: "/images/menu/bulgogi-bowl.jpg",
+      isNew: true,
+    },
+    
+    {
+      name: "Chopsuey Rice Bowl",
+      description:
+        "Korean-style marinated beef with kimchi, pickled radish, and a sunny-side-up egg.",
+      variants: [
+        { name: "Solo", price: "₱320" },
+        { name: "Plate", price: "₱390" },
+      ],
+      image: "/images/menu/bulgogi-bowl.jpg",
+      isNew: true,
     },
   ],
   silog: [

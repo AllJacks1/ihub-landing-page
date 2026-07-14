@@ -35,7 +35,9 @@ export default function Navbar() {
                 Home
               </Link>
               <Link
-                href="/menu"
+                href="https://online.fliphtml5.com/mtvla/uhye/"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="nav-link hover:text-[#F36509] transition-colors"
               >
                 Menu
@@ -123,14 +125,16 @@ export default function Navbar() {
                 Home
               </Link>
               <Link
-                href="/menu"
+                href="https://online.fliphtml5.com/mtvla/uhye/"
+                target="_blank"
+                rel="noopener noreferrer"
                 onClick={() => setIsOpen(false)}
                 className="hover:text-[#F36509]"
               >
                 Menu
               </Link>
               <Link
-                href="/bistro"
+                href=""
                 onClick={() => setIsOpen(false)}
                 className="hover:text-[#F36509]"
               >
@@ -156,12 +160,13 @@ export default function Navbar() {
                 className="hover:text-[#F36509]"
               >
                 About Us
-              </Link><Link
+              </Link>
+              <Link
                 href="/blogs"
                 onClick={() => setIsOpen(false)}
                 className="hover:text-[#F36509]"
               >
-                Blogs               
+                Blogs
               </Link>
               <Link
                 href="/faqs"
