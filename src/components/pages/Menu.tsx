@@ -186,7 +186,7 @@ const menuData: Record<string, MenuItem[]> = {
   ],
   silog: [
     {
-      name: "Tapsilog",
+      name: "Spamsilog",
       description:
         "Filipino-style cured beef tapa with garlic fried rice and egg. A breakfast classic.",
       variants: [
@@ -197,7 +197,7 @@ const menuData: Record<string, MenuItem[]> = {
       isPopular: true,
     },
     {
-      name: "Bangsilog",
+      name: "Tocinolog",
       description:
         "Crispy fried bangus (milkfish) with sinangag and fried egg.",
       variants: [
@@ -207,7 +207,25 @@ const menuData: Record<string, MenuItem[]> = {
       image: "/images/menu/bangsilog.jpg",
     },
     {
-      name: "Chicksilog",
+      name: "Bangsilog",
+      description: "Crispy fried chicken fillet with garlic rice and egg.",
+      variants: [
+        { name: "Solo", price: "₱240" },
+        { name: "Platter", price: "₱380" },
+      ],
+      image: "/images/menu/chicksilog.jpg",
+    },
+    {
+      name: "Tapsilog",
+      description: "Crispy fried chicken fillet with garlic rice and egg.",
+      variants: [
+        { name: "Solo", price: "₱240" },
+        { name: "Platter", price: "₱380" },
+      ],
+      image: "/images/menu/chicksilog.jpg",
+    },
+    {
+      name: "Pork Sisig Silog",
       description: "Crispy fried chicken fillet with garlic rice and egg.",
       variants: [
         { name: "Solo", price: "₱240" },
