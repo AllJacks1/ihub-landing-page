@@ -33,7 +33,6 @@ const features = [
 export default function ILoungeSection() {
   return (
     <section className="relative overflow-hidden bg-stone-50 px-6 py-24">
-
       <div className="relative mx-auto grid max-w-6xl items-center gap-16 md:grid-cols-2">
         {/* Content */}
         <div className="order-2 md:order-1">
@@ -68,7 +67,10 @@ export default function ILoungeSection() {
             size="lg"
             className="h-14 rounded-full bg-[#F36509] px-10 text-lg font-semibold text-white shadow-lg shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00] hover:shadow-xl hover:shadow-orange-500/30"
           >
-            <Link href="/reserve" className="inline-flex items-center gap-2">
+            <Link
+              href="/booking?type=bistro"
+              className="inline-flex items-center gap-2"
+            >
               Visit iLounge Now
               <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
             </Link>

@@ -1,3 +1,4 @@
+"use client";
 import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import {
   Star,
   UtensilsCrossed,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 const highlights = [
   {
@@ -39,6 +41,8 @@ const highlights = [
 ];
 
 export default function BistroPage() {
+  const router = useRouter();
+
   return (
     <main className="min-h-screen bg-stone-50">
       {/* Hero */}
@@ -68,31 +72,28 @@ export default function BistroPage() {
             fuel your work, study, and celebrations.
           </p>
 
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <div className="flex flex-col items-center justify-center gap-4 sm:flex-row pt-10">
             <Button
               size="lg"
-              className="h-14 rounded-full bg-[#F36509] px-10 text-base font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00]"
+              className="cursor-pointer h-14 rounded-full bg-[#F36509] px-10 text-base font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00]"
+              onClick={() => router.push("/booking?type=bistro")}
             >
-              <Link
-                href="/reserve/table"
-                className="inline-flex items-center gap-2"
-              >
-                Reserve a Table
-                <ArrowRight className="h-5 w-5" />
-              </Link>
+              Reserve a Table
+              <ArrowRight className="h-5 w-5" />
             </Button>
+
             <Button
               variant="outline"
               size="lg"
-              className="h-14 rounded-full border-2 border-white/30 bg-white/10 px-10 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white hover:bg-white/20"
+              className="cursor-pointer h-14 rounded-full border-2 border-white/20 bg-white/10 px-10 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white hover:bg-white/20"
+              onClick={() =>
+                window.open(
+                  "https://online.fliphtml5.com/mtvla/uhye/",
+                  "_blank",
+                )
+              }
             >
-              <Link
-                href="https://online.fliphtml5.com/mtvla/uhye/"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                View Full Menu
-              </Link>
+              Full Menu
             </Button>
           </div>
         </div>
@@ -133,7 +134,7 @@ export default function BistroPage() {
                 className="h-14 rounded-full bg-[#F36509] px-8 text-base font-semibold text-white shadow-lg shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00]"
               >
                 <Link
-                  href="/reserve/table"
+                  href="/booking?type=bistro"
                   className="inline-flex items-center gap-2"
                 >
                   <UtensilsCrossed className="h-5 w-5" />
@@ -301,27 +302,24 @@ export default function BistroPage() {
             <Button
               size="lg"
               className="h-14 rounded-full bg-[#F36509] px-10 text-base font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00]"
+              onClick={() => router.push("/booking?type=bistro")}
             >
-              <Link
-                href="/reserve/table"
-                className="inline-flex items-center gap-2"
-              >
-                Reserve a Table
-                <ArrowRight className="h-5 w-5" />
-              </Link>
+              Reserve a Table
+              <ArrowRight className="h-5 w-5" />
             </Button>
+
             <Button
               variant="outline"
               size="lg"
-              className="h-14 rounded-full border-2 border-white/20 px-10 text-base font-semibold text-mist-900 transition-all hover:-translate-y-0.5 hover:border-white hover:bg-white/30"
+              className="h-14 rounded-full border-2 border-white/20 bg-white/10 px-10 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white hover:bg-white/20"
+              onClick={() =>
+                window.open(
+                  "https://online.fliphtml5.com/mtvla/uhye/",
+                  "_blank",
+                )
+              }
             >
-              <Link
-                href="https://online.fliphtml5.com/mtvla/uhye/"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Full Menu
-              </Link>
+              Full Menu
             </Button>
           </div>
         </div>

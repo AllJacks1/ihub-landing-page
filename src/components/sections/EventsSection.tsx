@@ -53,7 +53,7 @@ export default function EventsSection() {
           {events.map((event) => (
             <Card
               key={event.title}
-              className={`group cursor-pointer overflow-hidden border-0 bg-white shadow-sm transition-all duration-300 hover:-translate-y-2 hover:shadow-xl ${
+              className={`group overflow-hidden border-0 bg-white shadow-sm transition-all duration-300 hover:-translate-y-2 hover:shadow-xl ${
                 event.featured
                   ? "ring-2 ring-[#F36509]/20 hover:ring-[#F36509]/40"
                   : ""

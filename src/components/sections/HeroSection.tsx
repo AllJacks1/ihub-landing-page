@@ -34,14 +34,14 @@ export default function Hero() {
 
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Link
-            href="/reserve/table"
+            href="/booking?type=bistro"
             className="px-10 py-4 bg-[#F36509] hover:bg-[#e05a00] text-white text-lg font-semibold rounded-full transition-all active:scale-95 shadow-xl"
           >
             Reserve a Table
           </Link>
 
           <Link
-            href="/reserve/conference"
+            href="/booking?type=conference"
             className="px-10 py-4 border-2 border-white text-white hover:bg-white hover:text-black text-lg font-semibold rounded-full transition-all active:scale-95"
           >
             Book Conference Room

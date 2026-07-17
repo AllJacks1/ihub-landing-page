@@ -40,7 +40,7 @@ export default function CTASection() {
             className="h-16 rounded-full bg-white px-12 text-lg font-bold text-[#F36509] shadow-2xl shadow-black/20 transition-all hover:-translate-y-1 hover:bg-white/10 hover:shadow-black/30 hover:text-white"
           >
             <Link
-              href="/reserve/table"
+              href="/booking?type=bistro"
               className="inline-flex items-center gap-2"
             >
               Reserve a Table
@@ -53,7 +53,7 @@ export default function CTASection() {
             size="lg"
             className="h-16 rounded-full border-2 border-white/40 bg-white/10 px-12 text-lg font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white hover:bg-white"
           >
-            <Link href="/reserve/conference">Book a Space</Link>
+            <Link href="/booking?type=conference">Book a Space</Link>
           </Button>
         </div>
       </div>

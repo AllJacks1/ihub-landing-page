@@ -89,13 +89,13 @@ export default function Navbar() {
             {/* Desktop CTAs */}
             <div className="hidden md:flex items-center gap-4">
               <Link
-                href="/reserve/table"
+                href="/booking?type=bistro"
                 className="px-6 py-2.5 text-sm font-semibold border-2 border-[#F36509] text-[#F36509] rounded-full hover:bg-[#F36509] hover:text-white transition-all active:scale-95"
               >
                 Table Reservation
               </Link>
               <Link
-                href="/reserve/conference"
+                href="/booking?type=conference"
                 className="px-6 py-2.5 text-sm font-semibold bg-[#F36509] text-white rounded-full hover:bg-[#d94f00] transition-all active:scale-95"
               >
                 Conference Room
@@ -185,14 +185,14 @@ export default function Navbar() {
 
               <div className="pt-6 border-t flex flex-col gap-4">
                 <Link
-                  href="/reserve/table"
+                  href="/booking?type=bistro"
                   onClick={() => setIsOpen(false)}
                   className="text-center py-4 border-2 border-[#F36509] text-[#F36509] rounded-full font-semibold hover:bg-[#F36509] hover:text-white"
                 >
                   Table Reservation
                 </Link>
                 <Link
-                  href="/reserve/conference"
+                  href="/booking?type=conference"
                   onClick={() => setIsOpen(false)}
                   className="text-center py-4 bg-[#F36509] text-white rounded-full font-semibold hover:bg-[#d94f00]"
                 >

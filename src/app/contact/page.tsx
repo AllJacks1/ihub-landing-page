@@ -44,23 +44,32 @@ export default function ContactPage() {
   return (
     <main className="min-h-screen bg-stone-50">
       {/* Hero */}
-      <section className="relative flex min-h-[600px] items-center justify-center overflow-hidden bg-white">
-        <div className="pointer-events-none absolute -left-40 -top-40 h-96 w-96 rounded-full bg-orange-50 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-20 -right-20 h-80 w-80 rounded-full bg-amber-50 blur-3xl" />
+      <section className="relative flex min-h-[600px] items-center justify-center overflow-hidden">
+        {/* Background Image */}
+        <Image
+          src="/images/contact_header.png"
+          alt="iHub Contact"
+          fill
+          className="object-cover"
+          priority
+        />
+
+        {/* Dark overlay for text readability */}
+        <div className="absolute inset-0 bg-stone-900/70" />
 
         <div className="relative z-10 mx-auto max-w-3xl px-6 text-center">
           <Badge
             variant="outline"
-            className="mb-6 border-stone-300 px-4 py-1.5 text-xs font-bold tracking-widest text-stone-500"
+            className="mb-6 border-white/30 px-4 py-1.5 text-xs font-bold tracking-widest text-white/70"
           >
             CONTACT
           </Badge>
 
-          <h1 className="mb-6 font-serif text-6xl font-semibold tracking-tighter text-stone-900 md:text-7xl">
+          <h1 className="mb-6 font-serif text-6xl font-semibold tracking-tighter text-white md:text-7xl">
             Get In Touch
           </h1>
 
-          <p className="mx-auto max-w-xl text-xl leading-relaxed text-stone-500">
+          <p className="mx-auto max-w-xl text-xl leading-relaxed text-white/80">
             We&apos;d love to hear from you. Drop by, send us a message, or give
             us a call.
           </p>
@@ -216,18 +225,19 @@ export default function ContactPage() {
 
             {/* CTA */}
             <div className="pt-4 text-center">
-              <Button
-                size="lg"
-                className="h-14 w-full rounded-full bg-[#F36509] text-base font-semibold text-white shadow-lg shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00]"
+              <Link
+                href="/booking"
+                className="inline-flex items-center justify-center gap-2"
               >
-                <Link
-                  href="/reserve"
-                  className="inline-flex items-center justify-center gap-2"
+                {" "}
+                <Button
+                  size="lg"
+                  className="cursor-pointer h-14 w-full rounded-full bg-[#F36509] text-base font-semibold text-white shadow-lg shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00] px-45"
                 >
                   Reserve Your Space
                   <ArrowRight className="h-5 w-5" />
-                </Link>
-              </Button>
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
