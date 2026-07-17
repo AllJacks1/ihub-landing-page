@@ -25,7 +25,9 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import Image from "next/image";
+import { submitBooking } from "../actions/booking";
 
 type BookingType = "coworking" | "conference" | "bistro";
 
@@ -79,26 +81,78 @@ const validTypes: BookingType[] = ["coworking", "conference", "bistro"];
 
 export default function BookingPage() {
   const searchParams = useSearchParams();
+
   const [activeTab, setActiveTab] = useState<BookingType>("coworking");
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [formData, setFormData] = useState({
+    type: "coworking",
+    name: "",
+    email: "",
+    phone: "",
+    date: "",
+    time: "",
+    pax: 1,
+    room: "",
+    tableType: "",
+    notes: "",
+  });
 
   useEffect(() => {
     const typeFromUrl = searchParams.get("type") as BookingType;
     if (typeFromUrl && validTypes.includes(typeFromUrl)) {
       setActiveTab(typeFromUrl);
+      setFormData((prev) => ({ ...prev, type: typeFromUrl }));
     }
-    setIsLoaded(true);
   }, [searchParams]);
 
-  if (!isLoaded) {
-    return (
-      <main className="min-h-screen bg-stone-50">
-        <div className="flex h-screen items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#F36509] border-t-transparent" />
-        </div>
-      </main>
-    );
-  }
+  const handleChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >,
+  ) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    const result = await submitBooking({
+      ...formData,
+      pax: Number(formData.pax),
+      type: activeTab,
+    });
+
+    if (result.success) {
+      toast.success("Reservation Request Sent Successfully!", {
+        description:
+          "We'll contact you shortly to confirm and send payment details.",
+        duration: 7000,
+      });
+      // Reset form
+      setFormData({
+        type: activeTab,
+        name: "",
+        email: "",
+        phone: "",
+        date: "",
+        time: "",
+        pax: 1,
+        room: "",
+        tableType: "",
+        notes: "",
+      });
+    } else {
+      toast.error("Failed to Submit Reservation", {
+        description:
+          result.message || "Please try again or call us at 0985 571 3768",
+      });
+    }
+
+    setIsSubmitting(false);
+  };
 
   return (
     <main className="min-h-screen bg-stone-50">
@@ -165,7 +219,7 @@ export default function BookingPage() {
             {/* Form Card */}
             <Card className="border-stone-200 bg-white shadow-lg">
               <CardContent className="p-8 md:p-12">
-                <form className="space-y-10">
+                <form onSubmit={handleSubmit} className="space-y-10">
                   {/* Tab Headers */}
                   <TabsContent value="coworking" className="mt-0">
                     <TabHeader
@@ -200,11 +254,15 @@ export default function BookingPage() {
                       </Label>
                       <Input
                         type="text"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleChange}
                         placeholder="Juan Dela Cruz"
                         required
                         className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 placeholder:text-stone-400 focus:border-[#F36509] focus:ring-[#F36509]"
                       />
                     </div>
+
                     <div className="space-y-2">
                       <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
                         <Phone className="h-4 w-4" />
@@ -212,6 +270,9 @@ export default function BookingPage() {
                       </Label>
                       <Input
                         type="tel"
+                        name="phone"
+                        value={formData.phone}
+                        onChange={handleChange}
                         placeholder="09XX XXX XXXX"
                         required
                         className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 placeholder:text-stone-400 focus:border-[#F36509] focus:ring-[#F36509]"
@@ -219,53 +280,70 @@ export default function BookingPage() {
                     </div>
                   </div>
 
-                  {/* Date, Time, Pax */}
+                  {/* Email Field - NEW */}
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
+                      Email Address
+                    </Label>
+                    <Input
+                      type="email"
+                      name="email"
+                      value={formData.email}
+                      onChange={handleChange}
+                      placeholder="your@email.com"
+                      required
+                      className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 placeholder:text-stone-400 focus:border-[#F36509]"
+                    />
+                  </div>
+
+                  {/* Date, Time, Pax - Add name + value + onChange to each */}
                   <div className="grid gap-6 md:grid-cols-3">
                     <div className="space-y-2">
-                      <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
-                        <Calendar className="h-4 w-4" />
-                        Date
-                      </Label>
+                      <Label>Date</Label>
                       <Input
                         type="date"
+                        name="date"
+                        value={formData.date}
+                        onChange={handleChange}
                         required
-                        className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 focus:border-[#F36509] focus:ring-[#F36509]"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
-                        <Clock className="h-4 w-4" />
-                        Time
-                      </Label>
+                      <Label>Time</Label>
                       <Input
                         type="time"
+                        name="time"
+                        value={formData.time}
+                        onChange={handleChange}
                         required
-                        className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 focus:border-[#F36509] focus:ring-[#F36509]"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
-                        <Users className="h-4 w-4" />
-                        Pax
-                      </Label>
+                      <Label>Pax</Label>
                       <Input
                         type="number"
+                        name="pax"
+                        value={formData.pax}
+                        onChange={handleChange}
                         min="1"
-                        defaultValue="1"
                         required
-                        className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 focus:border-[#F36509] focus:ring-[#F36509]"
                       />
                     </div>
                   </div>
 
-                  {/* Conference Room — Only on Conference tab */}
+                  {/* Conference Room */}
                   <TabsContent value="conference" className="mt-0">
                     <div className="space-y-2">
                       <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
                         <Briefcase className="h-4 w-4" />
                         Preferred Room
                       </Label>
-                      <select className="h-14 w-full rounded-2xl border border-stone-200 bg-stone-50 px-6 text-stone-900 focus:border-[#F36509] focus:outline-none focus:ring-1 focus:ring-[#F36509]">
+                      <select
+                        name="room"
+                        value={formData.room}
+                        onChange={handleChange}
+                        className="h-14 w-full rounded-2xl border border-stone-200 bg-stone-50 px-6 text-stone-900 focus:border-[#F36509]"
+                      >
                         {conferenceRooms.map((room) => (
                           <option key={room.value} value={room.value}>
                             {room.label}
@@ -275,14 +353,19 @@ export default function BookingPage() {
                     </div>
                   </TabsContent>
 
-                  {/* Bistro Table — Only on Bistro tab */}
+                  {/* Bistro Table */}
                   <TabsContent value="bistro" className="mt-0">
                     <div className="space-y-2">
                       <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
                         <UtensilsCrossed className="h-4 w-4" />
                         Preferred Table
                       </Label>
-                      <select className="h-14 w-full rounded-2xl border border-stone-200 bg-stone-50 px-6 text-stone-900 focus:border-[#F36509] focus:outline-none focus:ring-1 focus:ring-[#F36509]">
+                      <select
+                        name="tableType"
+                        value={formData.tableType}
+                        onChange={handleChange}
+                        className="h-14 w-full rounded-2xl border border-stone-200 bg-stone-50 px-6 text-stone-900 focus:border-[#F36509]"
+                      >
                         {bistroTableTypes.map((table) => (
                           <option key={table.value} value={table.value}>
                             {table.label}
@@ -294,14 +377,13 @@ export default function BookingPage() {
 
                   {/* Notes */}
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
-                      <MessageSquare className="h-4 w-4" />
-                      Additional Notes
-                    </Label>
+                    <Label>Additional Notes</Label>
                     <Textarea
+                      name="notes"
+                      value={formData.notes}
+                      onChange={handleChange}
                       rows={4}
-                      placeholder="Special requests, setup needs, dietary restrictions, etc."
-                      className="rounded-3xl border-stone-200 bg-stone-50 px-6 py-5 text-stone-900 placeholder:text-stone-400 focus:border-[#F36509] focus:ring-[#F36509]"
+                      placeholder="Special requests..."
                     />
                   </div>
 
@@ -348,9 +430,12 @@ export default function BookingPage() {
                   <Button
                     type="submit"
                     size="lg"
-                    className="h-14 w-full rounded-full bg-[#F36509] text-lg font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00] active:scale-[0.98]"
+                    disabled={isSubmitting}
+                    className="cursor-pointer h-14 w-full rounded-full bg-[#F36509] text-lg font-semibold text-white shadow-xl transition-all hover:bg-[#e05a00]"
                   >
-                    Submit Reservation Request
+                    {isSubmitting
+                      ? "Submitting..."
+                      : "Submit Reservation Request"}
                     <ArrowRight className="ml-2 h-5 w-5" />
                   </Button>
 
