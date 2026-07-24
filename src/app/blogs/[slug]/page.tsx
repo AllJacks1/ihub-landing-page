@@ -183,15 +183,13 @@ export default async function PostPage({ params }: Props) {
 
         {/* Bottom nav */}
         <div className="mt-10 mb-16 flex items-center justify-between">
-          <Button
-            variant="ghost"
-            className="gap-2 text-stone-500 hover:text-stone-900"
+          <Link
+            href="/blogs"
+            className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-4 py-2 text-sm font-medium text-stone-600 shadow-sm transition-all duration-200 hover:border-stone-300 hover:bg-stone-50 hover:text-stone-900 hover:shadow-md"
           >
-            <Link href="/blogs">
-              <ArrowLeft className="h-4 w-4" />
-              Back to Blog
-            </Link>
-          </Button>
+            <ArrowLeft className="h-4 w-4" />
+            Back to Blog
+          </Link>
         </div>
       </div>
     </main>
