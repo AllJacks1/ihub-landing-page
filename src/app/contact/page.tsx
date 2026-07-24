@@ -44,7 +44,7 @@ export default function ContactPage() {
   return (
     <main className="min-h-screen bg-stone-50">
       {/* Hero */}
-      <section className="relative flex min-h-[600px] items-center justify-center overflow-hidden">
+      <section className="relative flex min-h-150 items-center justify-center overflow-hidden">
         {/* Background Image */}
         <Image
           src="/images/contact_header.png"

@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
 import {
   UtensilsCrossed,
   Egg,
@@ -25,7 +24,6 @@ import {
   IceCreamBowl,
   ChefHat,
   Package,
-  AlertCircle,
 } from "lucide-react";
 import HorizontalScroll from "@/hooks/horizontal-scroll";
 
@@ -159,7 +157,7 @@ const menuData: Record<string, MenuItem[]> = {
       image: "/images/menu/poke-bowl.jpg",
       isPopular: true,
     },
-    
+
     {
       name: "Pork Tonkatsu Bowl",
       description:
@@ -171,7 +169,7 @@ const menuData: Record<string, MenuItem[]> = {
       image: "/images/menu/bulgogi-bowl.jpg",
       isNew: true,
     },
-    
+
     {
       name: "Chopsuey Rice Bowl",
       description:
@@ -288,7 +286,7 @@ function EmptyState({ category }: { category: string }) {
 function MenuItemCard({ item }: { item: MenuItem }) {
   return (
     <Card className="group overflow-hidden border-stone-200 bg-white transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-stone-900/5 pt-0">
-      <div className="relative aspect-[4/3] overflow-hidden bg-stone-200">
+      <div className="relative aspect-4/3 overflow-hidden bg-stone-200">
         <Image
           src={item.image}
           alt={item.name}
@@ -298,7 +296,7 @@ function MenuItemCard({ item }: { item: MenuItem }) {
         />
 
         {/* Gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-stone-900/40 via-transparent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+        <div className="absolute inset-0 bg-linear-to-t from-stone-900/40 via-transparent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
         {/* Badges */}
         <div className="absolute left-3 top-3 flex flex-wrap gap-2">

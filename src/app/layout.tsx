@@ -4,6 +4,8 @@ import "./globals.css";
 import { cn } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/sections/Footer";
+import { Toaster } from "sonner";
+import LayoutWrapper from "@/components/LayoutWrapper";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -38,15 +40,13 @@ export default function RootLayout({
         "font-sans",
         inter.variable,
       )}
+      suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        <header>
-          <Navbar />
-        </header>
-        {children}
-        <footer>
-          <Footer />
-        </footer>
+        <LayoutWrapper>
+          {children}
+          <Toaster position="top-center" richColors />
+        </LayoutWrapper>
       </body>
     </html>
   );

@@ -143,3 +143,73 @@
     overflow-y: hidden;
   }
 }
+
+@layer base {
+  .prose p {
+    margin-bottom: 0.75em;
+    line-height: 1.7;
+  }
+
+  .prose h1 {
+    font-size: 1.5em;
+    font-weight: 700;
+    margin-bottom: 0.5em;
+    margin-top: 0.5em;
+  }
+
+  .prose h2 {
+    font-size: 1.25em;
+    font-weight: 600;
+    margin-bottom: 0.5em;
+    margin-top: 0.5em;
+  }
+
+  .prose ul {
+    list-style-type: disc;
+    padding-left: 1.5em;
+    margin-bottom: 0.75em;
+  }
+
+  .prose ol {
+    list-style-type: decimal;
+    padding-left: 1.5em;
+    margin-bottom: 0.75em;
+  }
+
+  .prose blockquote {
+    border-left: 3px solid #f36509;
+    padding-left: 1em;
+    font-style: italic;
+    color: #64748b;
+  }
+
+  .prose code {
+    background: #f1f5f9;
+    padding: 0.2em 0.4em;
+    border-radius: 0.25em;
+    font-size: 0.875em;
+  }
+
+  .prose pre {
+    background: #1e293b;
+    color: #f8fafc;
+    padding: 1em;
+    border-radius: 0.5em;
+    overflow-x: auto;
+  }
+
+  .prose pre code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+  }
+
+  /* Placeholder styling */
+  .tiptap p.is-editor-empty:first-child::before {
+    color: #94a3b8;
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
+}
