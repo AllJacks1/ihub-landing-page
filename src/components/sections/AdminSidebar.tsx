@@ -14,37 +14,127 @@ import {
   MessageSquare,
   Settings,
   LayoutDashboard,
+  CalendarDays,
+  CalendarCheck,
+  Table,
+  Clock,
+  Grid3X3,
+  UserCheck,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
-const sidebarItems = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard, href: "/admin" },
-  { id: "posts", label: "All Posts", icon: FileText, href: "/admin/posts" },
-  { id: "new", label: "New Post", icon: Plus, href: "/admin/posts/new" },
+type SidebarItem = {
+  id: string;
+  label: string;
+  icon: React.ElementType;
+  href: string;
+  badge?: string;
+};
+
+type SidebarGroup = {
+  id: string;
+  label: string;
+  items: SidebarItem[];
+};
+
+const sidebarGroups: SidebarGroup[] = [
   {
-    id: "categories",
-    label: "Categories",
-    icon: FolderTree,
-    href: "/admin/categories",
+    id: "overview",
+    label: "Overview",
+    items: [
+      {
+        id: "overview",
+        label: "Dashboard",
+        icon: LayoutDashboard,
+        href: "/admin",
+      },
+      {
+        id: "settings",
+        label: "Settings",
+        icon: Settings,
+        href: "/admin/settings",
+      },
+    ],
   },
-  { id: "tags", label: "Tags", icon: Tag, href: "/admin/tags" },
   {
-    id: "comments",
-    label: "Comments",
-    icon: MessageSquare,
-    href: "/admin/comments",
-    badge: "3",
+    id: "blogs",
+    label: "Blogs",
+    items: [
+      { id: "posts", label: "All Posts", icon: FileText, href: "/admin/posts" },
+      { id: "new", label: "New Post", icon: Plus, href: "/admin/posts/new" },
+      {
+        id: "categories",
+        label: "Categories",
+        icon: FolderTree,
+        href: "/admin/categories",
+      },
+      { id: "tags", label: "Tags", icon: Tag, href: "/admin/tags" },
+      {
+        id: "comments",
+        label: "Comments",
+        icon: MessageSquare,
+        href: "/admin/comments",
+        badge: "3",
+      },
+      { id: "authors", label: "Authors", icon: Users, href: "/admin/authors" },
+    ],
   },
-  { id: "authors", label: "Authors", icon: Users, href: "/admin/authors" },
   {
-    id: "settings",
-    label: "Settings",
-    icon: Settings,
-    href: "/admin/settings",
+    id: "reservations",
+    label: "Reservations",
+    items: [
+      {
+        id: "reservations",
+        label: "All Reservations",
+        icon: CalendarCheck,
+        href: "/admin/reservations",
+      },
+      {
+        id: "new-reservation",
+        label: "New Reservation",
+        icon: Plus,
+        href: "/admin/reservations/new",
+      },
+      { id: "tables", label: "Tables", icon: Table, href: "/admin/tables" },
+      {
+        id: "calendar",
+        label: "Calendar",
+        icon: CalendarDays,
+        href: "/admin/reservations/calendar",
+      },
+      {
+        id: "time-slots",
+        label: "Time Slots",
+        icon: Clock,
+        href: "/admin/reservations/time-slots",
+      },
+      {
+        id: "guests",
+        label: "Guest List",
+        icon: UserCheck,
+        href: "/admin/reservations/guests",
+      },
+    ],
   },
 ];
 
 function AdminSidebar() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
+    {
+      overview: true,
+      blogs: true,
+      reservations: true,
+    },
+  );
+
+  const toggleGroup = (groupId: string) => {
+    setExpandedGroups((prev) => ({
+      ...prev,
+      [groupId]: !prev[groupId],
+    }));
+  };
 
   return (
     <aside
@@ -52,17 +142,45 @@ function AdminSidebar() {
         sidebarCollapsed ? "w-20" : "w-64"
       }`}
     >
-      <div className="flex h-full flex-col p-4">
-        <nav className="flex-1 space-y-1">
-          {sidebarItems.map((item) => (
-            <SidebarLink
-              key={item.id}
-              icon={item.icon}
-              label={item.label}
-              href={item.href}
-              badge={item.badge}
-              collapsed={sidebarCollapsed}
-            />
+      <div className="flex h-full flex-col p-3">
+        <nav className="flex-1 space-y-4">
+          {sidebarGroups.map((group) => (
+            <div key={group.id}>
+              {!sidebarCollapsed && (
+                <button
+                  onClick={() => toggleGroup(group.id)}
+                  className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-stone-400 transition-colors hover:text-stone-600"
+                >
+                  {expandedGroups[group.id] ? (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  )}
+                  {group.label}
+                </button>
+              )}
+
+              <div
+                className={`space-y-0.5 ${
+                  sidebarCollapsed
+                    ? "block"
+                    : expandedGroups[group.id]
+                      ? "block"
+                      : "hidden"
+                }`}
+              >
+                {group.items.map((item) => (
+                  <SidebarLink
+                    key={item.id}
+                    icon={item.icon}
+                    label={item.label}
+                    href={item.href}
+                    badge={item.badge}
+                    collapsed={sidebarCollapsed}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 

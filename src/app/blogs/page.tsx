@@ -19,7 +19,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import LoginModal from "@/components/sections/LoginModal";
-import { getPosts } from "@/lib/actions";
+import { getCategories, getPosts } from "@/lib/actions";
 import { useRouter } from "next/navigation";
 
 type Tag = {
@@ -39,6 +39,15 @@ type Post = {
   category_name?: string;
   tags?: Tag[] | null;
 };
+
+interface Category {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  parent_id?: string | null;
+  parent_name?: string | null;
+}
 
 function PostCard({ post }: { post: Post }) {
   const router = useRouter();
@@ -138,30 +147,30 @@ function PostSkeleton() {
 
 export default function BlogsPage() {
   const router = useRouter();
+
   const [posts, setPosts] = useState<Post[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
 
   useEffect(() => {
-    async function loadPosts() {
+    async function loadData() {
       try {
-        const result = await getPosts();
+        const [postsResult, categoriesResult] = await Promise.all([
+          getPosts(),
+          getCategories(),
+        ]);
 
-        if (result.success) {
-          setPosts(result.data);
-        } else {
-          console.error("Failed to fetch posts:", result.error);
-          setPosts([]); // fallback
-        }
+        if (postsResult.success) setPosts(postsResult.data);
+        if (categoriesResult.success) setCategories(categoriesResult.data);
       } catch (error) {
-        console.error("Error loading posts:", error);
-        setPosts([]);
+        console.error("Error loading data:", error);
       } finally {
         setLoading(false);
       }
     }
 
-    loadPosts();
+    loadData();
   }, []);
 
   const filteredPosts = posts.filter(
@@ -362,22 +371,31 @@ export default function BlogsPage() {
                     Categories
                   </h3>
                   <div className="space-y-2">
-                    {[
-                      "Productivity",
-                      "Community",
-                      "Lifestyle",
-                      "Events",
-                      "Tips",
-                    ].map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => setSearchTerm(cat)}
-                        className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-sm text-stone-600 transition-colors hover:bg-stone-50 hover:text-[#F36509]"
-                      >
-                        {cat}
-                        <ArrowRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
-                      </button>
-                    ))}
+                    {categories.length > 0
+                      ? categories.map((cat) => (
+                          <button
+                            key={cat.id}
+                            onClick={() => {
+                              setSearchTerm(cat.name); // or better: router.push(`/blogs/category/${cat.slug}`)
+                            }}
+                            className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-sm text-stone-600 transition-colors hover:bg-stone-50 hover:text-[#F36509]"
+                          >
+                            <span>{cat.name}</span>
+                            <ArrowRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
+                          </button>
+                        ))
+                      : // Fallback while loading or if empty
+                        [
+                          "Productivity",
+                          "Community",
+                          "Lifestyle",
+                          "Events",
+                          "Tips",
+                        ].map((cat) => (
+                          <button key={cat} className="...">
+                            {cat}
+                          </button>
+                        ))}
                   </div>
                 </CardContent>
               </Card>

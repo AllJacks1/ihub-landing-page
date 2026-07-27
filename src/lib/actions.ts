@@ -29,6 +29,33 @@ interface RawCategory {
   parent: { name: string } | { name: string }[] | null;
 }
 
+type BlogTag = {
+  id: number;
+  name: string;
+  slug: string;
+};
+
+type PostTag = {
+  blog_tags: BlogTag | null;
+};
+
+type Category = {
+  id: number;
+  name: string;
+  slug: string;
+};
+
+type PostWithRelations = {
+  id: number;
+  title: string;
+  slug: string;
+  summary: string | null;
+  featured_image: string | null;
+  published_at: string | null;
+  blog_categories: Category | null;
+  post_tags: PostTag[];
+};
+
 // ==================== READ-ONLY CLIENT (for Server Components) ====================
 async function createSupabaseClientForRead() {
   const cookieStore = await cookies();
@@ -689,6 +716,69 @@ export async function getTags() {
       success: false,
       error: "Failed to fetch tags",
       data: [],
+    };
+  }
+}
+
+export async function getPostsByCategory(categorySlug: string) {
+  const supabase = await createSupabaseClientForRead();
+
+  try {
+    const { data, error } = await supabase
+      .from("posts")
+      .select(
+        `
+        *,
+        blog_categories!inner (
+          id,
+          name,
+          slug
+        ),
+        post_tags (
+          blog_tags (
+            id,
+            name,
+            slug
+          )
+        )
+      `
+      )
+      .eq("status", "published")
+      .eq("blog_categories.slug", categorySlug)
+      .order("published_at", { ascending: false });
+
+    if (error) throw error;
+
+    const formattedPosts = data.map((post: any) => ({
+      id: post.id,
+      title: post.title,
+      slug: post.slug,
+      summary: post.summary,
+      featured_image: post.featured_image,
+      published_at: post.published_at,
+      author_name: null,
+      category_name: post.blog_categories?.name || null,
+      tags: (post.post_tags || [])
+        .map((pt: any) => pt.blog_tags)
+        .filter((tag: any): tag is { id: number; name: string; slug: string } => 
+          !!tag && typeof tag.id === "number"
+        ),
+    }));
+
+    const categoryName = data[0]?.blog_categories?.name || categorySlug;
+
+    return {
+      success: true,
+      data: formattedPosts,
+      categoryName,
+    };
+  } catch (error: any) {
+    console.error("Error fetching posts by category:", error);
+    return {
+      success: false,
+      error: error?.message || "Failed to fetch posts for this category",
+      data: [],
+      categoryName: categorySlug,
     };
   }
 }
