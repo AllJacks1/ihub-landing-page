@@ -1,9 +1,14 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { getPostBySlug } from "@/lib/actions";
+import {
+  createSupabaseClientForRead,
+  getCommentsByPostId,
+  getPostBySlug,
+} from "@/lib/actions";
 import { Calendar, User, Clock, ArrowLeft, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Comments } from "@/components/sections/Comments";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -25,6 +30,18 @@ export default async function PostPage({ params }: Props) {
 
   const post = result.data;
 
+  const [commentsResult, supabase] = await Promise.all([
+    getCommentsByPostId(post.id),
+    createSupabaseClientForRead(),
+  ]);
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const comments = (commentsResult.success ? commentsResult.data : null) ?? [];
+
+  console.log(commentsResult.error);
   const readingTime = Math.ceil(
     (post.content?.replace(/<[^>]*>/g, "").split(/\s+/).length || 0) / 200,
   );
@@ -33,7 +50,7 @@ export default async function PostPage({ params }: Props) {
     <main className="min-h-screen bg-stone-50">
       {/* Breadcrumb */}
       <div className="border-b border-stone-200 bg-white">
-        <div className="mx-auto max-w-3xl px-6 py-3">
+        <div className="mx-auto max-w-3xl px-6 py-3"> 
           <nav className="flex items-center gap-2 text-sm text-stone-500">
             <Link
               href="/blogs"
@@ -179,6 +196,8 @@ export default async function PostPage({ params }: Props) {
               </div>
             </div>
           )}
+
+          <Comments postId={post.id} comments={comments} isLoggedIn={!!user} />
         </div>
 
         {/* Bottom nav */}

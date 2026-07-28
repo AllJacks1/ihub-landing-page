@@ -57,7 +57,7 @@ type PostWithRelations = {
 };
 
 // ==================== READ-ONLY CLIENT (for Server Components) ====================
-async function createSupabaseClientForRead() {
+export async function createSupabaseClientForRead() {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -741,7 +741,7 @@ export async function getPostsByCategory(categorySlug: string) {
             slug
           )
         )
-      `
+      `,
       )
       .eq("status", "published")
       .eq("blog_categories.slug", categorySlug)
@@ -760,8 +760,9 @@ export async function getPostsByCategory(categorySlug: string) {
       category_name: post.blog_categories?.name || null,
       tags: (post.post_tags || [])
         .map((pt: any) => pt.blog_tags)
-        .filter((tag: any): tag is { id: number; name: string; slug: string } => 
-          !!tag && typeof tag.id === "number"
+        .filter(
+          (tag: any): tag is { id: number; name: string; slug: string } =>
+            !!tag && typeof tag.id === "number",
         ),
     }));
 
@@ -781,4 +782,77 @@ export async function getPostsByCategory(categorySlug: string) {
       categoryName: categorySlug,
     };
   }
+}
+
+export async function getCommentsByPostId(postId: string) {
+  const supabase = await createSupabaseClientForRead();
+
+  const { data, error } = await supabase
+    .from("blog_comments")
+    .select(
+      `
+      id,
+      content,
+      author_name,
+      author_email,
+      user_id,
+      parent_id,
+      status,
+      created_at
+    `,
+    )
+    .eq("post_id", postId)
+    .eq("status", "approved")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true, data: data ?? [] };
+}
+
+// createComment
+export async function createComment(formData: FormData) {
+  "use server";
+
+  const supabase = await createSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const postId = formData.get("postId") as string;
+  const content = (formData.get("content") as string)?.trim();
+  const parentId = (formData.get("parentId") as string) || null;
+  const authorName = (formData.get("authorName") as string)?.trim();
+  const authorEmail = (formData.get("authorEmail") as string)?.trim();
+
+  if (!postId || !content) {
+    return { success: false, error: "Comment content is required" };
+  }
+
+  // Guest comments require name + email
+  if (!user && (!authorName || !authorEmail)) {
+    return {
+      success: false,
+      error: "Name and email are required for guest comments",
+    };
+  }
+
+  const { error } = await supabase.from("blog_comments").insert({
+    post_id: postId,
+    user_id: user?.id ?? null,
+    parent_id: parentId,
+    author_name: user ? null : authorName,
+    author_email: user ? null : authorEmail,
+    content,
+    status: "pending", // or "approved" if you want auto-approve
+  });
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  //revalidatePath(`/blogs/${/* you may need the slug here */}`); // or use the post slug
+  return { success: true };
 }
