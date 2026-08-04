@@ -22,6 +22,8 @@ import {
   UserCheck,
   ChevronDown,
   ChevronRight,
+  DoorOpen,
+  BetweenHorizontalStart,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -77,7 +79,6 @@ const sidebarGroups: SidebarGroup[] = [
         href: "/admin/comments",
         badge: "3",
       },
-      { id: "authors", label: "Authors", icon: Users, href: "/admin/authors" },
     ],
   },
   {
@@ -96,18 +97,17 @@ const sidebarGroups: SidebarGroup[] = [
         icon: Plus,
         href: "/admin/reservations/new",
       },
-      { id: "tables", label: "Tables", icon: Table, href: "/admin/tables" },
+      {
+        id: "spaces",
+        label: "Tables",
+        icon: BetweenHorizontalStart,
+        href: "/admin/spaces",
+      },
       {
         id: "calendar",
         label: "Calendar",
         icon: CalendarDays,
         href: "/admin/reservations/calendar",
-      },
-      {
-        id: "time-slots",
-        label: "Time Slots",
-        icon: Clock,
-        href: "/admin/reservations/time-slots",
       },
       {
         id: "guests",

@@ -856,3 +856,916 @@ export async function createComment(formData: FormData) {
   //revalidatePath(`/blogs/${/* you may need the slug here */}`); // or use the post slug
   return { success: true };
 }
+
+export async function getAllComments() {
+  const supabase = await createSupabaseClientForRead();
+
+  const { data, error } = await supabase
+    .from("blog_comments")
+    .select(
+      `
+      id,
+      content,
+      author_name,
+      author_email,
+      user_id,
+      parent_id,
+      status,
+      created_at,
+      post_id,
+      post:posts (
+        id,
+        title,
+        slug
+      )
+    `,
+    )
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true, data: data ?? [] };
+}
+
+export async function updateComment(
+  id: string,
+  data: {
+    content?: string;
+    author_name?: string;
+    author_email?: string;
+    status?: "pending" | "approved" | "spam" | "rejected";
+  },
+) {
+  const supabase = await createSupabaseClient();
+
+  const { data: updated, error } = await supabase
+    .from("blog_comments")
+    .update({
+      ...data,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true, data: updated };
+}
+
+export async function deleteComment(id: string) {
+  const supabase = await createSupabaseClient();
+
+  const { error } = await supabase.from("blog_comments").delete().eq("id", id);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true };
+}
+
+export async function approveComment(id: string) {
+  const supabase = await createSupabaseClient();
+
+  const { data: updated, error } = await supabase
+    .from("blog_comments")
+    .update({
+      status: "approved",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true, data: updated };
+}
+
+export async function rejectComment(id: string) {
+  const supabase = await createSupabaseClient();
+
+  const { data: updated, error } = await supabase
+    .from("blog_comments")
+    .update({
+      status: "rejected",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true, data: updated };
+}
+
+export async function markCommentAsSpam(id: string) {
+  const supabase = await createSupabaseClient();
+
+  const { data: updated, error } = await supabase
+    .from("blog_comments")
+    .update({
+      status: "spam",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true, data: updated };
+}
+
+type Zone = "bistro" | "study" | "room";
+type ReservationStatus =
+  | "pending"
+  | "confirmed"
+  | "seated"
+  | "completed"
+  | "cancelled"
+  | "no_show";
+
+interface Reservation {
+  id: string;
+  profile_id: string | null;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  pax: number;
+  zone: Zone;
+  start_at: string;
+  end_at: string;
+  status: ReservationStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type GetReservationsOptions = {
+  status?: ReservationStatus | ReservationStatus[];
+  zone?: Zone | Zone[];
+  from?: string; // ISO date
+  to?: string; // ISO date
+  limit?: number;
+};
+
+const reservationSchema = z.object({
+  full_name: z.string().min(2, "Name is required"),
+  email: z.string().email(),
+  phone: z.string().optional(),
+  pax: z.coerce.number().min(1).max(50),
+  zone: z.enum(["bistro", "study", "room"]),
+  start_at: z.string().datetime(), // ISO string from the client
+  end_at: z.string().datetime(),
+  notes: z.string().optional(),
+  status: z
+    .enum([
+      "pending",
+      "confirmed",
+      "seated",
+      "completed",
+      "cancelled",
+      "no_show",
+    ])
+    .optional(),
+  mode: z.enum(["admin", "client"]),
+});
+
+export type CreateReservationState = {
+  success: boolean;
+  message?: string;
+  errors?: Record<string, string[]>;
+};
+
+export async function createReservation(
+  _prevState: CreateReservationState | null,
+  formData: FormData,
+): Promise<CreateReservationState> {
+  const raw = {
+    full_name: formData.get("full_name"),
+    email: formData.get("email"),
+    phone: formData.get("phone") || undefined,
+    pax: formData.get("pax"),
+    zone: formData.get("zone"),
+    start_at: formData.get("start_at"),
+    end_at: formData.get("end_at"),
+    notes: formData.get("notes") || undefined,
+    status: formData.get("status") || undefined,
+    mode: formData.get("mode"),
+  };
+
+  const parsed = reservationSchema.safeParse(raw);
+
+  if (!parsed.success) {
+    return {
+      success: false,
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  const { mode, ...data } = parsed.data;
+
+  const payload = {
+    ...data,
+    status: mode === "client" ? "pending" : (data.status ?? "pending"),
+  };
+
+  const supabase = await createSupabaseClient();
+
+  const { error } = await supabase.from("reservations").insert(payload);
+
+  if (error) {
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+
+  revalidatePath("/reservations");
+  revalidatePath("/");
+
+  return {
+    success: true,
+    message:
+      mode === "client"
+        ? "Reservation submitted successfully."
+        : "Reservation created successfully.",
+  };
+}
+
+export async function getReservations(options: GetReservationsOptions = {}) {
+  try {
+    const supabase = await createSupabaseClientForRead();
+
+    let query = supabase
+      .from("reservations")
+      .select("*")
+      .order("start_at", { ascending: true });
+
+    // Status filter
+    if (options.status) {
+      if (Array.isArray(options.status)) {
+        query = query.in("status", options.status);
+      } else {
+        query = query.eq("status", options.status);
+      }
+    }
+
+    // Zone filter
+    if (options.zone) {
+      if (Array.isArray(options.zone)) {
+        query = query.in("zone", options.zone);
+      } else {
+        query = query.eq("zone", options.zone);
+      }
+    }
+
+    // Date range (on start_at)
+    if (options.from) {
+      query = query.gte("start_at", options.from);
+    }
+    if (options.to) {
+      query = query.lte("start_at", options.to);
+    }
+
+    if (options.limit) {
+      query = query.limit(options.limit);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Fetch reservations error:", error);
+      return {
+        success: false,
+        error: error.message,
+        data: [] as Reservation[],
+      };
+    }
+
+    return {
+      success: true,
+      data: (data ?? []) as Reservation[],
+    };
+  } catch (error) {
+    console.error("Unexpected error in getReservations:", error);
+    return {
+      success: false,
+      error: "Failed to fetch reservations",
+      data: [] as Reservation[],
+    };
+  }
+}
+
+// ==================== TABLES & ROOMS ====================
+
+type TableZone = "bistro" | "coworking";
+
+interface Table {
+  id: string;
+  table_number: string;
+  seats: number;
+  zone: TableZone;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Room {
+  id: string;
+  name: string;
+  seats: number;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CreateTableInput = {
+  table_number: string;
+  seats: number;
+  zone: string;
+  is_active?: boolean;
+};
+
+export type UpdateTableInput = Partial<CreateTableInput>;
+
+const createTableSchema = z.object({
+  table_number: z.string().min(1, "Table number is required").max(20),
+  seats: z.coerce.number().min(1).max(20),
+  zone: z.enum(["bistro", "coworking"]),
+});
+
+const createRoomSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100),
+  seats: z.coerce.number().min(1).max(50),
+  description: z.string().max(500).optional().nullable(),
+});
+
+export async function getTables() {
+  try {
+    const supabase = await createSupabaseClientForRead();
+
+    const { data, error } = await supabase
+      .from("tables")
+      .select("*")
+      .order("zone")
+      .order("table_number");
+
+    if (error) {
+      console.error("Fetch tables error:", error);
+      return { success: false, error: error.message, data: [] as Table[] };
+    }
+
+    return { success: true, data: (data ?? []) as Table[] };
+  } catch (error) {
+    console.error("Unexpected error in getTables:", error);
+    return {
+      success: false,
+      error: "Failed to fetch tables",
+      data: [] as Table[],
+    };
+  }
+}
+
+export async function getRooms() {
+  try {
+    const supabase = await createSupabaseClientForRead();
+
+    const { data, error } = await supabase
+      .from("rooms")
+      .select("*")
+      .order("name");
+
+    if (error) {
+      console.error("Fetch rooms error:", error);
+      return { success: false, error: error.message, data: [] as Room[] };
+    }
+
+    return { success: true, data: (data ?? []) as Room[] };
+  } catch (error) {
+    console.error("Unexpected error in getRooms:", error);
+    return {
+      success: false,
+      error: "Failed to fetch rooms",
+      data: [] as Room[],
+    };
+  }
+}
+
+export async function createTable(formData: {
+  table_number: string;
+  seats: number;
+  zone: TableZone;
+}) {
+  try {
+    const validated = createTableSchema.parse(formData);
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    // Optional: check unique table_number per zone
+    const { data: existing } = await supabase
+      .from("tables")
+      .select("id")
+      .eq("table_number", validated.table_number)
+      .eq("zone", validated.zone)
+      .maybeSingle();
+
+    if (existing) {
+      return {
+        success: false,
+        error: "A table with this number already exists in this zone",
+      };
+    }
+
+    const { data, error } = await supabase
+      .from("tables")
+      .insert({
+        table_number: validated.table_number,
+        seats: validated.seats,
+        zone: validated.zone,
+        is_active: true,
+      })
+      .select()
+      .single();
+
+    if (error) return { success: false, error: error.message };
+
+    revalidatePath("/admin/spaces");
+    return { success: true, data };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+    return { success: false, error: "Failed to create table" };
+  }
+}
+
+export async function createRoom(formData: {
+  name: string;
+  seats: number;
+  description?: string | null;
+}) {
+  try {
+    const validated = createRoomSchema.parse(formData);
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    const { data, error } = await supabase
+      .from("rooms")
+      .insert({
+        name: validated.name,
+        seats: validated.seats,
+        description: validated.description ?? null,
+        is_active: true,
+      })
+      .select()
+      .single();
+
+    if (error) return { success: false, error: error.message };
+
+    revalidatePath("/admin/spaces");
+    return { success: true, data };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+    return { success: false, error: "Failed to create room" };
+  }
+}
+
+export async function toggleTableActive(id: string, isActive: boolean) {
+  try {
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    const { error } = await supabase
+      .from("tables")
+      .update({ is_active: isActive, updated_at: new Date().toISOString() })
+      .eq("id", id);
+
+    if (error) return { success: false, error: error.message };
+
+    revalidatePath("/admin/floor");
+    return { success: true };
+  } catch {
+    return { success: false, error: "Failed to update table" };
+  }
+}
+
+export async function toggleRoomActive(id: string, isActive: boolean) {
+  try {
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    const { error } = await supabase
+      .from("rooms")
+      .update({ is_active: isActive, updated_at: new Date().toISOString() })
+      .eq("id", id);
+
+    if (error) return { success: false, error: error.message };
+
+    revalidatePath("/admin/floor");
+    return { success: true };
+  } catch {
+    return { success: false, error: "Failed to update room" };
+  }
+}
+
+// ==================== RESERVATION ASSIGNMENTS ====================
+
+export async function assignTableToReservation(
+  reservationId: string,
+  tableId: string,
+) {
+  try {
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    // Optional: prevent assigning the same table twice
+    const { data: existing } = await supabase
+      .from("reservation_tables")
+      .select("reservation_id")
+      .eq("reservation_id", reservationId)
+      .eq("table_id", tableId)
+      .maybeSingle();
+
+    if (existing) {
+      return {
+        success: false,
+        error: "Table already assigned to this reservation",
+      };
+    }
+
+    const { error } = await supabase.from("reservation_tables").insert({
+      reservation_id: reservationId,
+      table_id: tableId,
+    });
+
+    if (error) return { success: false, error: error.message };
+
+    // Mark table as occupied
+    await supabase
+      .from("tables")
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq("id", tableId);
+
+    await supabase
+      .from("reservations")
+      .update({
+        status: "seated",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", reservationId);
+
+    revalidatePath("/admin/floor");
+    return { success: true };
+  } catch (error) {
+    console.error("assignTableToReservation error:", error);
+    return { success: false, error: "Failed to assign table" };
+  }
+}
+
+export async function assignRoomToReservation(
+  reservationId: string,
+  roomId: string,
+) {
+  try {
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    const { data: existing } = await supabase
+      .from("reservation_rooms")
+      .select("reservation_id")
+      .eq("reservation_id", reservationId)
+      .eq("room_id", roomId)
+      .maybeSingle();
+
+    if (existing) {
+      return {
+        success: false,
+        error: "Room already assigned to this reservation",
+      };
+    }
+
+    const { error } = await supabase.from("reservation_rooms").insert({
+      reservation_id: reservationId,
+      room_id: roomId,
+    });
+
+    if (error) return { success: false, error: error.message };
+
+    // Mark room as occupied
+    await supabase
+      .from("rooms")
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq("id", roomId);
+
+    await supabase
+      .from("reservations")
+      .update({
+        status: "seated",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", reservationId);
+
+    revalidatePath("/admin/floor");
+    return { success: true };
+  } catch (error) {
+    console.error("assignRoomToReservation error:", error);
+    return { success: false, error: "Failed to assign room" };
+  }
+}
+
+export async function unassignTable(reservationId: string, tableId: string) {
+  try {
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    const { error } = await supabase
+      .from("reservation_tables")
+      .delete()
+      .eq("reservation_id", reservationId)
+      .eq("table_id", tableId);
+
+    if (error) return { success: false, error: error.message };
+
+    // Free the table
+    await supabase
+      .from("tables")
+      .update({ is_active: true, updated_at: new Date().toISOString() })
+      .eq("id", tableId);
+
+    revalidatePath("/admin/floor");
+    return { success: true };
+  } catch {
+    return { success: false, error: "Failed to unassign table" };
+  }
+}
+
+export async function unassignRoom(reservationId: string, roomId: string) {
+  try {
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    const { error } = await supabase
+      .from("reservation_rooms")
+      .delete()
+      .eq("reservation_id", reservationId)
+      .eq("room_id", roomId);
+
+    if (error) return { success: false, error: error.message };
+
+    // Free the room
+    await supabase
+      .from("rooms")
+      .update({ is_active: true, updated_at: new Date().toISOString() })
+      .eq("id", roomId);
+
+    revalidatePath("/admin/floor");
+    return { success: true };
+  } catch {
+    return { success: false, error: "Failed to unassign room" };
+  }
+}
+
+// ==================== FETCH ASSIGNMENTS ====================
+
+export async function getAssignedTables(reservationId: string) {
+  try {
+    const supabase = await createSupabaseClientForRead();
+
+    const { data, error } = await supabase
+      .from("reservation_tables")
+      .select(
+        `
+        table_id,
+        tables (
+          id,
+          table_number,
+          seats,
+          zone,
+          is_active
+        )
+      `,
+      )
+      .eq("reservation_id", reservationId);
+
+    if (error) {
+      console.error("Fetch assigned tables error:", error);
+      return { success: false, error: error.message, data: [] as Table[] };
+    }
+
+    const tables: Table[] =
+      data
+        ?.map((row) => {
+          const t = row.tables;
+          // Supabase sometimes returns the relation as an array
+          const table = Array.isArray(t) ? t[0] : t;
+          return table as Table | null;
+        })
+        .filter((t): t is Table => t != null) ?? [];
+
+    return { success: true, data: tables };
+  } catch (error) {
+    console.error("Unexpected error in getAssignedTables:", error);
+    return {
+      success: false,
+      error: "Failed to fetch assigned tables",
+      data: [] as Table[],
+    };
+  }
+}
+
+export async function getAssignedRooms(reservationId: string) {
+  try {
+    const supabase = await createSupabaseClientForRead();
+
+    const { data, error } = await supabase
+      .from("reservation_rooms")
+      .select(
+        `
+        room_id,
+        rooms (
+          id,
+          name,
+          seats,
+          description,
+          is_active
+        )
+      `,
+      )
+      .eq("reservation_id", reservationId);
+
+    if (error) {
+      console.error("Fetch assigned rooms error:", error);
+      return { success: false, error: error.message, data: [] as Room[] };
+    }
+
+    const rooms: Room[] =
+      data
+        ?.map((row) => {
+          const r = row.rooms;
+          const room = Array.isArray(r) ? r[0] : r;
+          return room as Room | null;
+        })
+        .filter((r): r is Room => r != null) ?? [];
+
+    return { success: true, data: rooms };
+  } catch (error) {
+    console.error("Unexpected error in getAssignedRooms:", error);
+    return {
+      success: false,
+      error: "Failed to fetch assigned rooms",
+      data: [] as Room[],
+    };
+  }
+}
+
+export async function getReservationsWithAssignments(
+  options: GetReservationsOptions = {},
+) {
+  try {
+    const supabase = await createSupabaseClientForRead();
+
+    let query = supabase
+      .from("reservations")
+      .select(
+        `
+        *,
+        reservation_tables (
+          tables (
+            id,
+            table_number,
+            seats,
+            zone,
+            is_active
+          )
+        ),
+        reservation_rooms (
+          rooms (
+            id,
+            name,
+            seats,
+            description,
+            is_active
+          )
+        )
+      `,
+      )
+      .order("start_at", { ascending: true });
+
+    if (options.status) {
+      if (Array.isArray(options.status)) {
+        query = query.in("status", options.status);
+      } else {
+        query = query.eq("status", options.status);
+      }
+    }
+    if (options.zone) {
+      if (Array.isArray(options.zone)) {
+        query = query.in("zone", options.zone);
+      } else {
+        query = query.eq("zone", options.zone);
+      }
+    }
+    if (options.from) query = query.gte("start_at", options.from);
+    if (options.to) query = query.lte("start_at", options.to);
+    if (options.limit) query = query.limit(options.limit);
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Fetch reservations with assignments error:", error);
+      return { success: false, error: error.message, data: [] };
+    }
+
+    const formatted =
+      data?.map((row) => {
+        const tables =
+          row.reservation_tables
+            ?.map((rt: any) => {
+              const t = rt.tables;
+              return Array.isArray(t) ? t[0] : t;
+            })
+            .filter(Boolean) ?? [];
+
+        const rooms =
+          row.reservation_rooms
+            ?.map((rr: any) => {
+              const r = rr.rooms;
+              return Array.isArray(r) ? r[0] : r;
+            })
+            .filter(Boolean) ?? [];
+
+        const { reservation_tables, reservation_rooms, ...rest } = row;
+
+        return {
+          ...rest,
+          assigned_tables: tables as Table[],
+          assigned_rooms: rooms as Room[],
+        };
+      }) ?? [];
+
+    return { success: true, data: formatted };
+  } catch (error) {
+    console.error("Unexpected error in getReservationsWithAssignments:", error);
+    return {
+      success: false,
+      error: "Failed to fetch reservations",
+      data: [],
+    };
+  }
+}
