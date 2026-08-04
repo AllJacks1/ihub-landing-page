@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -33,6 +33,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -88,13 +90,15 @@ interface Props {
 }
 
 const tableImages: Record<string, string> = {
-  bistro: "/images/bistro_table.png",
-  coworking: "/images/computer_desktop.png",
+  bistro: "/images/bistroThumbnail.png",
+  coworking: "/images/iLounge.png",
 };
 
 const roomImages: Record<string, string> = {
-  default: "/images/room_default.png",
+  default: "/images/coworking-space.png",
 };
+
+const UNASSIGN_HOLD_MS = 3000;
 
 export default function FloorClient({
   initialTables,
@@ -103,10 +107,17 @@ export default function FloorClient({
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
 
   const [tables, setTables] = useState(initialTables);
   const [rooms, setRooms] = useState(initialRooms);
-  const [reservations] = useState(initialReservations);
+  const [reservations, setReservations] = useState(initialReservations);
+
+  useEffect(() => {
+    setTables(initialTables);
+    setRooms(initialRooms);
+    setReservations(initialReservations);
+  }, [initialTables, initialRooms, initialReservations]);
 
   const [tableForm, setTableForm] = useState({
     table_number: "",
@@ -122,10 +133,119 @@ export default function FloorClient({
   });
   const [openRoomDialog, setOpenRoomDialog] = useState(false);
 
-  const [assigning, setAssigning] = useState<{
+  // ── Assignment dialog ────────────────────────────────────
+  const [assignDialog, setAssignDialog] = useState<{
     type: "table" | "room";
     id: string;
+    name: string;
+    seats: number;
+    zone?: string;
   } | null>(null);
+
+  // ── Unassign confirmation dialog ─────────────────────────
+  const [unassignDialog, setUnassignDialog] = useState<{
+    type: "table" | "room";
+    reservationId: string;
+    resourceId: string;
+    resourceName: string;
+    guestName: string;
+  } | null>(null);
+
+  const [holdProgress, setHoldProgress] = useState(0);
+  const holdRafRef = useRef<number | null>(null);
+  const holdStartRef = useRef<number | null>(null);
+
+  function resetHold() {
+    if (holdRafRef.current !== null) {
+      cancelAnimationFrame(holdRafRef.current);
+      holdRafRef.current = null;
+    }
+    holdStartRef.current = null;
+    setHoldProgress(0);
+  }
+
+  function startHold() {
+    if (!unassignDialog) return;
+    resetHold();
+
+    const tick = (now: number) => {
+      // Capture start time from the first rAF frame — no Date.now / performance.now
+      if (holdStartRef.current === null) {
+        holdStartRef.current = now;
+      }
+
+      const elapsed = now - holdStartRef.current;
+      const pct = Math.min(100, (elapsed / UNASSIGN_HOLD_MS) * 100);
+      setHoldProgress(pct);
+
+      if (pct >= 100) {
+        void performUnassign();
+        return;
+      }
+
+      holdRafRef.current = requestAnimationFrame(tick);
+    };
+
+    holdRafRef.current = requestAnimationFrame(tick);
+  }
+
+  function cancelHold() {
+    resetHold();
+  }
+
+  // Clean up hold when dialog closes or component unmounts
+  useEffect(() => {
+    if (!unassignDialog) resetHold();
+    return () => resetHold();
+  }, [unassignDialog]);
+
+  async function performUnassign() {
+    if (!unassignDialog) return;
+
+    const { type, reservationId, resourceId } = unassignDialog;
+    const key =
+      type === "table"
+        ? `unassign-table-${resourceId}`
+        : `unassign-room-${resourceId}`;
+
+    setLoadingKey(key);
+    setUnassignDialog(null);
+    resetHold();
+
+    try {
+      const result =
+        type === "table"
+          ? await unassignTable(reservationId, resourceId)
+          : await unassignRoom(reservationId, resourceId);
+
+      if (result.success) {
+        toast.success(
+          type === "table" ? "Table unassigned" : "Room unassigned",
+        );
+        router.refresh();
+      } else {
+        toast.error(result.error || "Failed to unassign");
+      }
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
+  function openUnassignConfirm(
+    type: "table" | "room",
+    reservationId: string,
+    resourceId: string,
+    resourceName: string,
+    guestName: string,
+  ) {
+    setUnassignDialog({
+      type,
+      reservationId,
+      resourceId,
+      resourceName,
+      guestName,
+    });
+  }
 
   async function handleCreateTable() {
     startTransition(async () => {
@@ -194,90 +314,54 @@ export default function FloorClient({
     reservations.flatMap((r) => r.assigned_rooms.map((r) => r.id)),
   );
 
+  const candidateReservations = useMemo(() => {
+    if (!assignDialog) return [];
+
+    return reservations.filter((res) => {
+      const hasSomething =
+        res.assigned_tables.length > 0 || res.assigned_rooms.length > 0;
+      if (hasSomething) return false;
+
+      if (res.pax > assignDialog.seats) return false;
+
+      if (assignDialog.type === "table") {
+        if (res.zone === "room") return false;
+      } else {
+        if (res.zone !== "room") return false;
+      }
+
+      return true;
+    });
+  }, [assignDialog, reservations]);
+
   async function handleAssign(reservationId: string) {
-    if (!assigning) return;
-    startTransition(async () => {
+    if (!assignDialog) return;
+
+    const key = `assign-${reservationId}`;
+    setLoadingKey(key);
+
+    try {
       const result =
-        assigning.type === "table"
-          ? await assignTableToReservation(reservationId, assigning.id)
-          : await assignRoomToReservation(reservationId, assigning.id);
+        assignDialog.type === "table"
+          ? await assignTableToReservation(reservationId, assignDialog.id)
+          : await assignRoomToReservation(reservationId, assignDialog.id);
 
       if (result.success) {
         toast.success("Assigned successfully");
-        setAssigning(null);
+        setAssignDialog(null);
         router.refresh();
       } else {
         toast.error(result.error || "Assignment failed");
       }
-    });
+    } finally {
+      setLoadingKey(null);
+    }
   }
-
-  async function handleUnassignTable(reservationId: string, tableId: string) {
-    startTransition(async () => {
-      const result = await unassignTable(reservationId, tableId);
-      if (result.success) {
-        toast.success("Table unassigned");
-        router.refresh();
-      } else {
-        toast.error(result.error || "Failed to unassign");
-      }
-    });
-  }
-
-  async function handleUnassignRoom(reservationId: string, roomId: string) {
-    startTransition(async () => {
-      const result = await unassignRoom(reservationId, roomId);
-      if (result.success) {
-        toast.success("Room unassigned");
-        router.refresh();
-      } else {
-        toast.error(result.error || "Failed to unassign");
-      }
-    });
-  }
-
-  const assignedName = assigning
-    ? assigning.type === "table"
-      ? tables.find((t) => t.id === assigning.id)?.table_number
-      : rooms.find((r) => r.id === assigning.id)?.name
-    : null;
 
   return (
     <div className="space-y-8">
-      {/* Assignment Banner */}
-      {assigning && (
-        <div className="rounded-2xl border border-[#F36509]/20 bg-gradient-to-r from-[#F36509]/5 to-orange-50 p-5 flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-300">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-[#F36509]/10 flex items-center justify-center shrink-0">
-              <Armchair className="h-5 w-5 text-[#F36509]" />
-            </div>
-            <div>
-              <p className="font-medium text-stone-800">
-                Ready to assign:{" "}
-                <span className="text-[#F36509]">
-                  {assigning.type === "table" ? "Table" : "Room"} {assignedName}
-                </span>
-              </p>
-              <p className="text-sm text-stone-500">
-                Switch to the Assignments tab and select a reservation to
-                complete
-              </p>
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setAssigning(null)}
-            className="text-stone-400 hover:text-stone-600 hover:bg-stone-100"
-          >
-            <X className="h-4 w-4 mr-1" />
-            Cancel
-          </Button>
-        </div>
-      )}
-
       <Tabs defaultValue="tables" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-3 bg-stone-100 p-1 rounded-xl h-auto p pb-12">
+        <TabsList className="grid w-full max-w-md grid-cols-3 bg-stone-100 p-1 rounded-xl h-auto pb-12">
           <TabsTrigger
             value="tables"
             className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-stone-900 data-[state=active]:shadow-sm text-stone-500 py-2.5 transition-all"
@@ -319,7 +403,7 @@ export default function FloorClient({
                     Add Table
                   </Button>
                 }
-              ></DialogTrigger>
+              />
               <DialogContent className="sm:max-w-md rounded-2xl">
                 <DialogHeader>
                   <DialogTitle className="font-serif text-xl">
@@ -389,7 +473,7 @@ export default function FloorClient({
             </Dialog>
           </div>
 
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {tables.map((table) => {
               const isOccupied =
                 !table.is_active || occupiedTableIds.has(table.id);
@@ -400,11 +484,10 @@ export default function FloorClient({
               return (
                 <Card
                   key={table.id}
-                  className={`group rounded-2xl border-stone-200 overflow-hidden transition-all duration-300 hover:shadow-lg hover:border-stone-300 ${
+                  className={`pt-0 group rounded-2xl border-stone-200 overflow-hidden transition-all duration-300 hover:shadow-lg hover:border-stone-300 ${
                     isOccupied ? "opacity-70 border-dashed" : ""
                   }`}
                 >
-                  {/* Image Header */}
                   <div className="relative h-40 w-full overflow-hidden">
                     <Image
                       src={
@@ -441,8 +524,8 @@ export default function FloorClient({
                     </span>
                   </div>
 
-                  <CardContent className="p-5">
-                    <div className="flex items-start justify-between mb-3">
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between mb-2">
                       <h3 className="text-lg font-semibold text-stone-800">
                         {table.table_number}
                       </h3>
@@ -461,6 +544,7 @@ export default function FloorClient({
                         {table.zone}
                       </span>
                     </div>
+
                     {assignedTo && (
                       <p className="text-xs text-[#F36509] mb-3">
                         Assigned to {assignedTo.full_name}
@@ -484,9 +568,15 @@ export default function FloorClient({
                         size="sm"
                         variant="ghost"
                         onClick={() =>
-                          setAssigning({ type: "table", id: table.id })
+                          setAssignDialog({
+                            type: "table",
+                            id: table.id,
+                            name: table.table_number,
+                            seats: table.seats,
+                            zone: table.zone,
+                          })
                         }
-                        disabled={isOccupied || isPending}
+                        disabled={isOccupied}
                         className="text-[#F36509] hover:text-[#d95608] hover:bg-[#F36509]/5 rounded-full px-4"
                       >
                         Assign
@@ -497,7 +587,6 @@ export default function FloorClient({
               );
             })}
 
-            {/* Add Table Placeholder */}
             <button
               onClick={() => setOpenTableDialog(true)}
               className="group flex flex-col items-center justify-center gap-3 min-h-[320px] rounded-2xl border-2 border-dashed border-stone-300 hover:border-[#F36509] hover:bg-[#F36509]/5 transition-all duration-300"
@@ -533,7 +622,7 @@ export default function FloorClient({
                     Add Room
                   </Button>
                 }
-              ></DialogTrigger>
+              />
               <DialogContent className="sm:max-w-md rounded-2xl">
                 <DialogHeader>
                   <DialogTitle className="font-serif text-xl">
@@ -594,7 +683,7 @@ export default function FloorClient({
             </Dialog>
           </div>
 
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
             {rooms.map((room) => {
               const isOccupied =
                 !room.is_active || occupiedRoomIds.has(room.id);
@@ -605,7 +694,7 @@ export default function FloorClient({
               return (
                 <Card
                   key={room.id}
-                  className={`group rounded-2xl border-stone-200 overflow-hidden transition-all duration-300 hover:shadow-lg hover:border-stone-300 ${
+                  className={`pt-0 group rounded-2xl border-stone-200 overflow-hidden transition-all duration-300 hover:shadow-lg hover:border-stone-300 ${
                     isOccupied ? "opacity-70 border-dashed" : ""
                   }`}
                 >
@@ -639,7 +728,7 @@ export default function FloorClient({
                     </Badge>
                   </div>
 
-                  <CardContent className="p-5">
+                  <CardContent className="p-4">
                     <div className="flex items-start justify-between mb-2">
                       <h3 className="text-lg font-semibold text-stone-800">
                         {room.name}
@@ -680,9 +769,14 @@ export default function FloorClient({
                         size="sm"
                         variant="ghost"
                         onClick={() =>
-                          setAssigning({ type: "room", id: room.id })
+                          setAssignDialog({
+                            type: "room",
+                            id: room.id,
+                            name: room.name,
+                            seats: room.seats,
+                          })
                         }
-                        disabled={isOccupied || isPending}
+                        disabled={isOccupied}
                         className="text-[#F36509] hover:text-[#d95608] hover:bg-[#F36509]/5 rounded-full px-4"
                       >
                         Assign
@@ -693,7 +787,6 @@ export default function FloorClient({
               );
             })}
 
-            {/* Add Room Placeholder */}
             <button
               onClick={() => setOpenRoomDialog(true)}
               className="group flex flex-col items-center justify-center gap-3 min-h-[280px] rounded-2xl border-2 border-dashed border-stone-300 hover:border-[#F36509] hover:bg-[#F36509]/5 transition-all duration-300"
@@ -715,9 +808,8 @@ export default function FloorClient({
               Active Reservations
             </h2>
             <p className="text-sm text-stone-400 mt-0.5">
-              {assigning
-                ? `Select a reservation to assign to ${assignedName}`
-                : "Select a table or room first, then pick a reservation below"}
+              Overview of current assignments. To assign a table or room, use
+              the Assign button on the Tables / Rooms tabs.
             </p>
           </div>
 
@@ -747,63 +839,47 @@ export default function FloorClient({
                     className="rounded-2xl border-stone-200 hover:border-stone-300 transition-colors"
                   >
                     <CardContent className="p-5 space-y-4">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-xl bg-[#F36509]/10 flex items-center justify-center shrink-0">
-                            <Calendar className="h-5 w-5 text-[#F36509]" />
-                          </div>
-                          <div className="space-y-1">
-                            <div className="font-medium text-stone-800 flex items-center gap-2">
-                              {res.full_name}
-                              {hasAssignment && (
-                                <Badge className="bg-emerald-100 text-emerald-700 border-0 text-xs">
-                                  Assigned
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="text-sm text-stone-500 flex flex-wrap gap-x-4 gap-y-1">
-                              <span className="flex items-center gap-1">
-                                <Users className="h-3.5 w-3.5 text-stone-400" />
-                                {res.pax} pax
-                              </span>
-                              <span className="capitalize flex items-center gap-1">
-                                <MapPin className="h-3.5 w-3.5 text-stone-400" />
-                                {res.zone}
-                              </span>
-                              <span>
-                                {new Date(res.start_at).toLocaleString(
-                                  undefined,
-                                  {
-                                    dateStyle: "medium",
-                                    timeStyle: "short",
-                                  },
-                                )}
-                              </span>
-                              <Badge
-                                variant="outline"
-                                className="capitalize rounded-full text-xs font-medium"
-                              >
-                                {res.status}
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-[#F36509]/10 flex items-center justify-center shrink-0">
+                          <Calendar className="h-5 w-5 text-[#F36509]" />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="font-medium text-stone-800 flex items-center gap-2">
+                            {res.full_name}
+                            {hasAssignment && (
+                              <Badge className="bg-emerald-100 text-emerald-700 border-0 text-xs">
+                                Assigned
                               </Badge>
-                            </div>
+                            )}
+                          </div>
+                          <div className="text-sm text-stone-500 flex flex-wrap gap-x-4 gap-y-1">
+                            <span className="flex items-center gap-1">
+                              <Users className="h-3.5 w-3.5 text-stone-400" />
+                              {res.pax} pax
+                            </span>
+                            <span className="capitalize flex items-center gap-1">
+                              <MapPin className="h-3.5 w-3.5 text-stone-400" />
+                              {res.zone}
+                            </span>
+                            <span>
+                              {new Date(res.start_at).toLocaleString(
+                                undefined,
+                                {
+                                  dateStyle: "medium",
+                                  timeStyle: "short",
+                                },
+                              )}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className="capitalize rounded-full text-xs font-medium"
+                            >
+                              {res.status}
+                            </Badge>
                           </div>
                         </div>
-
-                        <Button
-                          size="sm"
-                          disabled={!assigning || isPending}
-                          onClick={() => handleAssign(res.id)}
-                          className={`rounded-full px-5 transition-all shrink-0 ${
-                            assigning
-                              ? "bg-[#F36509] hover:bg-[#d95608] text-white"
-                              : "bg-stone-100 text-stone-400 hover:bg-stone-100"
-                          }`}
-                        >
-                          {assigning ? "Assign here" : "Select space first"}
-                        </Button>
                       </div>
 
-                      {/* Current assignments */}
                       {hasAssignment && (
                         <div className="rounded-xl bg-stone-50 border border-stone-100 p-3 space-y-2">
                           <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">
@@ -825,9 +901,17 @@ export default function FloorClient({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    handleUnassignTable(res.id, t.id)
+                                    openUnassignConfirm(
+                                      "table",
+                                      res.id,
+                                      t.id,
+                                      t.table_number,
+                                      res.full_name,
+                                    )
                                   }
-                                  disabled={isPending}
+                                  disabled={
+                                    loadingKey === `unassign-table-${t.id}`
+                                  }
                                   className="text-stone-400 hover:text-red-500 ml-1"
                                   title="Unassign"
                                 >
@@ -845,9 +929,17 @@ export default function FloorClient({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    handleUnassignRoom(res.id, r.id)
+                                    openUnassignConfirm(
+                                      "room",
+                                      res.id,
+                                      r.id,
+                                      r.name,
+                                      res.full_name,
+                                    )
                                   }
-                                  disabled={isPending}
+                                  disabled={
+                                    loadingKey === `unassign-room-${r.id}`
+                                  }
                                   className="text-stone-400 hover:text-red-500 ml-1"
                                   title="Unassign"
                                 >
@@ -866,6 +958,158 @@ export default function FloorClient({
           )}
         </TabsContent>
       </Tabs>
+
+      {/* ── Assignment Dialog ─────────────────────────────────────────── */}
+      <Dialog
+        open={!!assignDialog}
+        onOpenChange={(open) => !open && setAssignDialog(null)}
+      >
+        <DialogContent className="sm:max-w-lg rounded-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">
+              Assign {assignDialog?.type === "table" ? "Table" : "Room"}{" "}
+              <span className="text-[#F36509]">{assignDialog?.name}</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="pt-2">
+            {candidateReservations.length === 0 ? (
+              <div className="py-10 text-center">
+                <Inbox className="mx-auto h-8 w-8 text-stone-300 mb-3" />
+                <p className="text-stone-600 font-medium">
+                  No matching reservations
+                </p>
+                <p className="text-sm text-stone-400 mt-1">
+                  There are no open reservations that fit this{" "}
+                  {assignDialog?.type} (capacity / zone).
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-stone-500 mb-3">
+                  Select a reservation to assign:
+                </p>
+                {candidateReservations.map((res) => (
+                  <button
+                    key={res.id}
+                    onClick={() => handleAssign(res.id)}
+                    disabled={loadingKey !== null}
+                    className="w-full text-left rounded-xl border border-stone-200 hover:border-[#F36509]/40 hover:bg-[#F36509]/5 p-4 transition-all disabled:opacity-50"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-stone-800">
+                          {res.full_name}
+                        </div>
+                        <div className="text-sm text-stone-500 flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                          <span>{res.pax} pax</span>
+                          <span className="capitalize">{res.zone}</span>
+                          <span>
+                            {new Date(res.start_at).toLocaleString(undefined, {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-sm font-medium text-[#F36509] shrink-0">
+                        {loadingKey === `assign-${res.id}`
+                          ? "Assigning…"
+                          : "Assign →"}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Unassign Confirmation Dialog (hold ~8s) ───────────────────── */}
+      <Dialog
+        open={!!unassignDialog}
+        onOpenChange={(open) => {
+          if (!open) {
+            resetHold();
+            setUnassignDialog(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl text-stone-800">
+              Unassign {unassignDialog?.type === "table" ? "Table" : "Room"}?
+            </DialogTitle>
+            <DialogDescription className="text-stone-500 pt-1">
+              You are about to unassign{" "}
+              <span className="font-medium text-stone-700">
+                {unassignDialog?.type === "table"
+                  ? `Table ${unassignDialog?.resourceName}`
+                  : `Room ${unassignDialog?.resourceName}`}
+              </span>{" "}
+              from{" "}
+              <span className="font-medium text-stone-700">
+                {unassignDialog?.guestName}
+              </span>
+              .
+              <br />
+              Hold the button below for ~{UNASSIGN_HOLD_MS / 1000} seconds to
+              confirm.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="pt-4 space-y-4">
+            <div className="h-2 w-full rounded-full bg-stone-100 overflow-hidden">
+              <div
+                className="h-full bg-red-500 rounded-full"
+                style={{ width: `${holdProgress}%` }}
+              />
+            </div>
+
+            <p className="text-center text-xs text-stone-400 tabular-nums">
+              {holdProgress >= 100
+                ? "Confirming…"
+                : `${Math.ceil(
+                    (UNASSIGN_HOLD_MS * (100 - holdProgress)) / 100 / 1000,
+                  )}s remaining`}
+            </p>
+
+            <DialogFooter className="flex-col sm:flex-col gap-2 sm:space-x-0">
+              <button
+                type="button"
+                onMouseDown={startHold}
+                onMouseUp={cancelHold}
+                onMouseLeave={cancelHold}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  startHold();
+                }}
+                onTouchEnd={cancelHold}
+                onTouchCancel={cancelHold}
+                disabled={loadingKey !== null}
+                className="relative w-full select-none rounded-full bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-medium py-3 px-6 transition-colors disabled:opacity-50 overflow-hidden"
+              >
+                <span className="relative z-10">
+                  {holdProgress >= 100 ? "Unassigning…" : "Hold to unassign"}
+                </span>
+              </button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full rounded-full text-stone-500"
+                onClick={() => {
+                  resetHold();
+                  setUnassignDialog(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

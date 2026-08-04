@@ -1378,7 +1378,7 @@ export async function toggleTableActive(id: string, isActive: boolean) {
 
     if (error) return { success: false, error: error.message };
 
-    revalidatePath("/admin/floor");
+    revalidatePath("/admin/spaces");
     return { success: true };
   } catch {
     return { success: false, error: "Failed to update table" };
@@ -1401,7 +1401,7 @@ export async function toggleRoomActive(id: string, isActive: boolean) {
 
     if (error) return { success: false, error: error.message };
 
-    revalidatePath("/admin/floor");
+    revalidatePath("/admin/spaces");
     return { success: true };
   } catch {
     return { success: false, error: "Failed to update room" };
@@ -1458,7 +1458,7 @@ export async function assignTableToReservation(
       })
       .eq("id", reservationId);
 
-    revalidatePath("/admin/floor");
+    revalidatePath("/admin/spaces");
     return { success: true };
   } catch (error) {
     console.error("assignTableToReservation error:", error);
@@ -1513,7 +1513,7 @@ export async function assignRoomToReservation(
       })
       .eq("id", reservationId);
 
-    revalidatePath("/admin/floor");
+    revalidatePath("/admin/spaces");
     return { success: true };
   } catch (error) {
     console.error("assignRoomToReservation error:", error);
@@ -1544,7 +1544,7 @@ export async function unassignTable(reservationId: string, tableId: string) {
       .update({ is_active: true, updated_at: new Date().toISOString() })
       .eq("id", tableId);
 
-    revalidatePath("/admin/floor");
+    revalidatePath("/admin/spaces");
     return { success: true };
   } catch {
     return { success: false, error: "Failed to unassign table" };
@@ -1574,7 +1574,7 @@ export async function unassignRoom(reservationId: string, roomId: string) {
       .update({ is_active: true, updated_at: new Date().toISOString() })
       .eq("id", roomId);
 
-    revalidatePath("/admin/floor");
+    revalidatePath("/admin/spaces");
     return { success: true };
   } catch {
     return { success: false, error: "Failed to unassign room" };
