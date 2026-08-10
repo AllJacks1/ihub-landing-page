@@ -15,9 +15,11 @@ export default async function ReservationsCalendarPage() {
 
   return (
     <CalendarProvider events={events} users={users}>
-      <div className="p-6">
-        <ClientContainer view="month" />
-      </div>
-    </CalendarProvider>
+  <div className="flex w-full justify-center p-6">
+    <div className="w-full max-w-7xl shrink-0">
+      <ClientContainer view="month" />
+    </div>
+  </div>
+</CalendarProvider>
   );
 }
