@@ -76,7 +76,7 @@ export async function createSupabaseClientForRead() {
 }
 
 // ==================== FULL CLIENT (for Server Actions) ====================
-async function createSupabaseClient() {
+export async function createSupabaseClient() {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -1767,5 +1767,57 @@ export async function getReservationsWithAssignments(
       error: "Failed to fetch reservations",
       data: [],
     };
+  }
+}
+
+export async function updateReservation(
+  id: string,
+  data: {
+    full_name?: string;
+    email?: string;
+    phone?: string | null;
+    pax?: number;
+    zone?: "bistro" | "study" | "room";
+    start_at?: string;
+    end_at?: string;
+    notes?: string | null;
+    status?:
+      | "pending"
+      | "confirmed"
+      | "seated"
+      | "completed"
+      | "cancelled"
+      | "no_show";
+  },
+) {
+  try {
+    const supabase = await createSupabaseClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    const { data: updated, error } = await supabase
+      .from("reservations")
+      .update({
+        ...data,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath("/admin/reservations");
+    revalidatePath("/admin/reservations/calendar");
+
+    return { success: true, data: updated };
+  } catch (error) {
+    console.error("updateReservation error:", error);
+    return { success: false, error: "Failed to update reservation" };
   }
 }

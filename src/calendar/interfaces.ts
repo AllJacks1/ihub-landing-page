@@ -7,13 +7,22 @@ export interface IUser {
 }
 
 export interface IEvent {
-  id: number;
+  id: string; // ← change from number
   startDate: string;
   endDate: string;
   title: string;
   color: TEventColor;
   description: string;
   user: IUser;
+  // Optional: keep original reservation data
+  reservation?: {
+    full_name: string | null;
+    pax: number;
+    zone: string;
+    status: string;
+    email: string;
+    phone: string | null;
+  };
 }
 
 export interface ICalendarCell {

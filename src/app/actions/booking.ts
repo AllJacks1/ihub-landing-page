@@ -1,5 +1,7 @@
 "use server";
 
+import { createSupabaseClient } from "@/lib/actions";
+import { revalidatePath } from "next/cache";
 import nodemailer from "nodemailer";
 
 const transporter = nodemailer.createTransport({
@@ -17,16 +19,74 @@ type BookingFormData = {
   phone: string;
   date: string;
   time: string;
+  endDate: string;
+  endTime: string;
   pax: number;
   room?: string;
   tableType?: string;
   notes?: string;
 };
 
-export async function submitBooking(data: BookingFormData) {
-  const { type, name, email, phone, date, time, pax, room, tableType, notes } =
-    data;
+function bookingTypeToZone(type: string) {
+  if (type === "conference") return "room";
+  if (type === "bistro") return "bistro";
+  return "study";
+}
 
+export async function submitBooking(data: BookingFormData) {
+  const {
+    type,
+    name,
+    email,
+    phone,
+    date,
+    time,
+    endDate,
+    endTime,
+    pax,
+    room,
+    tableType,
+    notes,
+  } = data;
+
+  const zone = bookingTypeToZone(type);
+  const start_at = new Date(`${date}T${time}:00`).toISOString();
+  const end_at = new Date(`${endDate}T${endTime}:00`).toISOString();
+
+  // Prefer room/table in notes if present
+  const extra =
+    room || tableType
+      ? `<p><strong>Preference:</strong> ${room || tableType}</p>`
+      : "";
+  const notesHtml = [extra, notes].filter(Boolean).join("") || undefined;
+
+  // 1. Save to DB
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase.from("reservations").insert({
+    full_name: name,
+    email,
+    phone: phone || null,
+    pax,
+    zone,
+    start_at,
+    end_at,
+    notes: notesHtml,
+    status: "pending",
+  });
+
+  if (error) {
+    console.error("Reservation insert error:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to save reservation.",
+    };
+  }
+
+  revalidatePath("/admin/reservations");
+  revalidatePath("/admin/reservations/calendar");
+  revalidatePath("/");
+
+  // 2. Send emails (your existing templates)
   const bookingTypeLabel =
     type === "coworking"
       ? "Coworking / Study"
@@ -223,7 +283,7 @@ export async function submitBooking(data: BookingFormData) {
                                 <td style="vertical-align:top;padding-left:16px;">
                                   <h3 style="margin:0 0 8px;color:#ffffff;font-size:16px;font-weight:700;">Action Required</h3>
                                   <p style="margin:0;color:#a8a29e;font-size:14px;line-height:1.6;">
-                                    Contact the guest within <strong style="color:#F36509;">2–4 hours</strong> to confirm. Collect <strong style="color:#F36509;">50% reservation fee</strong> via GCash or Bank Transfer.
+                                    Contact the guest within <strong style="color:#F36509;">10–30 minutes</strong> to confirm. Collect <strong style="color:#F36509;">50% reservation fee</strong> via GCash or Bank Transfer.
                                   </p>
                                 </td>
                               </tr>
@@ -295,7 +355,7 @@ export async function submitBooking(data: BookingFormData) {
                                 </td>
                                 <td style="vertical-align:top;padding-left:12px;">
                                   <p style="margin:0;color:#1c1917;font-size:15px;font-weight:600;">We'll Contact You</p>
-                                  <p style="margin:4px 0 0;color:#78716c;font-size:14px;line-height:1.5;">Our team will call or message you within <strong style="color:#F36509;">2–4 hours</strong> to confirm your booking details.</p>
+                                  <p style="margin:4px 0 0;color:#78716c;font-size:14px;line-height:1.5;">Our team will call or message you within <strong style="color:#F36509;">10–30 minutes</strong> to confirm your booking details.</p>
                                 </td>
                               </tr>
                             </table>

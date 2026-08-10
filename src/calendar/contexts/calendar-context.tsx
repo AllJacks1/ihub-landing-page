@@ -4,13 +4,20 @@ import { createContext, useContext, useState } from "react";
 
 import type { Dispatch, SetStateAction } from "react";
 import type { IEvent, IUser } from "@/calendar/interfaces";
-import type { TBadgeVariant, TVisibleHours, TWorkingHours } from "@/calendar/types";
+import type {
+  TBadgeVariant,
+  TVisibleHours,
+  TWorkingHours,
+} from "@/calendar/types";
+
+type TZoneFilter = "all" | "bistro" | "study" | "room";
 
 interface ICalendarContext {
   selectedDate: Date;
   setSelectedDate: (date: Date | undefined) => void;
-  selectedUserId: IUser["id"] | "all";
-  setSelectedUserId: (userId: IUser["id"] | "all") => void;
+  /** Zone filter (kept as selectedUserId for minimal churn with existing call sites) */
+  selectedUserId: TZoneFilter;
+  setSelectedUserId: (zone: TZoneFilter) => void;
   badgeVariant: TBadgeVariant;
   setBadgeVariant: (variant: TBadgeVariant) => void;
   users: IUser[];
@@ -24,7 +31,7 @@ interface ICalendarContext {
 
 const CalendarContext = createContext({} as ICalendarContext);
 
-const WORKING_HOURS = {
+const WORKING_HOURS: TWorkingHours = {
   0: { from: 0, to: 0 },
   1: { from: 8, to: 17 },
   2: { from: 8, to: 17 },
@@ -34,20 +41,27 @@ const WORKING_HOURS = {
   6: { from: 8, to: 12 },
 };
 
-const VISIBLE_HOURS = { from: 7, to: 18 };
+const VISIBLE_HOURS: TVisibleHours = { from: 7, to: 18 };
 
-export function CalendarProvider({ children, users, events }: { children: React.ReactNode; users: IUser[]; events: IEvent[] }) {
+export function CalendarProvider({
+  children,
+  users,
+  events,
+}: {
+  children: React.ReactNode;
+  users: IUser[];
+  events: IEvent[];
+}) {
   const [badgeVariant, setBadgeVariant] = useState<TBadgeVariant>("colored");
-  const [visibleHours, setVisibleHours] = useState<TVisibleHours>(VISIBLE_HOURS);
-  const [workingHours, setWorkingHours] = useState<TWorkingHours>(WORKING_HOURS);
+  const [visibleHours, setVisibleHours] =
+    useState<TVisibleHours>(VISIBLE_HOURS);
+  const [workingHours, setWorkingHours] =
+    useState<TWorkingHours>(WORKING_HOURS);
 
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedUserId, setSelectedUserId] = useState<IUser["id"] | "all">("all");
+  const [selectedUserId, setSelectedUserId] = useState<TZoneFilter>("all");
 
-  // This localEvents doesn't need to exists in a real scenario.
-  // It's used here just to simulate the update of the events.
-  // In a real scenario, the events would be updated in the backend
-  // and the request that fetches the events should be refetched
+  // Local optimistic copy — replace with a server refetch when ready
   const [localEvents, setLocalEvents] = useState<IEvent[]>(events);
 
   const handleSelectDate = (date: Date | undefined) => {
@@ -69,7 +83,6 @@ export function CalendarProvider({ children, users, events }: { children: React.
         setVisibleHours,
         workingHours,
         setWorkingHours,
-        // If you go to the refetch approach, you can remove the localEvents and pass the events directly
         events: localEvents,
         setLocalEvents,
       }}
@@ -81,6 +94,7 @@ export function CalendarProvider({ children, users, events }: { children: React.
 
 export function useCalendar(): ICalendarContext {
   const context = useContext(CalendarContext);
-  if (!context) throw new Error("useCalendar must be used within a CalendarProvider.");
+  if (!context)
+    throw new Error("useCalendar must be used within a CalendarProvider.");
   return context;
 }

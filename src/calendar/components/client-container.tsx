@@ -1,7 +1,18 @@
 "use client";
 
 import { useMemo } from "react";
-import { isSameDay, parseISO } from "date-fns";
+import {
+  isSameDay,
+  parseISO,
+  startOfYear,
+  endOfYear,
+  startOfMonth,
+  endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  startOfDay,
+  endOfDay,
+} from "date-fns";
 
 import { useCalendar } from "@/calendar/contexts/calendar-context";
 
@@ -15,90 +26,118 @@ import { CalendarDayView } from "@/calendar/components/week-and-day-view/calenda
 import { CalendarWeekView } from "@/calendar/components/week-and-day-view/calendar-week-view";
 
 import type { TCalendarView } from "@/calendar/types";
+import type { IEvent } from "@/calendar/interfaces";
 
 interface IProps {
   view: TCalendarView;
 }
 
+function getViewRange(view: TCalendarView, selectedDate: Date) {
+  switch (view) {
+    case "year":
+      return {
+        start: startOfYear(selectedDate),
+        end: endOfYear(selectedDate),
+      };
+    case "month":
+    case "agenda":
+      return {
+        start: startOfMonth(selectedDate),
+        end: endOfMonth(selectedDate),
+      };
+    case "week":
+      return {
+        start: startOfWeek(selectedDate),
+        end: endOfWeek(selectedDate),
+      };
+    case "day":
+      return {
+        start: startOfDay(selectedDate),
+        end: endOfDay(selectedDate),
+      };
+  }
+}
+
+function isInRange(event: IEvent, rangeStart: Date, rangeEnd: Date) {
+  const eventStart = parseISO(event.startDate);
+  const eventEnd = parseISO(event.endDate);
+  return eventStart <= rangeEnd && eventEnd >= rangeStart;
+}
+
+function matchesZone(event: IEvent, selectedZone: string) {
+  if (selectedZone === "all") return true;
+  return event.reservation?.zone === selectedZone;
+}
+
 export function ClientContainer({ view }: IProps) {
-  const { selectedDate, selectedUserId, events } = useCalendar();
+  const { selectedDate, selectedUserId: selectedZone, events } = useCalendar();
 
   const filteredEvents = useMemo(() => {
-    return events.filter(event => {
-      const eventStartDate = parseISO(event.startDate);
-      const eventEndDate = parseISO(event.endDate);
+    const { start, end } = getViewRange(view, selectedDate);
 
-      if (view === "year") {
-        const yearStart = new Date(selectedDate.getFullYear(), 0, 1);
-        const yearEnd = new Date(selectedDate.getFullYear(), 11, 31, 23, 59, 59, 999);
-        const isInSelectedYear = eventStartDate <= yearEnd && eventEndDate >= yearStart;
-        const isUserMatch = selectedUserId === "all" || event.user.id === selectedUserId;
-        return isInSelectedYear && isUserMatch;
-      }
+    return events.filter(
+      (event) =>
+        isInRange(event, start, end) && matchesZone(event, selectedZone),
+    );
+  }, [selectedDate, selectedZone, events, view]);
 
-      if (view === "month" || view === "agenda") {
-        const monthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-        const monthEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0, 23, 59, 59, 999);
-        const isInSelectedMonth = eventStartDate <= monthEnd && eventEndDate >= monthStart;
-        const isUserMatch = selectedUserId === "all" || event.user.id === selectedUserId;
-        return isInSelectedMonth && isUserMatch;
-      }
+  const singleDayEvents = useMemo(
+    () =>
+      filteredEvents.filter((event) =>
+        isSameDay(parseISO(event.startDate), parseISO(event.endDate)),
+      ),
+    [filteredEvents],
+  );
 
-      if (view === "week") {
-        const dayOfWeek = selectedDate.getDay();
+  const multiDayEvents = useMemo(
+    () =>
+      filteredEvents.filter(
+        (event) =>
+          !isSameDay(parseISO(event.startDate), parseISO(event.endDate)),
+      ),
+    [filteredEvents],
+  );
 
-        const weekStart = new Date(selectedDate);
-        weekStart.setDate(selectedDate.getDate() - dayOfWeek);
-        weekStart.setHours(0, 0, 0, 0);
-
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekStart.getDate() + 6);
-        weekEnd.setHours(23, 59, 59, 999);
-
-        const isInSelectedWeek = eventStartDate <= weekEnd && eventEndDate >= weekStart;
-        const isUserMatch = selectedUserId === "all" || event.user.id === selectedUserId;
-        return isInSelectedWeek && isUserMatch;
-      }
-
-      if (view === "day") {
-        const dayStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 0, 0, 0);
-        const dayEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 23, 59, 59);
-        const isInSelectedDay = eventStartDate <= dayEnd && eventEndDate >= dayStart;
-        const isUserMatch = selectedUserId === "all" || event.user.id === selectedUserId;
-        return isInSelectedDay && isUserMatch;
-      }
-    });
-  }, [selectedDate, selectedUserId, events, view]);
-
-  const singleDayEvents = filteredEvents.filter(event => {
-    const startDate = parseISO(event.startDate);
-    const endDate = parseISO(event.endDate);
-    return isSameDay(startDate, endDate);
-  });
-
-  const multiDayEvents = filteredEvents.filter(event => {
-    const startDate = parseISO(event.startDate);
-    const endDate = parseISO(event.endDate);
-    return !isSameDay(startDate, endDate);
-  });
-
-  // For year view, we only care about the start date
-  // by using the same date for both start and end,
-  // we ensure only the start day will show a dot
-  const eventStartDates = useMemo(() => {
-    return filteredEvents.map(event => ({ ...event, endDate: event.startDate }));
-  }, [filteredEvents]);
+  // Year view only needs start-day dots
+  const eventStartDates = useMemo(
+    () =>
+      filteredEvents.map((event) => ({
+        ...event,
+        endDate: event.startDate,
+      })),
+    [filteredEvents],
+  );
 
   return (
-    <div className="overflow-hidden rounded-xl border">
+    <div className="overflow-hidden rounded-xl border bg-card">
       <CalendarHeader view={view} events={filteredEvents} />
 
       <DndProviderWrapper>
-        {view === "day" && <CalendarDayView singleDayEvents={singleDayEvents} multiDayEvents={multiDayEvents} />}
-        {view === "month" && <CalendarMonthView singleDayEvents={singleDayEvents} multiDayEvents={multiDayEvents} />}
-        {view === "week" && <CalendarWeekView singleDayEvents={singleDayEvents} multiDayEvents={multiDayEvents} />}
+        {view === "day" && (
+          <CalendarDayView
+            singleDayEvents={singleDayEvents}
+            multiDayEvents={multiDayEvents}
+          />
+        )}
+        {view === "month" && (
+          <CalendarMonthView
+            singleDayEvents={singleDayEvents}
+            multiDayEvents={multiDayEvents}
+          />
+        )}
+        {view === "week" && (
+          <CalendarWeekView
+            singleDayEvents={singleDayEvents}
+            multiDayEvents={multiDayEvents}
+          />
+        )}
         {view === "year" && <CalendarYearView allEvents={eventStartDates} />}
-        {view === "agenda" && <CalendarAgendaView singleDayEvents={singleDayEvents} multiDayEvents={multiDayEvents} />}
+        {view === "agenda" && (
+          <CalendarAgendaView
+            singleDayEvents={singleDayEvents}
+            multiDayEvents={multiDayEvents}
+          />
+        )}
       </DndProviderWrapper>
     </div>
   );

@@ -1,29 +1,111 @@
+// src/calendar/components/dialogs/edit-event-dialog.tsx
 "use client";
 
-import { parseISO } from "date-fns";
-import { useForm } from "react-hook-form";
-import { AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { format, parseISO } from "date-fns";
+import { CalendarIcon, Clock } from "lucide-react";
+import { toast } from "sonner";
+import { z } from "zod";
 
 import { useDisclosure } from "@/hooks/use-disclosure";
 import { useCalendar } from "@/calendar/contexts/calendar-context";
-import { useUpdateEvent } from "@/calendar/hooks/use-update-event";
+import { updateReservation } from "@/lib/actions";
+import { cn } from "@/lib/utils";
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { TimeInput } from "@/components/ui/time-input";
-import { SingleDayPicker } from "@/components/ui/single-day-picker";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Form, FormField, FormLabel, FormItem, FormControl, FormMessage } from "@/components/ui/form";
-import { Select, SelectItem, SelectContent, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogHeader, DialogClose, DialogContent, DialogTrigger, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-
-import { eventSchema } from "@/calendar/schemas";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Field,
+  FieldLabel,
+  FieldError,
+  FieldGroup,
+  FieldSet,
+} from "@/components/ui/field";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 import type { IEvent } from "@/calendar/interfaces";
-import type { TimeValue } from "react-aria-components";
-import type { TEventFormData } from "@/calendar/schemas";
+import LazyTiptapEditor from "@/components/editor/LazyTiptapEditor";
+
+const reservationFormSchema = z
+  .object({
+    full_name: z.string().min(2, "Name is required"),
+    email: z.string().email("Valid email is required"),
+    phone: z.string().optional(),
+    pax: z.coerce.number().min(1, "At least 1 guest").max(50),
+    zone: z.enum(["bistro", "study", "room"]),
+    startDate: z.date({ message: "Start date is required" }),
+    startTime: z.string().min(1, "Start time is required"),
+    endDate: z.date({ message: "End date is required" }),
+    endTime: z.string().min(1, "End time is required"),
+    notes: z.string().optional(),
+    status: z.enum([
+      "pending",
+      "confirmed",
+      "seated",
+      "completed",
+      "cancelled",
+      "no_show",
+    ]),
+  })
+  .refine(
+    (data) => {
+      const start = combineDateAndTime(data.startDate, data.startTime);
+      const end = combineDateAndTime(data.endDate, data.endTime);
+      return start < end;
+    },
+    {
+      message: "End must be after start",
+      path: ["endDate"],
+    },
+  );
+
+type FormInput = z.input<typeof reservationFormSchema>;
+type FormOutput = z.output<typeof reservationFormSchema>;
+
+function combineDateAndTime(date: Date, time: string): Date {
+  const [hour, minute] = time.split(":").map(Number);
+  const result = new Date(date);
+  result.setHours(hour || 0, minute || 0, 0, 0);
+  return result;
+}
+
+function getTimeString(date: Date): string {
+  return format(date, "HH:mm");
+}
+
+// Status → color mapping (same as create)
+const statusToColor: Record<string, IEvent["color"]> = {
+  pending: "yellow",
+  confirmed: "green",
+  seated: "blue",
+  completed: "gray",
+  cancelled: "red",
+  no_show: "orange",
+};
 
 interface IProps {
   children: React.ReactNode;
@@ -32,285 +114,394 @@ interface IProps {
 
 export function EditEventDialog({ children, event }: IProps) {
   const { isOpen, onClose, onToggle } = useDisclosure();
+  const { setLocalEvents } = useCalendar();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { users } = useCalendar();
+  const start = parseISO(event.startDate);
+  const end = parseISO(event.endDate);
 
-  const { updateEvent } = useUpdateEvent();
+  // Prefer data from the mapped reservation object if present
+  const reservation = (event as any).reservation;
 
-  const form = useForm<TEventFormData>({
-    resolver: zodResolver(eventSchema),
+  const form = useForm<FormInput, unknown, FormOutput>({
+    resolver: zodResolver(reservationFormSchema),
     defaultValues: {
-      user: event.user.id,
-      title: event.title,
-      description: event.description,
-      startDate: parseISO(event.startDate),
-      startTime: { hour: parseISO(event.startDate).getHours(), minute: parseISO(event.startDate).getMinutes() },
-      endDate: parseISO(event.endDate),
-      endTime: { hour: parseISO(event.endDate).getHours(), minute: parseISO(event.endDate).getMinutes() },
-      color: event.color,
+      full_name: reservation?.full_name ?? event.user.name,
+      email: reservation?.email ?? "",
+      phone: reservation?.phone ?? "",
+      pax: reservation?.pax ?? 2,
+      zone: (reservation?.zone as "bistro" | "study" | "room") ?? "bistro",
+      startDate: start,
+      startTime: getTimeString(start),
+      endDate: end,
+      endTime: getTimeString(end),
+      notes: event.description ?? "",
+      status: (reservation?.status as FormOutput["status"]) ?? "pending",
     },
   });
 
-  const onSubmit = (values: TEventFormData) => {
-    const user = users.find(user => user.id === values.user);
+  async function onSubmit(values: FormOutput) {
+    setIsSubmitting(true);
 
-    if (!user) throw new Error("User not found");
+    try {
+      const startAt = combineDateAndTime(values.startDate, values.startTime);
+      const endAt = combineDateAndTime(values.endDate, values.endTime);
 
-    const startDateTime = new Date(values.startDate);
-    startDateTime.setHours(values.startTime.hour, values.startTime.minute);
+      const result = await updateReservation(String(event.id), {
+        full_name: values.full_name,
+        email: values.email,
+        phone: values.phone || null,
+        pax: values.pax,
+        zone: values.zone,
+        start_at: startAt.toISOString(),
+        end_at: endAt.toISOString(),
+        notes: values.notes || null,
+        status: values.status,
+      });
 
-    const endDateTime = new Date(values.endDate);
-    endDateTime.setHours(values.endTime.hour, values.endTime.minute);
+      if (!result.success) {
+        toast.error(result.error ?? "Failed to update reservation");
+        return;
+      }
 
-    updateEvent({
-      ...event,
-      user,
-      title: values.title,
-      color: values.color,
-      description: values.description,
-      startDate: startDateTime.toISOString(),
-      endDate: endDateTime.toISOString(),
-    });
+      toast.success("Reservation updated");
 
-    onClose();
+      // Optimistic local update
+      setLocalEvents((prev) =>
+        prev.map((e) =>
+          e.id === event.id
+            ? {
+                ...e,
+                title: `${values.full_name} (${values.pax} pax)`,
+                description:
+                  values.notes || `${values.zone} • ${values.status}`,
+                startDate: startAt.toISOString(),
+                endDate: endAt.toISOString(),
+                color: statusToColor[values.status] ?? "blue",
+                user: {
+                  ...e.user,
+                  name: values.full_name,
+                },
+                reservation: {
+                  pax: values.pax,
+                  zone: values.zone,
+                  status: values.status,
+                  email: values.email,
+                  phone: values.phone ?? null,
+                  full_name: values.full_name,
+                },
+              }
+            : e,
+        ),
+      );
+
+      onClose();
+    } catch {
+      toast.error("Something went wrong");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  const DateTimeField = ({
+    dateName,
+    timeName,
+    label,
+  }: {
+    dateName: "startDate" | "endDate";
+    timeName: "startTime" | "endTime";
+    label: string;
+  }) => {
+    const dateValue = form.watch(dateName);
+    const timeValue = form.watch(timeName);
+    const dateError = form.formState.errors[dateName];
+    const timeError = form.formState.errors[timeName];
+
+    return (
+      <Field data-invalid={!!dateError || !!timeError}>
+        <FieldLabel className="text-xs font-medium uppercase tracking-wider text-stone-500">
+          {label}
+        </FieldLabel>
+        <div className="mt-1.5 grid grid-cols-[1fr_110px] gap-2">
+          <Popover>
+            <PopoverTrigger
+              render={
+                <button
+                  className={cn(
+                    "flex h-10 w-full items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm transition-colors hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-[#F36509]/20 focus:border-[#F36509]",
+                    !dateValue ? "text-stone-400" : "text-stone-900",
+                  )}
+                >
+                  {dateValue ? (
+                    format(dateValue, "PPP")
+                  ) : (
+                    <span>Pick date</span>
+                  )}
+                  <CalendarIcon className="h-4 w-4 text-stone-400" />
+                </button>
+              }
+            ></PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={dateValue}
+                onSelect={(date) => {
+                  if (date) {
+                    form.setValue(dateName, date, { shouldValidate: true });
+                  }
+                }}
+              />
+            </PopoverContent>
+          </Popover>
+
+          <div className="relative">
+            <Clock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+            <input
+              type="time"
+              value={timeValue}
+              onChange={(e) =>
+                form.setValue(timeName, e.target.value, {
+                  shouldValidate: true,
+                })
+              }
+              className={cn(
+                "h-10 w-full rounded-lg border border-stone-200 bg-white pl-9 pr-2 text-sm text-stone-900 transition-colors hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-[#F36509]/20 focus:border-[#F36509]",
+                !timeValue && "text-stone-400",
+              )}
+            />
+          </div>
+        </div>
+        <FieldError
+          errors={[dateError, timeError]}
+          className="mt-1.5 text-xs text-red-600"
+        />
+      </Field>
+    );
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={onToggle}>
-      <DialogTrigger asChild>{children}</DialogTrigger>
+      <DialogTrigger>{children}</DialogTrigger>
 
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Edit Event</DialogTitle>
-          <DialogDescription>
-            <AlertTriangle className="mr-1 inline-block size-4 text-yellow-500" />
-            This form only updates the current event state locally for demonstration purposes. If you move an event after editing, some inconsistencies may
-            occur. In a real application, you should submit this form to a backend API to persist the changes.
-          </DialogDescription>
+          <DialogTitle>Edit Reservation</DialogTitle>
         </DialogHeader>
 
-        <Form {...form}>
-          <form id="event-form" onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4 py-4">
-            <FormField
-              control={form.control}
-              name="user"
-              render={({ field, fieldState }) => (
-                <FormItem>
-                  <FormLabel>Responsible</FormLabel>
-                  <FormControl>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger data-invalid={fieldState.invalid}>
-                        <SelectValue placeholder="Select an option" />
-                      </SelectTrigger>
+        <form
+          id="edit-reservation-form"
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="space-y-5 py-2"
+        >
+          <FieldSet>
+            <FieldGroup className="grid gap-4 sm:grid-cols-2">
+              <Field data-invalid={!!form.formState.errors.full_name}>
+                <FieldLabel
+                  htmlFor="edit_full_name"
+                  className="text-xs font-medium uppercase tracking-wider text-stone-500"
+                >
+                  Full Name
+                </FieldLabel>
+                <Input
+                  id="edit_full_name"
+                  placeholder="Juan Dela Cruz"
+                  className="mt-1.5 rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20"
+                  {...form.register("full_name")}
+                />
+                <FieldError
+                  errors={[form.formState.errors.full_name]}
+                  className="mt-1.5 text-xs text-red-600"
+                />
+              </Field>
 
-                      <SelectContent>
-                        {users.map(user => (
-                          <SelectItem key={user.id} value={user.id} className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <Avatar key={user.id} className="size-6">
-                                <AvatarImage src={user.picturePath ?? undefined} alt={user.name} />
-                                <AvatarFallback className="text-xxs">{user.name[0]}</AvatarFallback>
-                              </Avatar>
+              <Field data-invalid={!!form.formState.errors.email}>
+                <FieldLabel
+                  htmlFor="edit_email"
+                  className="text-xs font-medium uppercase tracking-wider text-stone-500"
+                >
+                  Email
+                </FieldLabel>
+                <Input
+                  id="edit_email"
+                  type="email"
+                  placeholder="juan@email.com"
+                  className="mt-1.5 rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20"
+                  {...form.register("email")}
+                />
+                <FieldError
+                  errors={[form.formState.errors.email]}
+                  className="mt-1.5 text-xs text-red-600"
+                />
+              </Field>
+            </FieldGroup>
 
-                              <p className="truncate">{user.name}</p>
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <FieldGroup className="grid gap-4 sm:grid-cols-2">
+              <Field data-invalid={!!form.formState.errors.phone}>
+                <FieldLabel
+                  htmlFor="edit_phone"
+                  className="text-xs font-medium uppercase tracking-wider text-stone-500"
+                >
+                  Phone{" "}
+                  <span className="font-normal normal-case text-stone-400">
+                    (optional)
+                  </span>
+                </FieldLabel>
+                <Input
+                  id="edit_phone"
+                  placeholder="+63 9XX XXX XXXX"
+                  className="mt-1.5 rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20"
+                  {...form.register("phone")}
+                />
+                <FieldError
+                  errors={[form.formState.errors.phone]}
+                  className="mt-1.5 text-xs text-red-600"
+                />
+              </Field>
 
-            <FormField
-              control={form.control}
-              name="title"
-              render={({ field, fieldState }) => (
-                <FormItem>
-                  <FormLabel htmlFor="title">Title</FormLabel>
+              <Field data-invalid={!!form.formState.errors.pax}>
+                <FieldLabel
+                  htmlFor="edit_pax"
+                  className="text-xs font-medium uppercase tracking-wider text-stone-500"
+                >
+                  Guests
+                </FieldLabel>
+                <Input
+                  id="edit_pax"
+                  type="number"
+                  min={1}
+                  max={50}
+                  className="mt-1.5 rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20"
+                  {...form.register("pax")}
+                />
+                <FieldError
+                  errors={[form.formState.errors.pax]}
+                  className="mt-1.5 text-xs text-red-600"
+                />
+              </Field>
+            </FieldGroup>
 
-                  <FormControl>
-                    <Input id="title" placeholder="Enter a title" data-invalid={fieldState.invalid} {...field} />
-                  </FormControl>
+            <FieldGroup className="grid gap-4 sm:grid-cols-2">
+              <Field data-invalid={!!form.formState.errors.zone}>
+                <FieldLabel className="text-xs font-medium uppercase tracking-wider text-stone-500">
+                  Zone
+                </FieldLabel>
+                <Select
+                  value={form.watch("zone")}
+                  onValueChange={(value) => {
+                    if (value)
+                      form.setValue("zone", value as FormOutput["zone"], {
+                        shouldValidate: true,
+                      });
+                  }}
+                >
+                  <SelectTrigger className="mt-1.5 rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20">
+                    <SelectValue placeholder="Select zone" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bistro">Bistro</SelectItem>
+                    <SelectItem value="study">Study Zone</SelectItem>
+                    <SelectItem value="room">Private Room</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FieldError
+                  errors={[form.formState.errors.zone]}
+                  className="mt-1.5 text-xs text-red-600"
+                />
+              </Field>
 
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <Field data-invalid={!!form.formState.errors.status}>
+                <FieldLabel className="text-xs font-medium uppercase tracking-wider text-stone-500">
+                  Status
+                </FieldLabel>
+                <Select
+                  value={form.watch("status")}
+                  onValueChange={(value) => {
+                    if (value)
+                      form.setValue("status", value as FormOutput["status"], {
+                        shouldValidate: true,
+                      });
+                  }}
+                >
+                  <SelectTrigger className="mt-1.5 rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20">
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="confirmed">Confirmed</SelectItem>
+                    <SelectItem value="seated">Seated</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                    <SelectItem value="no_show">No Show</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FieldError
+                  errors={[form.formState.errors.status]}
+                  className="mt-1.5 text-xs text-red-600"
+                />
+              </Field>
+            </FieldGroup>
 
-            <div className="flex items-start gap-2">
-              <FormField
+            <FieldGroup className="grid gap-4 sm:grid-cols-2">
+              <DateTimeField
+                dateName="startDate"
+                timeName="startTime"
+                label="Start"
+              />
+              <DateTimeField
+                dateName="endDate"
+                timeName="endTime"
+                label="End"
+              />
+            </FieldGroup>
+
+            <Field data-invalid={!!form.formState.errors.notes}>
+              <FieldLabel
+                htmlFor="edit_notes"
+                className="text-xs font-medium uppercase tracking-wider text-stone-500"
+              >
+                Notes{" "}
+                <span className="font-normal normal-case text-stone-400">
+                  (optional)
+                </span>
+              </FieldLabel>
+
+              <Controller
                 control={form.control}
-                name="startDate"
-                render={({ field, fieldState }) => (
-                  <FormItem className="flex-1">
-                    <FormLabel htmlFor="startDate">Start Date</FormLabel>
-
-                    <FormControl>
-                      <SingleDayPicker
-                        id="startDate"
-                        value={field.value}
-                        onSelect={date => field.onChange(date as Date)}
-                        placeholder="Select a date"
-                        data-invalid={fieldState.invalid}
-                      />
-                    </FormControl>
-
-                    <FormMessage />
-                  </FormItem>
+                name="notes"
+                render={({ field }) => (
+                  <LazyTiptapEditor
+                    value={field.value ?? ""}
+                    onChange={field.onChange}
+                    placeholder="Special requests, allergies, etc."
+                    className="mt-1.5 rounded-lg border-stone-200"
+                  />
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="startTime"
-                render={({ field, fieldState }) => (
-                  <FormItem className="flex-1">
-                    <FormLabel>Start Time</FormLabel>
-
-                    <FormControl>
-                      <TimeInput value={field.value as TimeValue} onChange={field.onChange} hourCycle={12} data-invalid={fieldState.invalid} />
-                    </FormControl>
-
-                    <FormMessage />
-                  </FormItem>
-                )}
+              <FieldError
+                errors={[form.formState.errors.notes]}
+                className="mt-1.5 text-xs text-red-600"
               />
-            </div>
-
-            <div className="flex items-start gap-2">
-              <FormField
-                control={form.control}
-                name="endDate"
-                render={({ field, fieldState }) => (
-                  <FormItem className="flex-1">
-                    <FormLabel>End Date</FormLabel>
-                    <FormControl>
-                      <SingleDayPicker
-                        value={field.value}
-                        onSelect={date => field.onChange(date as Date)}
-                        placeholder="Select a date"
-                        data-invalid={fieldState.invalid}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="endTime"
-                render={({ field, fieldState }) => (
-                  <FormItem className="flex-1">
-                    <FormLabel>End Time</FormLabel>
-                    <FormControl>
-                      <TimeInput value={field.value as TimeValue} onChange={field.onChange} hourCycle={12} data-invalid={fieldState.invalid} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            <FormField
-              control={form.control}
-              name="color"
-              render={({ field, fieldState }) => (
-                <FormItem>
-                  <FormLabel>Color</FormLabel>
-                  <FormControl>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger data-invalid={fieldState.invalid}>
-                        <SelectValue placeholder="Select an option" />
-                      </SelectTrigger>
-
-                      <SelectContent>
-                        <SelectItem value="blue">
-                          <div className="flex items-center gap-2">
-                            <div className="size-3.5 rounded-full bg-blue-600" />
-                            Blue
-                          </div>
-                        </SelectItem>
-
-                        <SelectItem value="green">
-                          <div className="flex items-center gap-2">
-                            <div className="size-3.5 rounded-full bg-green-600" />
-                            Green
-                          </div>
-                        </SelectItem>
-
-                        <SelectItem value="red">
-                          <div className="flex items-center gap-2">
-                            <div className="size-3.5 rounded-full bg-red-600" />
-                            Red
-                          </div>
-                        </SelectItem>
-
-                        <SelectItem value="yellow">
-                          <div className="flex items-center gap-2">
-                            <div className="size-3.5 rounded-full bg-yellow-600" />
-                            Yellow
-                          </div>
-                        </SelectItem>
-
-                        <SelectItem value="purple">
-                          <div className="flex items-center gap-2">
-                            <div className="size-3.5 rounded-full bg-purple-600" />
-                            Purple
-                          </div>
-                        </SelectItem>
-
-                        <SelectItem value="orange">
-                          <div className="flex items-center gap-2">
-                            <div className="size-3.5 rounded-full bg-orange-600" />
-                            Orange
-                          </div>
-                        </SelectItem>
-
-                        <SelectItem value="gray">
-                          <div className="flex items-center gap-2">
-                            <div className="size-3.5 rounded-full bg-neutral-600" />
-                            Gray
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field, fieldState }) => (
-                <FormItem>
-                  <FormLabel>Description</FormLabel>
-
-                  <FormControl>
-                    <Textarea {...field} value={field.value} data-invalid={fieldState.invalid} />
-                  </FormControl>
-
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </form>
-        </Form>
+            </Field>
+          </FieldSet>
+        </form>
 
         <DialogFooter>
-          <DialogClose asChild>
-            <Button type="button" variant="outline">
-              Cancel
-            </Button>
-          </DialogClose>
+          <DialogClose
+            render={
+              <Button type="button" variant="outline">
+                Cancel
+              </Button>
+            }
+          ></DialogClose>
 
-          <Button form="event-form" type="submit">
-            Save changes
+          <Button
+            form="edit-reservation-form"
+            type="submit"
+            disabled={isSubmitting}
+            className="bg-[#F36509] hover:bg-[#F36509]/90"
+          >
+            {isSubmitting ? "Saving..." : "Save changes"}
           </Button>
         </DialogFooter>
       </DialogContent>

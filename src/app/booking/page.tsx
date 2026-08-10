@@ -8,11 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Calendar,
-  Clock,
-  Users,
   Briefcase,
   Coffee,
   BookOpen,
@@ -23,11 +19,14 @@ import {
   Info,
   User,
   MessageSquare,
+  CalendarDays,
+  Clock,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import Image from "next/image";
 import { submitBooking } from "../actions/booking";
+import LazyTiptapEditor from "@/components/editor/LazyTiptapEditor";
 
 type BookingType = "coworking" | "conference" | "bistro";
 
@@ -70,7 +69,7 @@ const bistroTableTypes = [
 
 const guidelines = [
   "A 50% reservation fee is required to secure and lock in your booking.",
-  "Our team will use the contact information you provide to call or message you within 2–4 hours to confirm your reservation details.",
+  "Our team will use the contact information you provide to call or message you within 10–30 minutes to confirm your reservation details.",
   "Once confirmed, we will send you the payment instructions via GCash or Bank Transfer.",
   "The remaining balance is due on the day of your reservation (or before, depending on agreement).",
   "Cancellations made less than 24 hours prior will forfeit the 50% reservation fee.",
@@ -79,24 +78,27 @@ const guidelines = [
 
 const validTypes: BookingType[] = ["coworking", "conference", "bistro"];
 
+const emptyForm = (type: BookingType = "coworking") => ({
+  type,
+  name: "",
+  email: "",
+  phone: "",
+  date: "",
+  time: "",
+  endDate: "",
+  endTime: "",
+  pax: 1,
+  room: "",
+  tableType: "",
+  notes: "",
+});
+
 export default function BookingPage() {
   const searchParams = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<BookingType>("coworking");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const [formData, setFormData] = useState({
-    type: "coworking",
-    name: "",
-    email: "",
-    phone: "",
-    date: "",
-    time: "",
-    pax: 1,
-    room: "",
-    tableType: "",
-    notes: "",
-  });
+  const [formData, setFormData] = useState(emptyForm());
 
   useEffect(() => {
     const typeFromUrl = searchParams.get("type") as BookingType;
@@ -112,11 +114,32 @@ export default function BookingPage() {
     >,
   ) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [name]: value };
+      // Mirror start date → end date when end is empty
+      if (name === "date" && !prev.endDate) {
+        next.endDate = value;
+      }
+      return next;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const start = new Date(`${formData.date}T${formData.time}:00`);
+    const end = new Date(`${formData.endDate}T${formData.endTime}:00`);
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      toast.error("Please enter valid start and end date/time.");
+      return;
+    }
+
+    if (end <= start) {
+      toast.error("End must be after start.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     const result = await submitBooking({
@@ -131,19 +154,7 @@ export default function BookingPage() {
           "We'll contact you shortly to confirm and send payment details.",
         duration: 7000,
       });
-      // Reset form
-      setFormData({
-        type: activeTab,
-        name: "",
-        email: "",
-        phone: "",
-        date: "",
-        time: "",
-        pax: 1,
-        room: "",
-        tableType: "",
-        notes: "",
-      });
+      setFormData(emptyForm(activeTab));
     } else {
       toast.error("Failed to Submit Reservation", {
         description:
@@ -154,11 +165,15 @@ export default function BookingPage() {
     setIsSubmitting(false);
   };
 
+  const fieldClass =
+    "h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 placeholder:text-stone-400 focus:border-[#F36509] focus:ring-[#F36509]";
+  const labelClass =
+    "flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500";
+
   return (
     <main className="min-h-screen bg-stone-50">
       {/* Hero */}
       <section className="relative flex min-h-[600px] items-center justify-center overflow-hidden">
-        {/* Background Image */}
         <Image
           src="/images/bistroThumbnail.png"
           alt="Reserve Your Space at iHub"
@@ -166,8 +181,6 @@ export default function BookingPage() {
           className="object-cover"
           priority
         />
-
-        {/* Dark overlay for text readability */}
         <div className="absolute inset-0 bg-stone-900/70" />
 
         <div className="relative z-10 mx-auto max-w-3xl px-6 text-center">
@@ -195,17 +208,20 @@ export default function BookingPage() {
         <div className="mx-auto max-w-4xl">
           <Tabs
             value={activeTab}
-            onValueChange={(v) => setActiveTab(v as BookingType)}
+            onValueChange={(v) => {
+              const type = v as BookingType;
+              setActiveTab(type);
+              setFormData((prev) => ({ ...prev, type }));
+            }}
             className="w-full"
           >
-            {/* Tab Selection */}
             <div className="mb-10">
-              <TabsList className="grid w-full grid-cols-3 gap-1.5 rounded-3xl bg-white p-1.5 min-h-[126px]">
+              <TabsList className="grid min-h-[126px] w-full grid-cols-3 gap-1.5 rounded-3xl bg-white p-1.5">
                 {bookingTypes.map((type) => (
                   <TabsTrigger
                     key={type.id}
                     value={type.id}
-                    className="cursor-pointer min-h-[96px] rounded-2xl px-4 py-6 text-sm font-semibold text-stone-400 hover:text-[#F36509] data-active:bg-[#F36509] data-active:text-white data-active:shadow-md data-active:hover:bg-white data-active:hover:text-[#F36509] data-active:hover:border-[#F36509]"
+                    className="min-h-[96px] cursor-pointer rounded-2xl px-4 py-6 text-sm font-semibold text-stone-400 hover:text-[#F36509] data-active:bg-[#F36509] data-active:text-white data-active:shadow-md data-active:hover:border-[#F36509] data-active:hover:bg-white data-active:hover:text-[#F36509]"
                   >
                     <div className="flex flex-col items-center gap-2">
                       <type.icon className="h-5 w-5" />
@@ -216,11 +232,9 @@ export default function BookingPage() {
               </TabsList>
             </div>
 
-            {/* Form Card */}
             <Card className="border-stone-200 bg-white shadow-lg">
               <CardContent className="p-8 md:p-12">
                 <form onSubmit={handleSubmit} className="space-y-10">
-                  {/* Tab Headers */}
                   <TabsContent value="coworking" className="mt-0">
                     <TabHeader
                       icon={BookOpen}
@@ -245,10 +259,10 @@ export default function BookingPage() {
                     />
                   </TabsContent>
 
-                  {/* Contact Info - Name & Phone (All Tabs) */}
+                  {/* Contact */}
                   <div className="grid gap-6 md:grid-cols-2">
                     <div className="space-y-2">
-                      <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
+                      <Label className={labelClass}>
                         <User className="h-4 w-4" />
                         Full Name
                       </Label>
@@ -259,12 +273,12 @@ export default function BookingPage() {
                         onChange={handleChange}
                         placeholder="Juan Dela Cruz"
                         required
-                        className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 placeholder:text-stone-400 focus:border-[#F36509] focus:ring-[#F36509]"
+                        className={fieldClass}
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
+                      <Label className={labelClass}>
                         <Phone className="h-4 w-4" />
                         Contact Number
                       </Label>
@@ -275,16 +289,13 @@ export default function BookingPage() {
                         onChange={handleChange}
                         placeholder="09XX XXX XXXX"
                         required
-                        className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 placeholder:text-stone-400 focus:border-[#F36509] focus:ring-[#F36509]"
+                        className={fieldClass}
                       />
                     </div>
                   </div>
 
-                  {/* Email Field - NEW */}
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
-                      Email Address
-                    </Label>
+                    <Label className={labelClass}>Email Address</Label>
                     <Input
                       type="email"
                       name="email"
@@ -292,49 +303,93 @@ export default function BookingPage() {
                       onChange={handleChange}
                       placeholder="your@email.com"
                       required
-                      className="h-14 rounded-2xl border-stone-200 bg-stone-50 px-6 text-stone-900 placeholder:text-stone-400 focus:border-[#F36509]"
+                      className={fieldClass}
                     />
                   </div>
 
-                  {/* Date, Time, Pax - Add name + value + onChange to each */}
-                  <div className="grid gap-6 md:grid-cols-3">
+                  {/* Start */}
+                  <div className="grid gap-6 md:grid-cols-2">
                     <div className="space-y-2">
-                      <Label>Date</Label>
+                      <Label className={labelClass}>
+                        <CalendarDays className="h-4 w-4" />
+                        Start Date
+                      </Label>
                       <Input
                         type="date"
                         name="date"
                         value={formData.date}
                         onChange={handleChange}
                         required
+                        className={fieldClass}
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Time</Label>
+                      <Label className={labelClass}>
+                        <Clock className="h-4 w-4" />
+                        Start Time
+                      </Label>
                       <Input
                         type="time"
                         name="time"
                         value={formData.time}
                         onChange={handleChange}
                         required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Pax</Label>
-                      <Input
-                        type="number"
-                        name="pax"
-                        value={formData.pax}
-                        onChange={handleChange}
-                        min="1"
-                        required
+                        className={fieldClass}
                       />
                     </div>
                   </div>
 
-                  {/* Conference Room */}
+                  {/* End */}
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label className={labelClass}>
+                        <CalendarDays className="h-4 w-4" />
+                        End Date
+                      </Label>
+                      <Input
+                        type="date"
+                        name="endDate"
+                        value={formData.endDate}
+                        onChange={handleChange}
+                        min={formData.date || undefined}
+                        required
+                        className={fieldClass}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className={labelClass}>
+                        <Clock className="h-4 w-4" />
+                        End Time
+                      </Label>
+                      <Input
+                        type="time"
+                        name="endTime"
+                        value={formData.endTime}
+                        onChange={handleChange}
+                        required
+                        className={fieldClass}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Pax */}
+                  <div className="max-w-xs space-y-2">
+                    <Label className={labelClass}>Guests</Label>
+                    <Input
+                      type="number"
+                      name="pax"
+                      value={formData.pax}
+                      onChange={handleChange}
+                      min={1}
+                      required
+                      className={fieldClass}
+                    />
+                  </div>
+
+                  {/* Conference room */}
                   <TabsContent value="conference" className="mt-0">
                     <div className="space-y-2">
-                      <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
+                      <Label className={labelClass}>
                         <Briefcase className="h-4 w-4" />
                         Preferred Room
                       </Label>
@@ -353,10 +408,10 @@ export default function BookingPage() {
                     </div>
                   </TabsContent>
 
-                  {/* Bistro Table */}
+                  {/* Bistro table */}
                   <TabsContent value="bistro" className="mt-0">
                     <div className="space-y-2">
-                      <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-500">
+                      <Label className={labelClass}>
                         <UtensilsCrossed className="h-4 w-4" />
                         Preferred Table
                       </Label>
@@ -377,13 +432,17 @@ export default function BookingPage() {
 
                   {/* Notes */}
                   <div className="space-y-2">
-                    <Label>Additional Notes</Label>
-                    <Textarea
-                      name="notes"
+                    <Label className={labelClass}>
+                      <MessageSquare className="h-4 w-4" />
+                      Additional Notes
+                    </Label>
+                    <LazyTiptapEditor
                       value={formData.notes}
-                      onChange={handleChange}
-                      rows={4}
-                      placeholder="Special requests..."
+                      onChange={(html) =>
+                        setFormData((prev) => ({ ...prev, notes: html }))
+                      }
+                      placeholder="Special requests, allergies, occasion…"
+                      className="rounded-2xl border-stone-200"
                     />
                   </div>
 
@@ -392,7 +451,7 @@ export default function BookingPage() {
                     <CardContent className="p-8">
                       <div className="mb-5 flex items-center gap-2">
                         <Info className="h-5 w-5 text-[#F36509]" />
-                        <h3 className="font-semibold text-lg text-stone-900">
+                        <h3 className="text-lg font-semibold text-stone-900">
                           Reservation Guidelines
                         </h3>
                       </div>
@@ -426,12 +485,11 @@ export default function BookingPage() {
                     </CardContent>
                   </Card>
 
-                  {/* Submit */}
                   <Button
                     type="submit"
                     size="lg"
                     disabled={isSubmitting}
-                    className="cursor-pointer h-14 w-full rounded-full bg-[#F36509] text-lg font-semibold text-white shadow-xl transition-all hover:bg-[#e05a00]"
+                    className="h-14 w-full cursor-pointer rounded-full bg-[#F36509] text-lg font-semibold text-white shadow-xl transition-all hover:bg-[#e05a00]"
                   >
                     {isSubmitting
                       ? "Submitting..."
@@ -450,7 +508,6 @@ export default function BookingPage() {
         </div>
       </section>
 
-      {/* Bottom Tagline */}
       <section className="bg-white px-6 py-16 text-center">
         <div className="mx-auto max-w-2xl">
           <p className="font-serif text-2xl italic tracking-tight text-stone-400">
@@ -462,7 +519,6 @@ export default function BookingPage() {
   );
 }
 
-// Tab Header Component
 function TabHeader({
   icon: Icon,
   title,
