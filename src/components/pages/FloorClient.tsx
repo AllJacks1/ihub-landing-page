@@ -45,8 +45,13 @@ import {
   Calendar,
   X,
   Inbox,
+  Eye,
 } from "lucide-react";
 import Image from "next/image";
+import {
+  FloorReservationViewDialog,
+  type FloorReservation,
+} from "../sections/FloorReservationView";
 
 type Table = {
   id: string;
@@ -113,6 +118,9 @@ export default function FloorClient({
   const [rooms, setRooms] = useState(initialRooms);
   const [reservations, setReservations] = useState(initialReservations);
 
+  const [viewReservation, setViewReservation] =
+    useState<FloorReservation | null>(null);
+
   useEffect(() => {
     setTables(initialTables);
     setRooms(initialRooms);
@@ -133,7 +141,6 @@ export default function FloorClient({
   });
   const [openRoomDialog, setOpenRoomDialog] = useState(false);
 
-  // ── Assignment dialog ────────────────────────────────────
   const [assignDialog, setAssignDialog] = useState<{
     type: "table" | "room";
     id: string;
@@ -142,7 +149,6 @@ export default function FloorClient({
     zone?: string;
   } | null>(null);
 
-  // ── Unassign confirmation dialog ─────────────────────────
   const [unassignDialog, setUnassignDialog] = useState<{
     type: "table" | "room";
     reservationId: string;
@@ -169,7 +175,6 @@ export default function FloorClient({
     resetHold();
 
     const tick = (now: number) => {
-      // Capture start time from the first rAF frame — no Date.now / performance.now
       if (holdStartRef.current === null) {
         holdStartRef.current = now;
       }
@@ -193,7 +198,6 @@ export default function FloorClient({
     resetHold();
   }
 
-  // Clean up hold when dialog closes or component unmounts
   useEffect(() => {
     if (!unassignDialog) resetHold();
     return () => resetHold();
@@ -361,35 +365,35 @@ export default function FloorClient({
   return (
     <div className="space-y-8">
       <Tabs defaultValue="tables" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-3 bg-stone-100 p-1 rounded-xl h-auto pb-12">
+        <TabsList className="grid h-auto w-full max-w-md grid-cols-3 rounded-xl bg-stone-100 p-1 pb-12">
           <TabsTrigger
             value="tables"
-            className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-stone-900 data-[state=active]:shadow-sm text-stone-500 py-2.5 transition-all"
+            className="rounded-lg py-2.5 text-stone-500 transition-all data-[state=active]:bg-white data-[state=active]:text-stone-900 data-[state=active]:shadow-sm"
           >
             Tables
           </TabsTrigger>
           <TabsTrigger
             value="rooms"
-            className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-stone-900 data-[state=active]:shadow-sm text-stone-500 py-2.5 transition-all"
+            className="rounded-lg py-2.5 text-stone-500 transition-all data-[state=active]:bg-white data-[state=active]:text-stone-900 data-[state=active]:shadow-sm"
           >
             Rooms
           </TabsTrigger>
           <TabsTrigger
             value="assign"
-            className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-stone-900 data-[state=active]:shadow-sm text-stone-500 py-2.5 transition-all"
+            className="rounded-lg py-2.5 text-stone-500 transition-all data-[state=active]:bg-white data-[state=active]:text-stone-900 data-[state=active]:shadow-sm"
           >
             Assignments
           </TabsTrigger>
         </TabsList>
 
         {/* ==================== TABLES ==================== */}
-        <TabsContent value="tables" className="space-y-6 mt-6">
+        <TabsContent value="tables" className="mt-6 space-y-6">
           <div className="flex items-end justify-between">
             <div>
-              <h2 className="text-xl font-semibold font-serif text-stone-800">
+              <h2 className="font-serif text-xl font-semibold text-stone-800">
                 Tables
               </h2>
-              <p className="text-sm text-stone-400 mt-0.5">
+              <p className="mt-0.5 text-sm text-stone-400">
                 {tables.length} table{tables.length !== 1 ? "s" : ""} across
                 bistro and coworking zones
               </p>
@@ -398,13 +402,13 @@ export default function FloorClient({
             <Dialog open={openTableDialog} onOpenChange={setOpenTableDialog}>
               <DialogTrigger
                 render={
-                  <Button className="rounded-full bg-[#F36509] hover:bg-[#d95608] text-white shadow-sm">
+                  <Button className="rounded-full bg-[#F36509] text-white shadow-sm hover:bg-[#d95608]">
                     <Plus className="mr-2 h-4 w-4" />
                     Add Table
                   </Button>
                 }
               />
-              <DialogContent className="sm:max-w-md rounded-2xl">
+              <DialogContent className="rounded-2xl sm:max-w-md">
                 <DialogHeader>
                   <DialogTitle className="font-serif text-xl">
                     Create New Table
@@ -445,12 +449,13 @@ export default function FloorClient({
                     <Label className="text-stone-600">Zone</Label>
                     <Select
                       value={tableForm.zone}
-                      onValueChange={(v) =>
-                        setTableForm({
-                          ...tableForm,
-                          zone: v as "bistro" | "coworking",
-                        })
-                      }
+                      onValueChange={(v) => {
+                        if (v)
+                          setTableForm({
+                            ...tableForm,
+                            zone: v as "bistro" | "coworking",
+                          });
+                      }}
                     >
                       <SelectTrigger className="rounded-xl border-stone-200 focus:ring-[#F36509]/30">
                         <SelectValue />
@@ -462,7 +467,7 @@ export default function FloorClient({
                     </Select>
                   </div>
                   <Button
-                    className="w-full rounded-full bg-[#F36509] hover:bg-[#d95608] text-white"
+                    className="w-full rounded-full bg-[#F36509] text-white hover:bg-[#d95608]"
                     onClick={handleCreateTable}
                     disabled={isPending || !tableForm.table_number}
                   >
@@ -484,8 +489,8 @@ export default function FloorClient({
               return (
                 <Card
                   key={table.id}
-                  className={`pt-0 group rounded-2xl border-stone-200 overflow-hidden transition-all duration-300 hover:shadow-lg hover:border-stone-300 ${
-                    isOccupied ? "opacity-70 border-dashed" : ""
+                  className={`group overflow-hidden rounded-2xl border-stone-200 pt-0 transition-all duration-300 hover:border-stone-300 hover:shadow-lg ${
+                    isOccupied ? "border-dashed opacity-70" : ""
                   }`}
                 >
                   <div className="relative h-40 w-full overflow-hidden">
@@ -503,7 +508,7 @@ export default function FloorClient({
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
 
                     <Badge
-                      className={`absolute top-3 right-3 backdrop-blur-md border-0 ${
+                      className={`absolute top-3 right-3 border-0 backdrop-blur-md ${
                         isOccupied
                           ? "bg-stone-500/90 text-white"
                           : "bg-emerald-500/90 text-white"
@@ -513,28 +518,28 @@ export default function FloorClient({
                         "Occupied"
                       ) : (
                         <span className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
                           Available
                         </span>
                       )}
                     </Badge>
 
-                    <span className="absolute bottom-3 left-4 text-white/90 text-xs font-medium uppercase tracking-wider">
+                    <span className="absolute bottom-3 left-4 text-xs font-medium tracking-wider text-white/90 uppercase">
                       {table.zone}
                     </span>
                   </div>
 
                   <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-2">
+                    <div className="mb-2 flex items-start justify-between">
                       <h3 className="text-lg font-semibold text-stone-800">
                         {table.table_number}
                       </h3>
-                      <span className="text-[10px] text-stone-300 font-mono uppercase tracking-wider">
+                      <span className="font-mono text-[10px] tracking-wider text-stone-300 uppercase">
                         {table.id.slice(0, 8)}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-4 mb-4">
+                    <div className="mb-4 flex items-center gap-4">
                       <span className="flex items-center gap-1.5 text-sm text-stone-500">
                         <Users className="h-3.5 w-3.5 text-stone-400" />
                         {table.seats} seats
@@ -546,12 +551,23 @@ export default function FloorClient({
                     </div>
 
                     {assignedTo && (
-                      <p className="text-xs text-[#F36509] mb-3">
-                        Assigned to {assignedTo.full_name}
-                      </p>
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <p className="text-xs text-[#F36509]">
+                          Assigned to {assignedTo.full_name}
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 rounded-full px-2.5 text-xs text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                          onClick={() => setViewReservation(assignedTo)}
+                        >
+                          <Eye className="mr-1 h-3.5 w-3.5" />
+                          View
+                        </Button>
+                      </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-3 border-t border-stone-100">
+                    <div className="flex items-center justify-between border-t border-stone-100 pt-3">
                       <div className="flex items-center gap-2.5">
                         <Switch
                           checked={table.is_active}
@@ -577,7 +593,7 @@ export default function FloorClient({
                           })
                         }
                         disabled={isOccupied}
-                        className="text-[#F36509] hover:text-[#d95608] hover:bg-[#F36509]/5 rounded-full px-4"
+                        className="rounded-full px-4 text-[#F36509] hover:bg-[#F36509]/5 hover:text-[#d95608]"
                       >
                         Assign
                       </Button>
@@ -588,13 +604,14 @@ export default function FloorClient({
             })}
 
             <button
+              type="button"
               onClick={() => setOpenTableDialog(true)}
-              className="group flex flex-col items-center justify-center gap-3 min-h-[320px] rounded-2xl border-2 border-dashed border-stone-300 hover:border-[#F36509] hover:bg-[#F36509]/5 transition-all duration-300"
+              className="group flex min-h-[320px] flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-stone-300 transition-all duration-300 hover:border-[#F36509] hover:bg-[#F36509]/5"
             >
-              <div className="w-12 h-12 rounded-full bg-stone-100 group-hover:bg-[#F36509]/10 flex items-center justify-center transition-colors">
-                <Plus className="w-6 h-6 text-stone-400 group-hover:text-[#F36509] transition-colors" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-stone-100 transition-colors group-hover:bg-[#F36509]/10">
+                <Plus className="h-6 w-6 text-stone-400 transition-colors group-hover:text-[#F36509]" />
               </div>
-              <span className="text-sm font-medium text-stone-400 group-hover:text-[#F36509] transition-colors">
+              <span className="text-sm font-medium text-stone-400 transition-colors group-hover:text-[#F36509]">
                 Add New Table
               </span>
             </button>
@@ -602,13 +619,13 @@ export default function FloorClient({
         </TabsContent>
 
         {/* ==================== ROOMS ==================== */}
-        <TabsContent value="rooms" className="space-y-6 mt-6">
+        <TabsContent value="rooms" className="mt-6 space-y-6">
           <div className="flex items-end justify-between">
             <div>
-              <h2 className="text-xl font-semibold font-serif text-stone-800">
+              <h2 className="font-serif text-xl font-semibold text-stone-800">
                 Rooms
               </h2>
-              <p className="text-sm text-stone-400 mt-0.5">
+              <p className="mt-0.5 text-sm text-stone-400">
                 {rooms.length} room{rooms.length !== 1 ? "s" : ""} available for
                 booking
               </p>
@@ -617,13 +634,13 @@ export default function FloorClient({
             <Dialog open={openRoomDialog} onOpenChange={setOpenRoomDialog}>
               <DialogTrigger
                 render={
-                  <Button className="rounded-full bg-[#F36509] hover:bg-[#d95608] text-white shadow-sm">
+                  <Button className="rounded-full bg-[#F36509] text-white shadow-sm hover:bg-[#d95608]">
                     <Plus className="mr-2 h-4 w-4" />
                     Add Room
                   </Button>
                 }
               />
-              <DialogContent className="sm:max-w-md rounded-2xl">
+              <DialogContent className="rounded-2xl sm:max-w-md">
                 <DialogHeader>
                   <DialogTitle className="font-serif text-xl">
                     Create New Room
@@ -672,7 +689,7 @@ export default function FloorClient({
                     />
                   </div>
                   <Button
-                    className="w-full rounded-full bg-[#F36509] hover:bg-[#d95608] text-white"
+                    className="w-full rounded-full bg-[#F36509] text-white hover:bg-[#d95608]"
                     onClick={handleCreateRoom}
                     disabled={isPending || !roomForm.name}
                   >
@@ -694,8 +711,8 @@ export default function FloorClient({
               return (
                 <Card
                   key={room.id}
-                  className={`pt-0 group rounded-2xl border-stone-200 overflow-hidden transition-all duration-300 hover:shadow-lg hover:border-stone-300 ${
-                    isOccupied ? "opacity-70 border-dashed" : ""
+                  className={`group overflow-hidden rounded-2xl border-stone-200 pt-0 transition-all duration-300 hover:border-stone-300 hover:shadow-lg ${
+                    isOccupied ? "border-dashed opacity-70" : ""
                   }`}
                 >
                   <div className="relative h-40 w-full overflow-hidden">
@@ -711,7 +728,7 @@ export default function FloorClient({
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
 
                     <Badge
-                      className={`absolute top-3 right-3 backdrop-blur-md border-0 ${
+                      className={`absolute top-3 right-3 border-0 backdrop-blur-md ${
                         isOccupied
                           ? "bg-stone-500/90 text-white"
                           : "bg-emerald-500/90 text-white"
@@ -721,7 +738,7 @@ export default function FloorClient({
                         "Occupied"
                       ) : (
                         <span className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
                           Available
                         </span>
                       )}
@@ -729,30 +746,41 @@ export default function FloorClient({
                   </div>
 
                   <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-2">
+                    <div className="mb-2 flex items-start justify-between">
                       <h3 className="text-lg font-semibold text-stone-800">
                         {room.name}
                       </h3>
                     </div>
 
-                    <div className="flex items-center gap-1.5 text-sm text-stone-500 mb-3">
+                    <div className="mb-3 flex items-center gap-1.5 text-sm text-stone-500">
                       <Users className="h-3.5 w-3.5 text-stone-400" />
                       {room.seats} seats
                     </div>
 
                     {room.description && (
-                      <p className="text-sm text-stone-400 line-clamp-2 mb-4">
+                      <p className="mb-4 line-clamp-2 text-sm text-stone-400">
                         {room.description}
                       </p>
                     )}
 
                     {assignedTo && (
-                      <p className="text-xs text-[#F36509] mb-3">
-                        Assigned to {assignedTo.full_name}
-                      </p>
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <p className="text-xs text-[#F36509]">
+                          Assigned to {assignedTo.full_name}
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 rounded-full px-2.5 text-xs text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                          onClick={() => setViewReservation(assignedTo)}
+                        >
+                          <Eye className="mr-1 h-3.5 w-3.5" />
+                          View
+                        </Button>
+                      </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-3 border-t border-stone-100">
+                    <div className="flex items-center justify-between border-t border-stone-100 pt-3">
                       <div className="flex items-center gap-2.5">
                         <Switch
                           checked={room.is_active}
@@ -777,7 +805,7 @@ export default function FloorClient({
                           })
                         }
                         disabled={isOccupied}
-                        className="text-[#F36509] hover:text-[#d95608] hover:bg-[#F36509]/5 rounded-full px-4"
+                        className="rounded-full px-4 text-[#F36509] hover:bg-[#F36509]/5 hover:text-[#d95608]"
                       >
                         Assign
                       </Button>
@@ -788,13 +816,14 @@ export default function FloorClient({
             })}
 
             <button
+              type="button"
               onClick={() => setOpenRoomDialog(true)}
-              className="group flex flex-col items-center justify-center gap-3 min-h-[280px] rounded-2xl border-2 border-dashed border-stone-300 hover:border-[#F36509] hover:bg-[#F36509]/5 transition-all duration-300"
+              className="group flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-stone-300 transition-all duration-300 hover:border-[#F36509] hover:bg-[#F36509]/5"
             >
-              <div className="w-12 h-12 rounded-full bg-stone-100 group-hover:bg-[#F36509]/10 flex items-center justify-center transition-colors">
-                <Plus className="w-6 h-6 text-stone-400 group-hover:text-[#F36509] transition-colors" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-stone-100 transition-colors group-hover:bg-[#F36509]/10">
+                <Plus className="h-6 w-6 text-stone-400 transition-colors group-hover:text-[#F36509]" />
               </div>
-              <span className="text-sm font-medium text-stone-400 group-hover:text-[#F36509] transition-colors">
+              <span className="text-sm font-medium text-stone-400 transition-colors group-hover:text-[#F36509]">
                 Add New Room
               </span>
             </button>
@@ -802,12 +831,12 @@ export default function FloorClient({
         </TabsContent>
 
         {/* ==================== ASSIGNMENTS ==================== */}
-        <TabsContent value="assign" className="space-y-6 mt-6">
+        <TabsContent value="assign" className="mt-6 space-y-6">
           <div>
-            <h2 className="text-xl font-semibold font-serif text-stone-800">
+            <h2 className="font-serif text-xl font-semibold text-stone-800">
               Active Reservations
             </h2>
-            <p className="text-sm text-stone-400 mt-0.5">
+            <p className="mt-0.5 text-sm text-stone-400">
               Overview of current assignments. To assign a table or room, use
               the Assign button on the Tables / Rooms tabs.
             </p>
@@ -815,13 +844,13 @@ export default function FloorClient({
 
           {reservations.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-stone-100 flex items-center justify-center mb-4">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-stone-100">
                 <Inbox className="h-8 w-8 text-stone-300" />
               </div>
-              <h3 className="text-lg font-medium text-stone-600 mb-1">
+              <h3 className="mb-1 text-lg font-medium text-stone-600">
                 No reservations
               </h3>
-              <p className="text-sm text-stone-400 max-w-sm">
+              <p className="max-w-sm text-sm text-stone-400">
                 There are no pending or confirmed reservations waiting for
                 assignment right now.
               </p>
@@ -836,28 +865,29 @@ export default function FloorClient({
                 return (
                   <Card
                     key={res.id}
-                    className="rounded-2xl border-stone-200 hover:border-stone-300 transition-colors"
+                    className="rounded-2xl border-stone-200 transition-colors hover:border-stone-300"
                   >
-                    <CardContent className="p-5 space-y-4">
+                    <CardContent className="space-y-4 p-5">
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-[#F36509]/10 flex items-center justify-center shrink-0">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F36509]/10">
                           <Calendar className="h-5 w-5 text-[#F36509]" />
                         </div>
-                        <div className="space-y-1">
-                          <div className="font-medium text-stone-800 flex items-center gap-2">
+
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2 font-medium text-stone-800">
                             {res.full_name}
                             {hasAssignment && (
-                              <Badge className="bg-emerald-100 text-emerald-700 border-0 text-xs">
+                              <Badge className="border-0 bg-emerald-100 text-xs text-emerald-700">
                                 Assigned
                               </Badge>
                             )}
                           </div>
-                          <div className="text-sm text-stone-500 flex flex-wrap gap-x-4 gap-y-1">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-stone-500">
                             <span className="flex items-center gap-1">
                               <Users className="h-3.5 w-3.5 text-stone-400" />
                               {res.pax} pax
                             </span>
-                            <span className="capitalize flex items-center gap-1">
+                            <span className="flex items-center gap-1 capitalize">
                               <MapPin className="h-3.5 w-3.5 text-stone-400" />
                               {res.zone}
                             </span>
@@ -872,29 +902,39 @@ export default function FloorClient({
                             </span>
                             <Badge
                               variant="outline"
-                              className="capitalize rounded-full text-xs font-medium"
+                              className="rounded-full text-xs font-medium capitalize"
                             >
                               {res.status}
                             </Badge>
                           </div>
                         </div>
+
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="shrink-0 rounded-full text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                          onClick={() => setViewReservation(res)}
+                        >
+                          <Eye className="mr-1.5 h-3.5 w-3.5" />
+                          View
+                        </Button>
                       </div>
 
                       {hasAssignment && (
-                        <div className="rounded-xl bg-stone-50 border border-stone-100 p-3 space-y-2">
-                          <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">
+                        <div className="space-y-2 rounded-xl border border-stone-100 bg-stone-50 p-3">
+                          <p className="text-xs font-medium tracking-wider text-stone-500 uppercase">
                             Currently assigned
                           </p>
                           <div className="flex flex-wrap gap-2">
                             {res.assigned_tables.map((t) => (
                               <div
                                 key={t.id}
-                                className="inline-flex items-center gap-2 rounded-full bg-white border border-stone-200 px-3 py-1.5 text-sm"
+                                className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-sm"
                               >
                                 <Armchair className="h-3.5 w-3.5 text-[#F36509]" />
                                 <span>
                                   Table {t.table_number}
-                                  <span className="text-stone-400 ml-1">
+                                  <span className="ml-1 text-stone-400">
                                     ({t.zone})
                                   </span>
                                 </span>
@@ -912,7 +952,7 @@ export default function FloorClient({
                                   disabled={
                                     loadingKey === `unassign-table-${t.id}`
                                   }
-                                  className="text-stone-400 hover:text-red-500 ml-1"
+                                  className="ml-1 text-stone-400 hover:text-red-500"
                                   title="Unassign"
                                 >
                                   <X className="h-3.5 w-3.5" />
@@ -922,7 +962,7 @@ export default function FloorClient({
                             {res.assigned_rooms.map((r) => (
                               <div
                                 key={r.id}
-                                className="inline-flex items-center gap-2 rounded-full bg-white border border-stone-200 px-3 py-1.5 text-sm"
+                                className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-sm"
                               >
                                 <MapPin className="h-3.5 w-3.5 text-[#F36509]" />
                                 <span>Room {r.name}</span>
@@ -940,7 +980,7 @@ export default function FloorClient({
                                   disabled={
                                     loadingKey === `unassign-room-${r.id}`
                                   }
-                                  className="text-stone-400 hover:text-red-500 ml-1"
+                                  className="ml-1 text-stone-400 hover:text-red-500"
                                   title="Unassign"
                                 >
                                   <X className="h-3.5 w-3.5" />
@@ -959,12 +999,12 @@ export default function FloorClient({
         </TabsContent>
       </Tabs>
 
-      {/* ── Assignment Dialog ─────────────────────────────────────────── */}
+      {/* Assignment dialog */}
       <Dialog
         open={!!assignDialog}
         onOpenChange={(open) => !open && setAssignDialog(null)}
       >
-        <DialogContent className="sm:max-w-lg rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-serif text-xl">
               Assign {assignDialog?.type === "table" ? "Table" : "Room"}{" "}
@@ -975,33 +1015,34 @@ export default function FloorClient({
           <div className="pt-2">
             {candidateReservations.length === 0 ? (
               <div className="py-10 text-center">
-                <Inbox className="mx-auto h-8 w-8 text-stone-300 mb-3" />
-                <p className="text-stone-600 font-medium">
+                <Inbox className="mx-auto mb-3 h-8 w-8 text-stone-300" />
+                <p className="font-medium text-stone-600">
                   No matching reservations
                 </p>
-                <p className="text-sm text-stone-400 mt-1">
+                <p className="mt-1 text-sm text-stone-400">
                   There are no open reservations that fit this{" "}
                   {assignDialog?.type} (capacity / zone).
                 </p>
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-sm text-stone-500 mb-3">
+                <p className="mb-3 text-sm text-stone-500">
                   Select a reservation to assign:
                 </p>
                 {candidateReservations.map((res) => (
                   <button
                     key={res.id}
+                    type="button"
                     onClick={() => handleAssign(res.id)}
                     disabled={loadingKey !== null}
-                    className="w-full text-left rounded-xl border border-stone-200 hover:border-[#F36509]/40 hover:bg-[#F36509]/5 p-4 transition-all disabled:opacity-50"
+                    className="w-full rounded-xl border border-stone-200 p-4 text-left transition-all hover:border-[#F36509]/40 hover:bg-[#F36509]/5 disabled:opacity-50"
                   >
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="font-medium text-stone-800">
                           {res.full_name}
                         </div>
-                        <div className="text-sm text-stone-500 flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-sm text-stone-500">
                           <span>{res.pax} pax</span>
                           <span className="capitalize">{res.zone}</span>
                           <span>
@@ -1012,7 +1053,7 @@ export default function FloorClient({
                           </span>
                         </div>
                       </div>
-                      <span className="text-sm font-medium text-[#F36509] shrink-0">
+                      <span className="shrink-0 text-sm font-medium text-[#F36509]">
                         {loadingKey === `assign-${res.id}`
                           ? "Assigning…"
                           : "Assign →"}
@@ -1026,7 +1067,7 @@ export default function FloorClient({
         </DialogContent>
       </Dialog>
 
-      {/* ── Unassign Confirmation Dialog (hold ~8s) ───────────────────── */}
+      {/* Unassign hold-to-confirm */}
       <Dialog
         open={!!unassignDialog}
         onOpenChange={(open) => {
@@ -1036,12 +1077,12 @@ export default function FloorClient({
           }
         }}
       >
-        <DialogContent className="sm:max-w-md rounded-2xl">
+        <DialogContent className="rounded-2xl sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="font-serif text-xl text-stone-800">
               Unassign {unassignDialog?.type === "table" ? "Table" : "Room"}?
             </DialogTitle>
-            <DialogDescription className="text-stone-500 pt-1">
+            <DialogDescription className="pt-1 text-stone-500">
               You are about to unassign{" "}
               <span className="font-medium text-stone-700">
                 {unassignDialog?.type === "table"
@@ -1059,10 +1100,10 @@ export default function FloorClient({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="pt-4 space-y-4">
-            <div className="h-2 w-full rounded-full bg-stone-100 overflow-hidden">
+          <div className="space-y-4 pt-4">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100">
               <div
-                className="h-full bg-red-500 rounded-full"
+                className="h-full rounded-full bg-red-500"
                 style={{ width: `${holdProgress}%` }}
               />
             </div>
@@ -1075,7 +1116,7 @@ export default function FloorClient({
                   )}s remaining`}
             </p>
 
-            <DialogFooter className="flex-col sm:flex-col gap-2 sm:space-x-0">
+            <DialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
               <button
                 type="button"
                 onMouseDown={startHold}
@@ -1088,7 +1129,7 @@ export default function FloorClient({
                 onTouchEnd={cancelHold}
                 onTouchCancel={cancelHold}
                 disabled={loadingKey !== null}
-                className="relative w-full select-none rounded-full bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-medium py-3 px-6 transition-colors disabled:opacity-50 overflow-hidden"
+                className="relative w-full select-none overflow-hidden rounded-full bg-red-500 px-6 py-3 font-medium text-white transition-colors hover:bg-red-600 active:bg-red-700 disabled:opacity-50"
               >
                 <span className="relative z-10">
                   {holdProgress >= 100 ? "Unassigning…" : "Hold to unassign"}
@@ -1110,6 +1151,14 @@ export default function FloorClient({
           </div>
         </DialogContent>
       </Dialog>
+
+      <FloorReservationViewDialog
+        reservation={viewReservation}
+        open={!!viewReservation}
+        onOpenChange={(open) => {
+          if (!open) setViewReservation(null);
+        }}
+      />
     </div>
   );
 }
