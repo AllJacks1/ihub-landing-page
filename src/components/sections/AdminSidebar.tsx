@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   Plus,
   FileText,
-  Users,
   Tag,
   FolderTree,
   MessageSquare,
@@ -16,13 +15,9 @@ import {
   LayoutDashboard,
   CalendarDays,
   CalendarCheck,
-  Table,
-  Clock,
-  Grid3X3,
   UserCheck,
   ChevronDown,
   ChevronRight,
-  DoorOpen,
   BetweenHorizontalStart,
 } from "lucide-react";
 
@@ -108,12 +103,6 @@ const sidebarGroups: SidebarGroup[] = [
         label: "Calendar",
         icon: CalendarDays,
         href: "/admin/reservations/calendar",
-      },
-      {
-        id: "guests",
-        label: "Guest List",
-        icon: UserCheck,
-        href: "/admin/reservations/guests",
       },
     ],
   },

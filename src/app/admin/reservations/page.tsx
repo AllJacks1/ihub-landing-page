@@ -1,7 +1,20 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
-import { format, parseISO, isToday, isFuture, startOfDay, endOfDay } from "date-fns";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useTransition,
+} from "react";
+import {
+  format,
+  parseISO,
+  isToday,
+  isFuture,
+  startOfDay,
+  endOfDay,
+} from "date-fns";
 import {
   Search,
   Calendar,
@@ -13,8 +26,10 @@ import {
   User,
   Filter,
   RefreshCw,
-  ChevronDown,
-  ArrowUpDown,
+  Eye,
+  Check,
+  X,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,34 +43,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getReservations } from "@/lib/actions";
+import { getReservations, updateReservationStatus } from "@/lib/actions";
 import { cn } from "@/lib/utils";
-
-/* ── types (mirror your schema) ── */
-type Zone = "bistro" | "study" | "room";
-type ReservationStatus =
-  | "pending"
-  | "confirmed"
-  | "seated"
-  | "completed"
-  | "cancelled"
-  | "no_show";
-
-interface Reservation {
-  id: string;
-  profile_id: string | null;
-  full_name: string;
-  email: string;
-  phone: string | null;
-  pax: number;
-  zone: Zone;
-  start_at: string; // ISO from Supabase
-  end_at: string;
-  status: ReservationStatus;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-}
+import {
+  Reservation,
+  ReservationDetailsDialog,
+  ReservationStatus,
+  Zone,
+} from "@/components/sections/ReservationDialog";
 
 /* ── helpers ── */
 const statusStyles: Record<
@@ -64,8 +59,7 @@ const statusStyles: Record<
 > = {
   pending: {
     label: "Pending",
-    className:
-      "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100",
+    className: "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100",
   },
   confirmed: {
     label: "Confirmed",
@@ -74,8 +68,7 @@ const statusStyles: Record<
   },
   seated: {
     label: "Seated",
-    className:
-      "bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100",
+    className: "bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100",
   },
   completed: {
     label: "Completed",
@@ -84,8 +77,7 @@ const statusStyles: Record<
   },
   cancelled: {
     label: "Cancelled",
-    className:
-      "bg-red-50 text-red-700 border-red-200 hover:bg-red-100",
+    className: "bg-red-50 text-red-700 border-red-200 hover:bg-red-100",
   },
   no_show: {
     label: "No Show",
@@ -95,15 +87,24 @@ const statusStyles: Record<
 };
 
 const zoneLabel = (z: Zone) =>
-  ({ bistro: "Bistro", study: "Study Zone", room: "Private Room" }[z]);
+  ({ bistro: "Bistro", study: "Study Zone", room: "Private Room" })[z];
 
 export default function ReservationsPage() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<ReservationStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<ReservationStatus | "all">(
+    "all",
+  );
   const [zoneFilter, setZoneFilter] = useState<Zone | "all">("all");
-  const [dateFilter, setDateFilter] = useState<"all" | "today" | "upcoming" | "past">("all");
+  const [dateFilter, setDateFilter] = useState<
+    "all" | "today" | "upcoming" | "past"
+  >("all");
+
+  const [selected, setSelected] = useState<Reservation | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  const [rowPendingId, setRowPendingId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -140,7 +141,6 @@ export default function ReservationsPage() {
     fetchData();
   }, [fetchData]);
 
-  /* ── derived stats ── */
   const stats = useMemo(() => {
     const today = reservations.filter((r) => isToday(parseISO(r.start_at)));
     const pending = reservations.filter((r) => r.status === "pending");
@@ -155,7 +155,6 @@ export default function ReservationsPage() {
     };
   }, [reservations]);
 
-  /* ── client-side search ── */
   const filtered = useMemo(() => {
     if (!searchQuery.trim()) return reservations;
     const q = searchQuery.toLowerCase();
@@ -167,13 +166,52 @@ export default function ReservationsPage() {
     );
   }, [reservations, searchQuery]);
 
-  /* ── sort by start time ── */
   const sorted = useMemo(() => {
     return [...filtered].sort(
-      (a, b) =>
-        new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
+      (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
     );
   }, [filtered]);
+
+  const openView = (r: Reservation) => {
+    setSelected(r);
+    setDialogOpen(true);
+  };
+
+  const patchLocal = (updated: Reservation) => {
+    setReservations((prev) =>
+      prev.map((r) => (r.id === updated.id ? updated : r)),
+    );
+    setSelected((prev) => (prev?.id === updated.id ? updated : prev));
+  };
+
+  const quickStatus = (r: Reservation, next: ReservationStatus) => {
+    setRowPendingId(r.id);
+    startTransition(async () => {
+      try {
+        const result = await updateReservationStatus(r.id, next);
+        if (result?.success === false) {
+          toast.error(result.message || "Failed to update status");
+          return;
+        }
+        patchLocal({
+          ...r,
+          status: next,
+          updated_at: new Date().toISOString(),
+        });
+        toast.success(
+          next === "confirmed"
+            ? "Booking approved"
+            : next === "cancelled"
+              ? "Booking rejected"
+              : `Marked as ${statusStyles[next].label}`,
+        );
+      } catch {
+        toast.error("Failed to update status");
+      } finally {
+        setRowPendingId(null);
+      }
+    });
+  };
 
   return (
     <main className="flex-1 p-8">
@@ -199,80 +237,48 @@ export default function ReservationsPage() {
 
       {/* Stats */}
       <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-5">
-        <Card className="border-stone-200 bg-white">
-          <CardContent className="p-4">
-            <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">
-              Total
-            </p>
-            <p className="mt-1 text-3xl font-semibold text-stone-900">
-              {stats.total}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-stone-200 bg-white">
-          <CardContent className="p-4">
-            <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">
-              Today
-            </p>
-            <p className="mt-1 text-3xl font-semibold text-[#F36509]">
-              {stats.today}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-stone-200 bg-white">
-          <CardContent className="p-4">
-            <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">
-              Upcoming
-            </p>
-            <p className="mt-1 text-3xl font-semibold text-emerald-600">
-              {stats.upcoming}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-stone-200 bg-white">
-          <CardContent className="p-4">
-            <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">
-              Pending
-            </p>
-            <p className="mt-1 text-3xl font-semibold text-amber-600">
-              {stats.pending}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-stone-200 bg-white">
-          <CardContent className="p-4">
-            <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">
-              Confirmed
-            </p>
-            <p className="mt-1 text-3xl font-semibold text-sky-600">
-              {stats.confirmed}
-            </p>
-          </CardContent>
-        </Card>
+        {(
+          [
+            ["Total", stats.total, "text-stone-900"],
+            ["Today", stats.today, "text-[#F36509]"],
+            ["Upcoming", stats.upcoming, "text-emerald-600"],
+            ["Pending", stats.pending, "text-amber-600"],
+            ["Confirmed", stats.confirmed, "text-sky-600"],
+          ] as const
+        ).map(([label, value, color]) => (
+          <Card key={label} className="border-stone-200 bg-white">
+            <CardContent className="p-4">
+              <p className="text-xs font-medium uppercase tracking-wider text-stone-500">
+                {label}
+              </p>
+              <p className={cn("mt-1 text-3xl font-semibold", color)}>
+                {value}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {/* Filters */}
       <div className="mt-8 flex flex-col gap-4 lg:flex-row lg:items-end">
         <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+          <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-stone-400" />
           <Input
             placeholder="Search name, email, phone..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 border-stone-200 rounded-lg focus:border-[#F36509] focus:ring-[#F36509]/20"
+            className="rounded-lg border-stone-200 pl-10 focus:border-[#F36509] focus:ring-[#F36509]/20"
           />
         </div>
 
         <div className="flex flex-wrap gap-3">
           <Select
             value={statusFilter}
-            onValueChange={(v) => setStatusFilter(v as ReservationStatus | "all")}
+            onValueChange={(v) => {
+              if (v) setStatusFilter(v as ReservationStatus | "all");
+            }}
           >
-            <SelectTrigger className="w-[160px] rounded-lg border-stone-200 focus:ring-[#F36509]/20 focus:border-[#F36509]">
+            <SelectTrigger className="w-[160px] rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20">
               <Filter className="mr-2 h-4 w-4 text-stone-400" />
               <SelectValue placeholder="All statuses" />
             </SelectTrigger>
@@ -289,9 +295,11 @@ export default function ReservationsPage() {
 
           <Select
             value={zoneFilter}
-            onValueChange={(v) => setZoneFilter(v as Zone | "all")}
+            onValueChange={(v) => {
+              if (v) setZoneFilter(v as Zone | "all");
+            }}
           >
-            <SelectTrigger className="w-[160px] rounded-lg border-stone-200 focus:ring-[#F36509]/20 focus:border-[#F36509]">
+            <SelectTrigger className="w-[160px] rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20">
               <MapPin className="mr-2 h-4 w-4 text-stone-400" />
               <SelectValue placeholder="All zones" />
             </SelectTrigger>
@@ -305,9 +313,11 @@ export default function ReservationsPage() {
 
           <Select
             value={dateFilter}
-            onValueChange={(v) => setDateFilter(v as typeof dateFilter)}
+            onValueChange={(v) => {
+              if (v) setDateFilter(v as typeof dateFilter);
+            }}
           >
-            <SelectTrigger className="w-[160px] rounded-lg border-stone-200 focus:ring-[#F36509]/20 focus:border-[#F36509]">
+            <SelectTrigger className="w-[160px] rounded-lg border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20">
               <Calendar className="mr-2 h-4 w-4 text-stone-400" />
               <SelectValue placeholder="Any date" />
             </SelectTrigger>
@@ -322,7 +332,7 @@ export default function ReservationsPage() {
       </div>
 
       {/* Table */}
-      <Card className="mt-6 border-stone-200 bg-white overflow-hidden">
+      <Card className="mt-6 overflow-hidden border-stone-200 bg-white">
         <CardContent className="p-0">
           {isLoading ? (
             <div className="flex items-center justify-center py-16">
@@ -337,12 +347,18 @@ export default function ReservationsPage() {
                 <Calendar className="h-8 w-8 text-stone-300" />
               </div>
               <p className="mt-4 text-sm font-medium text-stone-900">
-                {searchQuery || statusFilter !== "all" || zoneFilter !== "all" || dateFilter !== "all"
+                {searchQuery ||
+                statusFilter !== "all" ||
+                zoneFilter !== "all" ||
+                dateFilter !== "all"
                   ? "No matching reservations"
                   : "No reservations yet"}
               </p>
               <p className="mt-1 text-sm text-stone-500">
-                {searchQuery || statusFilter !== "all" || zoneFilter !== "all" || dateFilter !== "all"
+                {searchQuery ||
+                statusFilter !== "all" ||
+                zoneFilter !== "all" ||
+                dateFilter !== "all"
                   ? "Try adjusting your filters"
                   : "New bookings will appear here"}
               </p>
@@ -352,25 +368,25 @@ export default function ReservationsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-stone-100 bg-stone-50/50">
-                    <th className="py-3.5 pl-6 pr-4 text-left font-medium text-stone-500">
+                    <th className="py-3.5 pr-4 pl-6 text-left font-medium text-stone-500">
                       Guest
                     </th>
-                    <th className="py-3.5 px-4 text-left font-medium text-stone-500">
+                    <th className="px-4 py-3.5 text-left font-medium text-stone-500">
                       Contact
                     </th>
-                    <th className="py-3.5 px-4 text-left font-medium text-stone-500">
+                    <th className="px-4 py-3.5 text-left font-medium text-stone-500">
                       Zone
                     </th>
-                    <th className="py-3.5 px-4 text-left font-medium text-stone-500">
+                    <th className="px-4 py-3.5 text-left font-medium text-stone-500">
                       Date & Time
                     </th>
-                    <th className="py-3.5 px-4 text-left font-medium text-stone-500">
+                    <th className="px-4 py-3.5 text-left font-medium text-stone-500">
                       Pax
                     </th>
-                    <th className="py-3.5 px-4 text-left font-medium text-stone-500">
+                    <th className="px-4 py-3.5 text-left font-medium text-stone-500">
                       Status
                     </th>
-                    <th className="py-3.5 pr-6 pl-4 text-right font-medium text-stone-500 w-24">
+                    <th className="w-48 py-3.5 pr-6 pl-4 text-right font-medium text-stone-500">
                       Actions
                     </th>
                   </tr>
@@ -380,17 +396,17 @@ export default function ReservationsPage() {
                     const start = parseISO(r.start_at);
                     const end = parseISO(r.end_at);
                     const isTodayReservation = isToday(start);
+                    const busy = isPending && rowPendingId === r.id;
 
                     return (
                       <tr
                         key={r.id}
                         className={cn(
-                          "group hover:bg-stone-50/80 transition-colors",
+                          "group transition-colors hover:bg-stone-50/80",
                           isTodayReservation && "bg-amber-50/30",
                         )}
                       >
-                        {/* Guest */}
-                        <td className="py-4 pl-6 pr-4">
+                        <td className="py-4 pr-4 pl-6">
                           <div className="flex items-center gap-3">
                             <div
                               className={cn(
@@ -414,16 +430,18 @@ export default function ReservationsPage() {
                                 {r.full_name}
                               </div>
                               {r.notes && (
-                                <div className="text-xs text-stone-400 line-clamp-1 max-w-[200px] mt-0.5">
-                                  {r.notes}
+                                <div className="mt-0.5 line-clamp-1 max-w-[200px] text-xs text-stone-400">
+                                  {r.notes
+                                    .replace(/<[^>]*>/g, " ")
+                                    .replace(/\s+/g, " ")
+                                    .trim()}
                                 </div>
                               )}
                             </div>
                           </div>
                         </td>
 
-                        {/* Contact */}
-                        <td className="py-4 px-4">
+                        <td className="px-4 py-4">
                           <div className="space-y-1">
                             <div className="flex items-center gap-1.5 text-xs text-stone-600">
                               <Mail className="h-3 w-3 text-stone-400" />
@@ -438,19 +456,17 @@ export default function ReservationsPage() {
                           </div>
                         </td>
 
-                        {/* Zone */}
-                        <td className="py-4 px-4">
+                        <td className="px-4 py-4">
                           <Badge
                             variant="outline"
-                            className="font-normal text-stone-600 border-stone-200"
+                            className="border-stone-200 font-normal text-stone-600"
                           >
                             <MapPin className="mr-1 h-3 w-3 text-stone-400" />
                             {zoneLabel(r.zone)}
                           </Badge>
                         </td>
 
-                        {/* Date & Time */}
-                        <td className="py-4 px-4">
+                        <td className="px-4 py-4">
                           <div className="space-y-0.5">
                             <div className="flex items-center gap-1.5 text-stone-900">
                               <Calendar className="h-3.5 w-3.5 text-stone-400" />
@@ -458,32 +474,31 @@ export default function ReservationsPage() {
                                 {format(start, "MMM d, yyyy")}
                               </span>
                               {isTodayReservation && (
-                                <Badge className="ml-1.5 h-5 px-1.5 text-[10px] bg-[#F36509]/10 text-[#F36509] border-[#F36509]/20 hover:bg-[#F36509]/20">
+                                <Badge className="ml-1.5 h-5 border-[#F36509]/20 bg-[#F36509]/10 px-1.5 text-[10px] text-[#F36509] hover:bg-[#F36509]/20">
                                   Today
                                 </Badge>
                               )}
                             </div>
                             <div className="flex items-center gap-1.5 text-xs text-stone-500">
                               <Clock className="h-3.5 w-3.5 text-stone-400" />
-                              {format(start, "h:mm a")} – {format(end, "h:mm a")}
+                              {format(start, "h:mm a")} –{" "}
+                              {format(end, "h:mm a")}
                             </div>
                           </div>
                         </td>
 
-                        {/* Pax */}
-                        <td className="py-4 px-4">
+                        <td className="px-4 py-4">
                           <div className="flex items-center gap-1.5 text-stone-900">
                             <Users className="h-4 w-4 text-stone-400" />
                             <span className="font-medium">{r.pax}</span>
                           </div>
                         </td>
 
-                        {/* Status */}
-                        <td className="py-4 px-4">
+                        <td className="px-4 py-4">
                           <Badge
                             variant="outline"
                             className={cn(
-                              "font-medium text-xs capitalize",
+                              "text-xs font-medium capitalize",
                               statusStyles[r.status].className,
                             )}
                           >
@@ -491,23 +506,46 @@ export default function ReservationsPage() {
                           </Badge>
                         </td>
 
-                        {/* Actions */}
                         <td className="py-4 pr-6 pl-4 text-right">
-                          <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center justify-end gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-8 text-xs text-stone-600 hover:text-stone-900 hover:bg-stone-100"
+                              className="h-8 text-xs text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                              onClick={() => openView(r)}
                             >
-                              Edit
+                              <Eye className="mr-1 h-3.5 w-3.5" />
+                              View
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-red-600 hover:bg-red-50"
-                            >
-                              <ChevronDown className="h-4 w-4" />
-                            </Button>
+
+                            {r.status === "pending" && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={busy}
+                                  className="h-8 text-xs text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                                  onClick={() => quickStatus(r, "confirmed")}
+                                >
+                                  {busy ? (
+                                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Check className="mr-1 h-3.5 w-3.5" />
+                                  )}
+                                  Approve
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={busy}
+                                  className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                                  onClick={() => quickStatus(r, "cancelled")}
+                                >
+                                  <X className="mr-1 h-3.5 w-3.5" />
+                                  Reject
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -520,16 +558,23 @@ export default function ReservationsPage() {
         </CardContent>
       </Card>
 
-      {/* Footer count */}
       {!isLoading && sorted.length > 0 && (
         <div className="mt-4 flex items-center justify-between text-xs text-stone-500">
           <p>
-            Showing <span className="font-medium text-stone-900">{sorted.length}</span>{" "}
+            Showing{" "}
+            <span className="font-medium text-stone-900">{sorted.length}</span>{" "}
             reservation{sorted.length !== 1 ? "s" : ""}
           </p>
           <p>Ordered by start time</p>
         </div>
       )}
+
+      <ReservationDetailsDialog
+        reservation={selected}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onUpdated={patchLocal}
+      />
     </main>
   );
 }

@@ -1821,3 +1821,30 @@ export async function updateReservation(
     return { success: false, error: "Failed to update reservation" };
   }
 }
+
+export async function updateReservationStatus(
+  id: string,
+  status:
+    | "pending"
+    | "confirmed"
+    | "seated"
+    | "completed"
+    | "cancelled"
+    | "no_show",
+) {
+  const supabase = await createSupabaseClient();
+
+  const { error } = await supabase
+    .from("reservations")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    return { success: false as const, message: error.message };
+  }
+
+  revalidatePath("/admin/reservations");
+  revalidatePath("/admin/reservations/calendar");
+
+  return { success: true as const };
+}
