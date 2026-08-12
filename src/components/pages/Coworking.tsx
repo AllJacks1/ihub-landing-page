@@ -3,7 +3,6 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import {
   ArrowRight,
   Zap,
@@ -137,87 +136,93 @@ const features = [
 export default function CoworkingPage() {
   return (
     <main className="min-h-screen bg-stone-50">
-      {/* Hero */}
-      <section className="relative flex min-h-[680px] items-center justify-center overflow-hidden">
+      {/* ===== HERO ===== */}
+      <section className="relative flex min-h-svh items-center justify-center overflow-hidden sm:min-h-170">
         <Image
           src="/images/coworking_hero.png"
           alt="iHub Coworking Space"
           fill
           className="object-cover"
           priority
+          sizes="100vw"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-stone-900/80 via-stone-900/60 to-stone-900/90" />
+        <div className="absolute inset-0 bg-linear-to-b from-stone-900/80 via-stone-900/60 to-stone-900/90" />
 
-        <div className="relative z-10 mx-auto max-w-4xl px-6 text-center">
+        <div className="relative z-10 mx-auto max-w-4xl px-4 text-center sm:px-6">
           <Badge
             variant="outline"
-            className="mb-6 border-stone-600 px-4 py-1.5 text-xs font-bold tracking-widest text-stone-400"
+            className="mb-5 border-stone-600 px-3 py-1 text-xs font-bold tracking-widest text-stone-400 sm:mb-6 sm:px-4 sm:py-1.5"
           >
             iWORK • COWORKING SPACE
           </Badge>
 
-          <h1 className="mb-6 font-serif text-6xl font-semibold tracking-tighter text-white md:text-7xl">
+          <h1 className="mb-5 font-serif text-4xl font-semibold leading-[1.05] tracking-tighter text-white sm:text-5xl md:text-6xl lg:text-7xl">
             Work Better.
             <br />
             Focus Deeper.
           </h1>
 
-          <p className="mx-auto max-w-2xl text-xl leading-relaxed text-stone-200">
+          <p className="mx-auto max-w-2xl text-base leading-relaxed text-stone-200 sm:text-lg md:text-xl">
             24/7 high-speed coworking space in Davao with fast dual ISP
             internet, quiet zones, and a productive community.
           </p>
 
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:mt-10 sm:flex-row sm:gap-4">
             <Button
               size="lg"
-              className="h-14 rounded-full bg-[#F36509] px-10 text-base font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00]"
-            >
-              <Link href="/reserve" className="inline-flex items-center gap-2">
-                Get iWork Pass
-                <ArrowRight className="h-5 w-5" />
-              </Link>
-            </Button>
+              className="h-12 w-full max-w-xs rounded-full bg-[#F36509] px-8 text-sm font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00] sm:h-14 sm:w-auto sm:px-10 sm:text-base"
+              render={
+                <Link
+                  href="/reserve"
+                  className="inline-flex items-center gap-2"
+                >
+                  Get iWork Pass
+                  <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
+                </Link>
+              }
+            ></Button>
             <Button
               variant="outline"
               size="lg"
-              className="h-14 rounded-full border-2 border-white/30 bg-white/10 px-10 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white hover:bg-white/20"
-            >
-              <Link href="/coworking/plans">View All Plans</Link>
-            </Button>
+              className="h-12 w-full max-w-xs rounded-full border-2 border-white/30 bg-white/10 px-8 text-sm font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white hover:bg-white/20 sm:h-14 sm:w-auto sm:px-10 sm:text-base"
+              render={<Link href="/coworking/plans">View All Plans</Link>}
+            ></Button>
           </div>
         </div>
       </section>
 
-      {/* Benefits */}
-      <section className="px-6 py-24">
+      {/* ===== BENEFITS ===== */}
+      <section className="px-4 py-16 sm:px-6 sm:py-20 md:py-24">
         <div className="mx-auto max-w-6xl">
-          <div className="mb-16 text-center">
-            <h2 className="mb-4 font-serif text-5xl font-semibold tracking-tighter text-stone-900">
+          <div className="mb-10 text-center sm:mb-16">
+            <h2 className="mb-3 font-serif text-3xl font-semibold tracking-tighter text-stone-900 sm:text-4xl md:text-5xl">
               Why Freelancers & Students Choose iHub
             </h2>
-            <p className="mx-auto max-w-xl text-xl text-stone-500">
+            <p className="mx-auto max-w-xl text-base text-stone-500 sm:text-lg md:text-xl">
               Everything you need to do your best work, all in one place.
             </p>
           </div>
 
-          <div className="grid gap-8 md:grid-cols-3">
+          <div className="grid gap-6 sm:gap-8 md:grid-cols-3">
             {benefits.map((benefit) => (
               <Card
                 key={benefit.title}
                 className="border-stone-200 bg-white text-center shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
               >
-                <CardHeader className="pb-2 pt-10">
+                <CardHeader className="pb-2 pt-8 sm:pt-10">
                   <div
-                    className={`mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl ${benefit.color}`}
+                    className={`mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl sm:mb-6 sm:h-16 sm:w-16 ${benefit.color}`}
                   >
-                    <benefit.icon className={`h-8 w-8 ${benefit.iconColor}`} />
+                    <benefit.icon
+                      className={`h-7 w-7 sm:h-8 sm:w-8 ${benefit.iconColor}`}
+                    />
                   </div>
-                  <h3 className="font-serif text-2xl font-semibold text-stone-900">
+                  <h3 className="font-serif text-xl font-semibold text-stone-900 sm:text-2xl">
                     {benefit.title}
                   </h3>
                 </CardHeader>
-                <CardContent>
-                  <p className="leading-relaxed text-stone-500">
+                <CardContent className="px-5 pb-8 sm:px-6">
+                  <p className="text-sm leading-relaxed text-stone-500 sm:text-base">
                     {benefit.description}
                   </p>
                 </CardContent>
@@ -227,25 +232,28 @@ export default function CoworkingPage() {
         </div>
       </section>
 
-      {/* Passes Section */}
-      <section id="passes" className="bg-white px-6 py-24">
+      {/* ===== PASSES / PLANS ===== */}
+      <section
+        id="passes"
+        className="bg-white px-4 py-16 sm:px-6 sm:py-20 md:py-24"
+      >
         <div className="mx-auto max-w-6xl">
-          <div className="mb-16 text-center">
+          <div className="mb-10 text-center sm:mb-16">
             <Badge
               variant="outline"
-              className="mb-4 border-stone-300 px-4 py-1.5 text-xs font-bold tracking-widest text-stone-500"
+              className="mb-3 border-stone-300 px-3 py-1 text-xs font-bold tracking-widest text-stone-500 sm:mb-4 sm:px-4 sm:py-1.5"
             >
               MEMBERSHIP PLANS
             </Badge>
-            <h2 className="mb-4 font-serif text-5xl font-semibold tracking-tighter text-stone-900">
+            <h2 className="mb-3 font-serif text-3xl font-semibold tracking-tighter text-stone-900 sm:text-4xl md:text-5xl">
               Choose Your Plan
             </h2>
-            <p className="mx-auto max-w-xl text-xl text-stone-500">
+            <p className="mx-auto max-w-xl text-base text-stone-500 sm:text-lg md:text-xl">
               Flexible options for every type of worker.
             </p>
           </div>
 
-          <div className="grid gap-8 md:grid-cols-3">
+          <div className="grid gap-6 sm:gap-8 md:grid-cols-3">
             {plans.map((plan) => (
               <Card
                 key={plan.id}
@@ -258,7 +266,7 @@ export default function CoworkingPage() {
                 }`}
               >
                 {plan.badge && (
-                  <div className="absolute right-4 top-4">
+                  <div className="absolute right-3 top-3 sm:right-4 sm:top-4">
                     <Badge className="bg-[#F36509] text-xs font-bold text-white hover:bg-[#F36509]">
                       <Star className="mr-1 h-3 w-3 fill-white" />
                       {plan.badge}
@@ -266,29 +274,29 @@ export default function CoworkingPage() {
                   </div>
                 )}
 
-                <CardContent className="p-8 pt-10">
-                  <div className="mb-2 font-mono text-xs font-bold tracking-widest text-[#F36509]">
+                <CardContent className="p-6 pt-8 sm:p-8 sm:pt-10">
+                  <div className="mb-2 font-mono text-[10px] font-bold tracking-widest text-[#F36509] sm:text-xs">
                     {plan.tag}
                   </div>
 
-                  <h3 className="mb-2 font-serif text-3xl font-semibold tracking-tighter text-stone-900">
+                  <h3 className="mb-2 font-serif text-2xl font-semibold tracking-tighter text-stone-900 sm:text-3xl">
                     {plan.name}
                   </h3>
 
-                  <div className="mb-1 text-4xl font-bold text-stone-900">
+                  <div className="mb-1 text-3xl font-bold text-stone-900 sm:text-4xl">
                     {plan.price}
                   </div>
-                  <div className="mb-6 text-sm text-stone-400">
+                  <div className="mb-5 text-xs text-stone-400 sm:mb-6 sm:text-sm">
                     {plan.period}
                   </div>
 
-                  <p className="mb-6 text-sm text-stone-500">
+                  <p className="mb-5 text-sm text-stone-500 sm:mb-6">
                     {plan.description}
                   </p>
 
                   {/* Study tiers */}
                   {plan.tiers && (
-                    <div className="mb-6 space-y-2 rounded-xl bg-stone-50 p-4">
+                    <div className="mb-5 space-y-2 rounded-xl bg-stone-50 p-3 sm:mb-6 sm:p-4">
                       {plan.tiers.map((tier) => (
                         <div
                           key={tier.hours}
@@ -305,7 +313,7 @@ export default function CoworkingPage() {
                     </div>
                   )}
 
-                  <ul className="mb-8 space-y-3">
+                  <ul className="mb-6 space-y-2.5 sm:mb-8 sm:space-y-3">
                     {plan.features.map((feature) => (
                       <li key={feature} className="flex items-start gap-3">
                         <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#F36509]/10">
@@ -322,16 +330,15 @@ export default function CoworkingPage() {
                   </ul>
 
                   <Button
-                    className={`h-12 w-full rounded-full text-sm font-semibold transition-all ${
+                    className={`h-11 w-full rounded-full text-sm font-semibold transition-all sm:h-12 ${
                       plan.variant === "featured"
                         ? "bg-[#F36509] text-white shadow-lg shadow-orange-500/20 hover:bg-[#e05a00]"
                         : plan.variant === "highlighted"
                           ? "border-2 border-[#F36509] bg-transparent text-[#F36509] hover:bg-[#F36509] hover:text-white"
                           : "border-2 border-stone-900 bg-transparent text-stone-900 hover:bg-stone-900 hover:text-white"
                     }`}
-                  >
-                    <Link href={plan.href}>{plan.cta}</Link>
-                  </Button>
+                    render={<Link href={plan.href}>{plan.cta}</Link>}
+                  ></Button>
                 </CardContent>
               </Card>
             ))}
@@ -339,32 +346,32 @@ export default function CoworkingPage() {
         </div>
       </section>
 
-      {/* Features */}
-      <section className="px-6 py-24">
-        <div className="mx-auto grid max-w-6xl items-center gap-16 md:grid-cols-2">
-          <div>
+      {/* ===== FEATURES / AMENITIES ===== */}
+      <section className="px-4 py-16 sm:px-6 sm:py-20 md:py-24">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 md:grid-cols-2 md:gap-16">
+          <div className="order-2 md:order-1">
             <Badge
               variant="outline"
-              className="mb-4 border-stone-300 px-4 py-1.5 text-xs font-bold tracking-widest text-stone-500"
+              className="mb-3 border-stone-300 px-3 py-1 text-xs font-bold tracking-widest text-stone-500 sm:mb-4 sm:px-4 sm:py-1.5"
             >
               AMENITIES
             </Badge>
 
-            <h2 className="mb-10 font-serif text-5xl font-semibold tracking-tighter text-stone-900">
+            <h2 className="mb-8 font-serif text-3xl font-semibold tracking-tighter text-stone-900 sm:mb-10 sm:text-4xl md:text-5xl">
               Built for Productivity
             </h2>
 
-            <div className="space-y-8">
+            <div className="space-y-6 sm:space-y-8">
               {features.map((feature) => (
-                <div key={feature.title} className="flex gap-5">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#F36509]/10">
-                    <feature.icon className="h-6 w-6 text-[#F36509]" />
+                <div key={feature.title} className="flex gap-4 sm:gap-5">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F36509]/10 sm:h-12 sm:w-12 sm:rounded-2xl">
+                    <feature.icon className="h-5 w-5 text-[#F36509] sm:h-6 sm:w-6" />
                   </div>
                   <div>
-                    <h4 className="mb-1 text-lg font-semibold text-stone-900">
+                    <h4 className="mb-1 text-base font-semibold text-stone-900 sm:text-lg">
                       {feature.title}
                     </h4>
-                    <p className="leading-relaxed text-stone-500">
+                    <p className="text-sm leading-relaxed text-stone-500 sm:text-base">
                       {feature.description}
                     </p>
                   </div>
@@ -373,46 +380,49 @@ export default function CoworkingPage() {
             </div>
           </div>
 
-          <div className="group relative aspect-[4/3] overflow-hidden rounded-3xl border border-stone-200 shadow-2xl">
-            <Image
-              src="/images/coworking-space.png"
-              alt="iHub Coworking Interior"
-              fill
-              className="object-cover transition-transform duration-700 group-hover:scale-105"
-              sizes="(max-width: 768px) 100vw, 50vw"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-stone-900/20 to-transparent" />
+          <div className="order-1 md:order-2">
+            <div className="group relative aspect-4/3 overflow-hidden rounded-2xl border border-stone-200 shadow-2xl sm:rounded-3xl">
+              <Image
+                src="/images/coworking-space.png"
+                alt="iHub Coworking Interior"
+                fill
+                className="object-cover transition-transform duration-700 group-hover:scale-105"
+                sizes="(max-width: 768px) 100vw, 50vw"
+              />
+              <div className="absolute inset-0 bg-linear-to-t from-stone-900/20 to-transparent" />
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Final CTA */}
-      <section className="relative overflow-hidden bg-stone-900 px-6 py-28">
-        <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-[#F36509]/10 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-20 -right-20 h-80 w-80 rounded-full bg-orange-500/10 blur-3xl" />
+      {/* ===== FINAL CTA ===== */}
+      <section className="relative overflow-hidden bg-stone-900 px-4 py-16 sm:px-6 sm:py-20 md:py-28">
+        <div className="pointer-events-none absolute -left-20 -top-20 h-48 w-48 rounded-full bg-[#F36509]/10 blur-3xl sm:h-64 sm:w-64" />
+        <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-orange-500/10 blur-3xl sm:h-80 sm:w-80" />
 
         <div className="relative mx-auto max-w-2xl text-center">
-          <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F36509]/20">
-            <Sparkles className="h-7 w-7 text-[#F36509]" />
+          <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#F36509]/20 sm:mb-5 sm:h-14 sm:w-14 sm:rounded-2xl">
+            <Sparkles className="h-6 w-6 text-[#F36509] sm:h-7 sm:w-7" />
           </div>
 
-          <h2 className="mb-6 font-serif text-5xl font-semibold tracking-tighter text-white">
+          <h2 className="mb-4 font-serif text-3xl font-semibold tracking-tighter text-white sm:text-4xl md:text-5xl">
             Ready to get more done?
           </h2>
 
-          <p className="mb-10 text-xl leading-relaxed text-stone-400">
+          <p className="mb-8 text-base leading-relaxed text-stone-400 sm:mb-10 sm:text-lg md:text-xl">
             Join the most productive community in Davao.
           </p>
 
           <Button
             size="lg"
-            className="h-14 rounded-full bg-[#F36509] px-12 text-lg font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00]"
-          >
-            <Link href="/reserve" className="inline-flex items-center gap-2">
-              Start Today — ₱2,500/month
-              <ArrowRight className="h-5 w-5" />
-            </Link>
-          </Button>
+            className="h-12 rounded-full bg-[#F36509] px-8 text-sm font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00] sm:h-14 sm:px-12 sm:text-base md:text-lg"
+            render={
+              <Link href="/reserve" className="inline-flex items-center gap-2">
+                Start Today — ₱2,500/month
+                <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
+              </Link>
+            }
+          ></Button>
         </div>
       </section>
     </main>
