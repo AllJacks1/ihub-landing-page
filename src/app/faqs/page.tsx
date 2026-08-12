@@ -181,51 +181,51 @@ const sections: FaqSection[] = [
 export default function FaqPage() {
   return (
     <main className="min-h-screen bg-stone-50">
-      {/* Hero */}
-      <section className="relative overflow-hidden bg-stone-900 px-6 py-24 md:py-32">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(243,101,9,0.18),_transparent_55%)]" />
+      {/* ===== HERO ===== */}
+      <section className="relative overflow-hidden bg-stone-900 px-4 py-16 sm:px-6 sm:py-20 md:py-24 lg:py-32">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(243,101,9,0.18),transparent_55%)]" />
 
         <div className="relative z-10 mx-auto max-w-3xl text-center">
           <Badge
             variant="outline"
-            className="mb-6 border-white/20 px-4 py-1.5 text-xs font-bold tracking-widest text-white/70"
+            className="mb-5 border-white/20 px-3 py-1 text-xs font-bold tracking-widest text-white/70 sm:mb-6 sm:px-4 sm:py-1.5"
           >
             FAQ
           </Badge>
 
-          <h1 className="mb-4 font-serif text-5xl font-semibold tracking-tighter text-white md:text-6xl">
+          <h1 className="mb-3 font-serif text-3xl font-semibold tracking-tighter text-white sm:text-4xl md:text-5xl lg:text-6xl">
             Frequently Asked Questions
           </h1>
 
-          <p className="mx-auto mb-3 max-w-xl text-lg text-white/75">
+          <p className="mx-auto mb-2 max-w-xl text-base text-white/75 sm:mb-3 sm:text-lg">
             iHub Coworking Space &amp; Bistro
           </p>
 
-          <p className="font-serif text-xl italic text-white/50">
+          <p className="font-serif text-lg italic text-white/50 sm:text-xl">
             Create your future. Celebrate your now.
           </p>
 
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white/80">
-              <Clock className="size-4 text-[#F36509]" />
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2 sm:mt-8 sm:gap-3">
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-white/80 sm:px-4 sm:py-2 sm:text-sm">
+              <Clock className="size-3.5 text-[#F36509] sm:size-4" />
               Open 24/7
             </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white/80">
-              <Coffee className="size-4 text-[#F36509]" />
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-white/80 sm:px-4 sm:py-2 sm:text-sm">
+              <Coffee className="size-3.5 text-[#F36509] sm:size-4" />
               Work · Study · Unwind
             </span>
           </div>
         </div>
       </section>
 
-      {/* Jump links */}
-      <section className="border-b border-stone-200 bg-white px-6 py-4">
-        <div className="mx-auto flex max-w-4xl flex-wrap justify-center gap-2">
+      {/* ===== JUMP LINKS ===== */}
+      <section className="border-b border-stone-200 bg-white px-4 py-3 sm:px-6 sm:py-4">
+        <div className="mx-auto flex max-w-4xl flex-wrap justify-center gap-1.5 sm:gap-2">
           {sections.map((section) => (
             <a
               key={section.id}
               href={`#${section.id}`}
-              className="rounded-full border border-stone-200 bg-stone-50 px-3.5 py-1.5 text-xs font-semibold tracking-wide text-stone-600 transition-colors hover:border-[#F36509]/40 hover:bg-[#FFF4ED] hover:text-[#F36509]"
+              className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-stone-600 transition-colors hover:border-[#F36509]/40 hover:bg-[#FFF4ED] hover:text-[#F36509] sm:px-3.5 sm:py-1.5 sm:text-xs"
             >
               {section.title}
             </a>
@@ -233,31 +233,35 @@ export default function FaqPage() {
         </div>
       </section>
 
-      {/* FAQ sections */}
-      <section className="px-6 py-16">
-        <div className="mx-auto max-w-4xl space-y-12">
+      {/* ===== FAQ SECTIONS ===== */}
+      <section className="px-4 py-12 sm:px-6 sm:py-14 md:py-16">
+        <div className="mx-auto max-w-4xl space-y-10 sm:space-y-12">
           {sections.map((section) => (
-            <div key={section.id} id={section.id} className="scroll-mt-24">
-              <div className="mb-5 flex items-center gap-3">
-                <div className="flex size-10 items-center justify-center rounded-xl bg-[#F36509]/10">
-                  <section.icon className="size-5 text-[#F36509]" />
+            <div
+              key={section.id}
+              id={section.id}
+              className="scroll-mt-20 sm:scroll-mt-24"
+            >
+              <div className="mb-4 flex items-center gap-3 sm:mb-5">
+                <div className="flex size-9 items-center justify-center rounded-xl bg-[#F36509]/10 sm:size-10">
+                  <section.icon className="size-4 text-[#F36509] sm:size-5" />
                 </div>
-                <h2 className="font-serif text-2xl font-semibold text-stone-900">
+                <h2 className="font-serif text-xl font-semibold text-stone-900 sm:text-2xl">
                   {section.title}
                 </h2>
               </div>
 
               <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
-                <Accordion className="px-5 md:px-6">
+                <Accordion className="px-4 sm:px-5 md:px-6">
                   {section.items.map((item, index) => (
                     <AccordionItem
                       key={item.question}
                       value={`${section.id}-${index}`}
                     >
-                      <AccordionTrigger className="py-5 text-base font-semibold text-stone-900 hover:no-underline data-panel-open:text-[#F36509]">
+                      <AccordionTrigger className="py-4 text-left text-sm font-semibold text-stone-900 hover:no-underline data-[state=open]:text-[#F36509] sm:py-5 sm:text-base">
                         {item.question}
                       </AccordionTrigger>
-                      <AccordionContent className="text-[15px] leading-relaxed text-stone-600">
+                      <AccordionContent className="text-sm leading-relaxed text-stone-600 sm:text-[15px]">
                         <p>{item.answer}</p>
                       </AccordionContent>
                     </AccordionItem>
@@ -271,18 +275,18 @@ export default function FaqPage() {
 
       <Separator className="mx-auto max-w-4xl bg-stone-200" />
 
-      {/* CTA */}
-      <section className="px-6 py-16">
-        <div className="mx-auto max-w-3xl rounded-3xl border border-stone-200 bg-white p-10 text-center shadow-lg md:p-14">
-          <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-2xl bg-[#F36509]/10">
-            <Coffee className="size-7 text-[#F36509]" />
+      {/* ===== CTA ===== */}
+      <section className="px-4 py-12 sm:px-6 sm:py-14 md:py-16">
+        <div className="mx-auto max-w-3xl rounded-2xl border border-stone-200 bg-white p-6 text-center shadow-lg sm:rounded-3xl sm:p-10 md:p-14">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-2xl bg-[#F36509]/10 sm:mb-5 sm:size-14">
+            <Coffee className="size-6 text-[#F36509] sm:size-7" />
           </div>
 
-          <h2 className="mb-3 font-serif text-3xl font-semibold tracking-tight text-stone-900">
+          <h2 className="mb-2 font-serif text-2xl font-semibold tracking-tight text-stone-900 sm:mb-3 sm:text-3xl">
             Still have questions?
           </h2>
 
-          <p className="mx-auto mb-8 max-w-lg text-stone-600 leading-relaxed">
+          <p className="mx-auto mb-6 max-w-lg text-sm leading-relaxed text-stone-600 sm:mb-8 sm:text-base">
             Come visit us, grab a coffee, and ask in person — or reach out and
             we’ll help you find the right pass, the right spot, or the right
             plan for your day.
@@ -291,36 +295,40 @@ export default function FaqPage() {
           <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Button
               size="lg"
-              className="h-12 rounded-full bg-[#F36509] px-8 text-base font-semibold text-white hover:bg-[#e05a00]"
-              render={<Link href="/booking" />}
-            >
-              Book a space
-              <ArrowRight className="ml-2 size-4" />
-            </Button>
+              className="h-11 w-full max-w-xs rounded-full bg-[#F36509] px-6 text-sm font-semibold text-white hover:bg-[#e05a00] sm:h-12 sm:w-auto sm:px-8 sm:text-base"
+              render={
+                <Link href="/booking" className="inline-flex items-center">
+                  Book a space
+                  <ArrowRight className="ml-2 size-4" />
+                </Link>
+              }
+            ></Button>
 
             <Button
               variant="outline"
               size="lg"
-              className="h-12 rounded-full border-stone-200 px-8 text-base font-semibold text-stone-700 hover:border-[#F36509]/40 hover:bg-[#FFF4ED] hover:text-[#F36509]"
-              render={<a href="tel:09855713768" />}
-            >
-              <Phone className="mr-2 size-4" />
-              0985 571 3768
-            </Button>
+              className="h-11 w-full max-w-xs rounded-full border-stone-200 px-6 text-sm font-semibold text-stone-700 hover:border-[#F36509]/40 hover:bg-[#FFF4ED] hover:text-[#F36509] sm:h-12 sm:w-auto sm:px-8 sm:text-base"
+              render={
+                <a href="tel:09855713768" className="inline-flex items-center">
+                  <Phone className="mr-2 size-4" />
+                  0985 571 3768
+                </a>
+              }
+            ></Button>
           </div>
 
-          <p className="mt-8 font-serif text-lg italic text-stone-400">
+          <p className="mt-6 font-serif text-base italic text-stone-400 sm:mt-8 sm:text-lg">
             See you at iHub.
           </p>
-          <p className="mt-1 text-sm text-stone-400">
+          <p className="mt-1 text-xs text-stone-400 sm:text-sm">
             Create your future. Celebrate your now.
           </p>
         </div>
       </section>
 
-      {/* Footer tagline */}
-      <section className="border-t border-stone-200 bg-white px-6 py-10 text-center">
-        <p className="text-sm text-stone-500">
+      {/* ===== FOOTER TAGLINE ===== */}
+      <section className="border-t border-stone-200 bg-white px-4 py-8 text-center sm:px-6 sm:py-10">
+        <p className="text-xs text-stone-500 sm:text-sm">
           iHub Coworking Space &amp; Bistro · Open 24/7 · Davao City
         </p>
       </section>
