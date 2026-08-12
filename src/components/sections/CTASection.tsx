@@ -4,8 +4,8 @@ import { ArrowRight, Sparkles } from "lucide-react";
 
 export default function CTASection() {
   return (
-    <section className="relative overflow-hidden bg-[#F36509] px-6 py-32">
-      {/* Decorative noise texture overlay */}
+    <section className="relative overflow-hidden bg-[#F36509] px-4 py-20 sm:px-6 sm:py-28 md:py-32">
+      {/* Decorative noise */}
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.03]"
         style={{
@@ -14,47 +14,46 @@ export default function CTASection() {
       />
 
       {/* Floating shapes */}
-      <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-20 -right-20 h-80 w-80 rounded-full bg-white/10 blur-3xl" />
+      <div className="pointer-events-none absolute -left-20 -top-20 h-48 w-48 rounded-full bg-white/10 blur-3xl sm:h-64 sm:w-64" />
+      <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-white/10 blur-3xl sm:h-80 sm:w-80" />
 
       <div className="relative mx-auto max-w-3xl text-center">
-        {/* Sparkle icon */}
-        <div className="mx-auto mb-8 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
-          <Sparkles className="h-8 w-8 text-white" />
+        <div className="mx-auto mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm sm:mb-8 sm:h-16 sm:w-16 sm:rounded-2xl">
+          <Sparkles className="h-6 w-6 text-white sm:h-8 sm:w-8" />
         </div>
 
-        <h2 className="mb-6 font-serif text-5xl font-semibold tracking-tighter text-white md:text-7xl">
+        <h2 className="mb-5 font-serif text-3xl font-semibold tracking-tighter text-white sm:text-4xl md:text-5xl lg:text-7xl">
           Ready to create
           <br />
           and celebrate?
         </h2>
 
-        <p className="mx-auto mb-12 max-w-lg text-xl leading-relaxed text-white/80">
+        <p className="mx-auto mb-10 max-w-lg text-base leading-relaxed text-white/80 sm:mb-12 sm:text-lg md:text-xl">
           Join Davao&apos;s most vibrant coworking community. Your desk, your
           coffee, your vibe — waiting for you.
         </p>
 
-        <div className="flex flex-col justify-center gap-4 sm:flex-row">
+        <div className="flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
           <Button
             size="lg"
-            className="h-16 rounded-full bg-white px-12 text-lg font-bold text-[#F36509] shadow-2xl shadow-black/20 transition-all hover:-translate-y-1 hover:bg-white/10 hover:shadow-black/30 hover:text-white"
-          >
-            <Link
-              href="/booking?type=bistro"
-              className="inline-flex items-center gap-2"
-            >
-              Reserve a Table
-              <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
-            </Link>
-          </Button>
+            className="h-12 w-full max-w-xs rounded-full bg-white px-8 text-base font-bold text-[#F36509] shadow-2xl shadow-black/20 transition-all hover:-translate-y-1 hover:bg-white/90 sm:h-14 sm:w-auto sm:px-10 sm:text-lg md:h-16 md:px-12"
+            render={
+              <Link
+                href="/booking?type=bistro"
+                className="inline-flex items-center gap-2"
+              >
+                Reserve a Table
+                <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
+              </Link>
+            }
+          ></Button>
 
           <Button
             variant="outline"
             size="lg"
-            className="h-16 rounded-full border-2 border-white/40 bg-white/10 px-12 text-lg font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white hover:bg-white"
-          >
-            <Link href="/booking?type=conference">Book a Space</Link>
-          </Button>
+            className="h-12 w-full max-w-xs rounded-full border-2 border-white/40 bg-white/10 px-8 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white hover:bg-white hover:text-[#F36509] sm:h-14 sm:w-auto sm:px-10 sm:text-lg md:h-16 md:px-12"
+            render={<Link href="/booking?type=conference">Book a Space</Link>}
+          ></Button>
         </div>
       </div>
     </section>

@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ChevronDown, LogOut, Loader2 } from "lucide-react";
 
@@ -21,14 +20,13 @@ export function UserMenu({
   name = "Juan Dela Cruz",
   email = "juan@ihubdavao.com",
   avatarUrl,
-  initials = "JD",
+  initials = "JD"
 }: {
   name?: string;
   email?: string;
   avatarUrl?: string | null;
   initials?: string;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   function handleLogout() {

@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Check, ArrowRight, Zap, Star } from "lucide-react";
 
@@ -44,18 +43,16 @@ const plans = [
 
 export default function OffersSection() {
   return (
-    <section className="bg-stone-50 px-6 py-24">
+    <section className="bg-stone-50 px-4 py-16 sm:px-6 sm:py-20 md:py-24">
       <div className="mx-auto max-w-5xl text-center">
-        {/* Header */}
-        <h2 className="mb-6 font-serif text-5xl font-semibold tracking-tighter text-stone-900 md:text-6xl">
+        <h2 className="mb-4 font-serif text-3xl font-semibold tracking-tighter text-stone-900 sm:text-4xl md:text-5xl lg:text-6xl">
           Choose Your Pass
         </h2>
-        <p className="mx-auto mb-16 max-w-2xl text-xl leading-relaxed text-stone-500">
+        <p className="mx-auto mb-12 max-w-2xl text-base leading-relaxed text-stone-500 sm:mb-16 sm:text-lg md:text-xl">
           Flexible access tailored for how you work, study, and connect.
         </p>
 
-        {/* Cards */}
-        <div className="mx-auto grid max-w-3xl gap-8 md:grid-cols-2">
+        <div className="mx-auto grid max-w-3xl gap-6 sm:gap-8 md:grid-cols-2">
           {plans.map((plan) => (
             <Card
               key={plan.name}
@@ -65,45 +62,40 @@ export default function OffersSection() {
                   : "border-stone-200 bg-white shadow-sm hover:border-stone-300 hover:shadow-lg"
               }`}
             >
-              {/* Popular Badge */}
               {plan.badge && (
-                <div className="absolute -right-12 top-7 w-44 rotate-45 bg-[#F36509] py-1.5 text-center text-xs font-bold tracking-wider text-white shadow-sm">
+                <div className="absolute -right-12 top-6 w-44 rotate-45 bg-[#F36509] py-1.5 text-center text-[10px] font-bold tracking-wider text-white shadow-sm sm:top-7 sm:text-xs">
                   {plan.badge}
                 </div>
               )}
 
-              <CardHeader className="pb-4 pt-10">
-                {/* Subtitle */}
-                <div className="mb-3 font-mono text-xs font-bold tracking-[3px] text-[#F36509]">
+              <CardHeader className="pb-3 pt-8 sm:pb-4 sm:pt-10">
+                <div className="mb-2 font-mono text-[10px] font-bold tracking-[3px] text-[#F36509] sm:mb-3 sm:text-xs">
                   {plan.subtitle}
                 </div>
 
-                {/* Plan Name */}
-                <div className="mb-2 flex items-center justify-center gap-3">
+                <div className="mb-2 flex items-center justify-center gap-2 sm:gap-3">
                   <plan.icon
-                    className={`h-8 w-8 ${
+                    className={`h-6 w-6 sm:h-8 sm:w-8 ${
                       plan.variant === "featured"
                         ? "text-[#F36509]"
                         : "text-stone-400"
                     }`}
                   />
-                  <span className="font-serif text-5xl font-semibold tracking-tighter text-stone-900">
+                  <span className="font-serif text-3xl font-semibold tracking-tighter text-stone-900 sm:text-4xl md:text-5xl">
                     {plan.name}
                   </span>
                 </div>
 
-                {/* Price */}
-                <div className="mb-1 text-3xl font-semibold text-stone-900">
+                <div className="mb-1 text-2xl font-semibold text-stone-900 sm:text-3xl">
                   {plan.price}
                 </div>
-                <div className="text-sm font-medium text-stone-400">
+                <div className="text-xs font-medium text-stone-400 sm:text-sm">
                   {plan.period}
                 </div>
               </CardHeader>
 
-              <CardContent className="space-y-8 pb-10">
-                {/* Features */}
-                <ul className="space-y-4 text-left">
+              <CardContent className="space-y-6 pb-8 sm:space-y-8 sm:pb-10">
+                <ul className="space-y-3 text-left sm:space-y-4">
                   {plan.features.map((feature, i) => (
                     <li key={i} className="flex items-start gap-3">
                       <div
@@ -122,27 +114,29 @@ export default function OffersSection() {
                           strokeWidth={3}
                         />
                       </div>
-                      <span className="text-stone-600">{feature}</span>
+                      <span className="text-sm text-stone-600 sm:text-base">
+                        {feature}
+                      </span>
                     </li>
                   ))}
                 </ul>
 
-                {/* CTA */}
                 <Button
-                  className={`h-14 w-full rounded-full text-base font-semibold transition-all ${
+                  className={`h-12 w-full rounded-full text-sm font-semibold transition-all sm:h-14 sm:text-base ${
                     plan.variant === "featured"
                       ? "bg-[#F36509] text-white shadow-lg shadow-orange-500/20 hover:-translate-y-0.5 hover:bg-[#e05a00] hover:shadow-xl hover:shadow-orange-500/30"
                       : "border-2 border-stone-900 bg-transparent text-stone-900 hover:bg-stone-900 hover:text-white"
                   }`}
-                >
-                  <Link
-                    href={plan.href}
-                    className="inline-flex items-center justify-center gap-2"
-                  >
-                    {plan.cta}
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-                  </Link>
-                </Button>
+                  render={
+                    <Link
+                      href={plan.href}
+                      className="inline-flex items-center justify-center gap-2"
+                    >
+                      {plan.cta}
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                  }
+                ></Button>
               </CardContent>
             </Card>
           ))}
