@@ -46,12 +46,12 @@ const sidebarGroups: SidebarGroup[] = [
         icon: LayoutDashboard,
         href: "/admin",
       },
-      {
-        id: "settings",
-        label: "Settings",
-        icon: Settings,
-        href: "/admin/settings",
-      },
+      //{
+      //   id: "settings",
+      //   label: "Settings",
+      //   icon: Settings,
+      //   href: "/admin/settings",
+      // },
     ],
   },
   {

@@ -1848,3 +1848,65 @@ export async function updateReservationStatus(
 
   return { success: true as const };
 }
+
+export async function logoutUser() {
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase.auth.signOut();
+
+  if (error) {
+    return { success: false as const, error: error.message };
+  }
+
+  return { success: true as const };
+}
+
+export type CurrentUser = {
+  full_name: string;
+  email: string;
+  initials: string;
+  avatarUrl?: string | null;
+};
+
+function getInitials(name: string | null | undefined, email?: string | null) {
+  const source = (name || email || "?").trim();
+  const parts = source.split(/\s+/).filter(Boolean);
+
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  return source.slice(0, 2).toUpperCase();
+}
+
+export async function getCurrentUser(): Promise<CurrentUser | null> {
+  const supabase = await createSupabaseClient();
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) return null;
+
+  // Prefer profile row (your table)
+  const { data: profile } = await supabase
+    .from("profiles") // change if your table name differs
+    .select("full_name, email")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+
+  const full_name =
+    profile?.full_name ||
+    (user.user_metadata?.full_name as string | undefined) ||
+    user.email?.split("@")[0] ||
+    "User";
+
+  const email = profile?.email || user.email || "";
+
+  return {
+    full_name,
+    email,
+    initials: getInitials(full_name, email),
+    avatarUrl: null,
+  };
+}
