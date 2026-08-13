@@ -1,25 +1,34 @@
 "use client";
-
-import Link from "next/link";
 import { useState, useEffect } from "react";
-import { Menu, X } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { Menu, X, Calendar, Sparkles } from "lucide-react";
+import Link from "next/link";
 import Image from "next/image";
 
 export default function Navbar() {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Close on Escape
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Close mobile menu on Escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIsOpen(false);
+      if (e.key === "Escape") setMobileMenuOpen(false);
     };
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
   }, []);
 
-  // Lock body scroll when menu is open
+  // Lock body scroll when mobile menu is open
   useEffect(() => {
-    if (isOpen) {
+    if (mobileMenuOpen) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -27,154 +36,163 @@ export default function Navbar() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [isOpen]);
+  }, [mobileMenuOpen]);
+
+  const openBooking = (type: string = "bistro") => {
+    window.dispatchEvent(
+      new CustomEvent("open-booking-modal", { detail: { type } }),
+    );
+    setMobileMenuOpen(false);
+  };
+
+  const openMenu = () => {
+    window.dispatchEvent(new CustomEvent("open-menu-modal"));
+    setMobileMenuOpen(false);
+  };
 
   const navLinks = [
-    { href: "/", label: "Home" },
+    { href: "#", label: "Home" },
     {
-      href: "https://online.fliphtml5.com/mtvla/uhye/",
-      label: "Menu",
-      external: true,
+      href: "/bistro",
+      label: "24/7 Menu",
+      isModal: true,
     },
-    { href: "/bistro", label: "Bistro" },
-    { href: "/events", label: "Events" },
-    { href: "/coworking", label: "Coworking Space" },
-    { href: "/about", label: "About Us" },
-    { href: "/blogs", label: "Blogs" },
-    { href: "/faqs", label: "FAQs" },
-    { href: "/contact", label: "Contact" },
+    { href: "#spaces", label: "Coworking" },
+    { href: "#events", label: "Events & Music" },
+    { href: "#passes", label: "Passes & Rates" },
+    { href: "#location", label: "Contact & Location" },
   ];
 
   return (
-    <>
-      {/* ===== NAV BAR ===== */}
-      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-gray-100 bg-white/95 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:h-20 sm:px-6">
-          {/* Logo */}
-          <Link href="/" className="relative block h-12 w-28 shrink-0 sm:h-14 sm:w-32">
-            <Image
-              src="/logos/logo_black_horizontal.png"
-              alt="i-Hub Davao - CoWorking Space and Bistro Logo"
-              fill
-              className="object-contain object-left"
-              priority
-              sizes="(max-width: 640px) 112px, 128px"
-            />
-          </Link>
+    <header
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+        isScrolled
+          ? "bg-stone-950/90 backdrop-blur-xl border-b border-stone-800/80 py-3 shadow-2xl"
+          : "bg-gradient-to-b from-stone-950/90 via-stone-950/50 to-transparent py-4"
+      }`}
+    >
+      <div className="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
+        {/* Brand Logo */}
+        <Link href="/" className="relative block shrink-0 group">
+          <Image
+            src="/logos/logo_white_horizontal.png"
+            alt="i-Hub Davao - CoWorking Space and Bistro Logo"
+            className={`$object-contain object-left transition-transform duration-300 group-hover:scale-105`}
+            width={120}
+            height={20}
+          />
+        </Link>
 
-          {/* Desktop Links */}
-          <div className="hidden items-center gap-6 text-sm font-medium lg:flex xl:gap-8">
-            {navLinks.map((link) =>
-              link.external ? (
-                <a
-                  key={link.label}
-                  href={link.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="whitespace-nowrap transition-colors hover:text-[#F36509]"
-                >
-                  {link.label}
-                </a>
-              ) : (
-                <Link
-                  key={link.label}
-                  href={link.href}
-                  className="whitespace-nowrap transition-colors hover:text-[#F36509]"
-                >
-                  {link.label}
-                </Link>
-              ),
-            )}
-          </div>
+        {/* Desktop Navigation */}
+        <nav className="hidden lg:flex items-center gap-6 xl:gap-8 ml-46">
+          {navLinks.map((link) =>
+            link.isModal ? (
+              <button
+                key={link.label}
+                onClick={openMenu}
+                className="text-xs font-semibold tracking-widest text-stone-300 hover:text-[#F36509] transition-colors uppercase cursor-pointer"
+              >
+                {link.label}
+              </button>
+            ) : (
+              <Link
+                key={link.label}
+                href={link.href}
+                className="text-xs font-semibold tracking-widest text-stone-300 hover:text-[#F36509] transition-colors uppercase"
+              >
+                {link.label}
+              </Link>
+            ),
+          )}
+        </nav>
 
-          {/* Desktop CTAs */}
-          <div className="hidden items-center gap-3 lg:flex">
-            <Link
-              href="/booking?type=bistro"
-              className="whitespace-nowrap rounded-full border-2 border-[#F36509] px-5 py-2.5 text-sm font-semibold text-[#F36509] transition-all hover:bg-[#F36509] hover:text-white active:scale-95"
-            >
-              Table Reservation
-            </Link>
-            <Link
-              href="/booking?type=conference"
-              className="whitespace-nowrap rounded-full bg-[#F36509] px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-[#d94f00] active:scale-95"
-            >
-              Conference Room
-            </Link>
-          </div>
+        {/* Action CTAs */}
+        <div className="hidden sm:flex items-center gap-3">
+          {/* <div className="hidden xl:flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            24/7 OPEN
+          </div> */}
 
-          {/* Mobile Hamburger */}
           <button
-            onClick={() => setIsOpen(!isOpen)}
-            className="flex min-h-[44px] min-w-[44px] items-center justify-center p-2 text-[#1C1C1D] lg:hidden"
-            aria-label={isOpen ? "Close menu" : "Open menu"}
-            aria-expanded={isOpen}
+            onClick={() => openBooking("bistro")}
+            className="px-5 py-2.5 border-2 border-[#F36509] text-[#F36509] hover:bg-[#F36509] hover:text-white text-xs font-bold rounded-full transition-all cursor-pointer active:scale-95"
           >
-            {isOpen ? <X size={26} /> : <Menu size={26} />}
+            Table Reservation
+          </button>
+
+          <button
+            onClick={() => openBooking("conference")}
+            className="px-5 py-2.5 bg-[#F36509] text-white text-xs font-bold rounded-full hover:bg-[#e05a00] hover:shadow-lg hover:shadow-orange-500/30 transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+          >
+            <Calendar className="w-3.5 h-3.5" /> Conference Room
           </button>
         </div>
-      </nav>
 
-      {/* ===== MOBILE MENU (OUTSIDE the nav to avoid backdrop-blur stacking issues) ===== */}
-      {isOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/20"
-            onClick={() => setIsOpen(false)}
-          />
+        {/* Mobile Hamburger */}
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="lg:hidden p-2 text-stone-300 hover:text-white focus:outline-none cursor-pointer"
+          aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={mobileMenuOpen}
+        >
+          {mobileMenuOpen ? (
+            <X className="h-6 w-6" />
+          ) : (
+            <Menu className="h-6 w-6" />
+          )}
+        </button>
+      </div>
 
-          {/* Menu panel */}
-          <div className="absolute inset-x-0 top-16 bottom-0 overflow-y-auto bg-white sm:top-20">
-            <div className="flex flex-col px-6 py-8">
+      {/* Mobile Drawer */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="lg:hidden bg-stone-950/98 backdrop-blur-2xl border-b border-stone-800 px-6 py-6 space-y-4"
+          >
+            <nav className="flex flex-col space-y-3">
               {navLinks.map((link) =>
-                link.external ? (
-                  <a
+                link.isModal ? (
+                  <button
                     key={link.label}
-                    href={link.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => setIsOpen(false)}
-                    className="border-b border-gray-100 py-3.5 text-lg font-medium transition-colors hover:text-[#F36509] last:border-0"
+                    onClick={openMenu}
+                    className="text-left text-sm font-semibold tracking-widest text-stone-300 hover:text-[#F36509] py-1 uppercase"
                   >
                     {link.label}
-                  </a>
+                  </button>
                 ) : (
                   <Link
                     key={link.label}
                     href={link.href}
-                    onClick={() => setIsOpen(false)}
-                    className="border-b border-gray-100 py-3.5 text-lg font-medium transition-colors hover:text-[#F36509] last:border-0"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="text-sm font-semibold tracking-widest text-stone-300 hover:text-[#F36509] py-1 uppercase"
                   >
                     {link.label}
                   </Link>
                 ),
               )}
+            </nav>
 
-              {/* Mobile CTAs */}
-              <div className="mt-8 flex flex-col gap-3">
-                <Link
-                  href="/booking?type=bistro"
-                  onClick={() => setIsOpen(false)}
-                  className="rounded-full border-2 border-[#F36509] py-3.5 text-center font-semibold text-[#F36509] transition-all hover:bg-[#F36509] hover:text-white active:scale-[0.98]"
-                >
-                  Table Reservation
-                </Link>
-                <Link
-                  href="/booking?type=conference"
-                  onClick={() => setIsOpen(false)}
-                  className="rounded-full bg-[#F36509] py-3.5 text-center font-semibold text-white transition-all hover:bg-[#d94f00] active:scale-[0.98]"
-                >
-                  Conference Room
-                </Link>
-              </div>
+            {/* Mobile CTAs */}
+            <div className="pt-4 border-t border-stone-800 flex flex-col gap-2.5">
+              <button
+                onClick={() => openBooking("bistro")}
+                className="w-full py-3 border-2 border-[#F36509] text-[#F36509] hover:bg-[#F36509] hover:text-white text-sm font-bold rounded-full text-center transition-colors"
+              >
+                Table Reservation
+              </button>
+              <button
+                onClick={() => openBooking("conference")}
+                className="w-full py-3 bg-[#F36509] text-white text-sm font-bold rounded-full text-center hover:bg-[#e05a00] transition-colors"
+              >
+                Conference Room
+              </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Spacer */}
-      <div className="h-16 sm:h-20" />
-    </>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </header>
   );
 }

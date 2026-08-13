@@ -1,42 +1,68 @@
-import Link from "next/link";
+"use client";
+import { motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Sparkles } from "lucide-react";
+import Link from "next/link";
 
 export default function CTASection() {
   return (
-    <section className="relative overflow-hidden bg-[#F36509] px-4 py-20 sm:px-6 sm:py-28 md:py-32">
-      {/* Decorative noise */}
+    <section className="relative overflow-hidden bg-gradient-to-br from-[#F36509] via-[#e05a00] to-orange-700 px-4 py-20 sm:px-6 sm:py-28 md:py-32">
+      {/* Decorative noise background pattern */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.03]"
+        className="pointer-events-none absolute inset-0 opacity-[0.05]"
         style={{
           backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
         }}
       />
 
-      {/* Floating shapes */}
-      <div className="pointer-events-none absolute -left-20 -top-20 h-48 w-48 rounded-full bg-white/10 blur-3xl sm:h-64 sm:w-64" />
-      <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-white/10 blur-3xl sm:h-80 sm:w-80" />
+      {/* Floating blurred shapes */}
+      <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-20 -right-20 h-80 w-80 rounded-full bg-black/20 blur-3xl" />
 
       <div className="relative mx-auto max-w-3xl text-center">
-        <div className="mx-auto mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm sm:mb-8 sm:h-16 sm:w-16 sm:rounded-2xl">
-          <Sparkles className="h-6 w-6 text-white sm:h-8 sm:w-8" />
-        </div>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5 }}
+          className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 border border-white/30 backdrop-blur-md shadow-2xl"
+        >
+          <Sparkles className="h-7 w-7 text-white" />
+        </motion.div>
 
-        <h2 className="mb-5 font-serif text-3xl font-semibold tracking-tighter text-white sm:text-4xl md:text-5xl lg:text-7xl">
+        <motion.h2
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6, delay: 0.1 }}
+          className="mb-5 font-serif text-3xl font-bold tracking-tighter text-white sm:text-5xl md:text-6xl lg:text-7xl"
+        >
           Ready to create
           <br />
           and celebrate?
-        </h2>
+        </motion.h2>
 
-        <p className="mx-auto mb-10 max-w-lg text-base leading-relaxed text-white/80 sm:mb-12 sm:text-lg md:text-xl">
-          Join Davao&apos;s most vibrant coworking community. Your desk, your
-          coffee, your vibe — waiting for you.
-        </p>
+        <motion.p
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="mx-auto mb-10 max-w-lg text-base leading-relaxed text-white/90 sm:mb-12 sm:text-lg md:text-xl font-sans"
+        >
+          Join Davao&apos;s most vibrant 24/7 coworking community. Your desk,
+          your coffee, your vibe — waiting for you.
+        </motion.p>
 
-        <div className="flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6, delay: 0.3 }}
+          className="flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4"
+        >
           <Button
             size="lg"
-            className="h-12 w-full max-w-xs rounded-full bg-white px-8 text-base font-bold text-[#F36509] shadow-2xl shadow-black/20 transition-all hover:-translate-y-1 hover:bg-white/90 sm:h-14 sm:w-auto sm:px-10 sm:text-lg md:h-16 md:px-12"
+            className="h-12 w-full max-w-xs rounded-full bg-white px-8 text-base font-bold text-[#F36509] shadow-2xl shadow-black/20 transition-all hover:bg-stone-100 hover:scale-105 active:scale-95 sm:h-14 sm:w-auto sm:px-10 sm:text-lg md:h-16 md:px-12 cursor-pointer"
             render={
               <Link
                 href="/booking?type=bistro"
@@ -46,15 +72,15 @@ export default function CTASection() {
                 <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
               </Link>
             }
-          ></Button>
+          />
 
           <Button
             variant="outline"
             size="lg"
-            className="h-12 w-full max-w-xs rounded-full border-2 border-white/40 bg-white/10 px-8 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-white hover:bg-white hover:text-[#F36509] sm:h-14 sm:w-auto sm:px-10 sm:text-lg md:h-16 md:px-12"
+            className="h-12 w-full max-w-xs rounded-full border-2 border-white/60 bg-white/10 px-8 text-base font-semibold text-white backdrop-blur-md transition-all hover:border-white hover:bg-white hover:text-[#F36509] hover:scale-105 active:scale-95 sm:h-14 sm:w-auto sm:px-10 sm:text-lg md:h-16 md:px-12 cursor-pointer"
             render={<Link href="/booking?type=conference">Book a Space</Link>}
-          ></Button>
-        </div>
+          />
+        </motion.div>
       </div>
     </section>
   );

@@ -69,15 +69,24 @@ export default function CommentsPage() {
   }, []);
 
   const filteredComments = useMemo(() => {
-    const q = searchQuery.toLowerCase();
-    return comments.filter(
-      (c) =>
-        c.content.toLowerCase().includes(q) ||
-        c.author_name.toLowerCase().includes(q) ||
-        c.author_email.toLowerCase().includes(q) ||
-        c.post?.title?.toLowerCase().includes(q) ||
-        c.post?.slug?.toLowerCase().includes(q),
-    );
+    const q = (searchQuery ?? "").toLowerCase().trim();
+    if (!q) return comments;
+
+    return comments.filter((c) => {
+      const content = (c.content ?? "").toLowerCase();
+      const authorName = (c.author_name ?? "").toLowerCase();
+      const authorEmail = (c.author_email ?? "").toLowerCase();
+      const postTitle = (c.post?.title ?? "").toLowerCase();
+      const postSlug = (c.post?.slug ?? "").toLowerCase();
+
+      return (
+        content.includes(q) ||
+        authorName.includes(q) ||
+        authorEmail.includes(q) ||
+        postTitle.includes(q) ||
+        postSlug.includes(q)
+      );
+    });
   }, [comments, searchQuery]);
 
   const parentComments = useMemo(
