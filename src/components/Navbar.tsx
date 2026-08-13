@@ -51,16 +51,16 @@ export default function Navbar() {
   };
 
   const navLinks = [
-    { href: "#", label: "Home" },
+    { href: "/", label: "Home" },
     {
-      href: "/bistro",
+      href: "https://online.fliphtml5.com/mtvla/uhye/",
       label: "24/7 Menu",
-      isModal: true,
+      external: true,
     },
-    { href: "#spaces", label: "Coworking" },
-    { href: "#events", label: "Events & Music" },
-    { href: "#passes", label: "Passes & Rates" },
-    { href: "#location", label: "Contact & Location" },
+    { href: "/coworking", label: "Coworking" },
+    { href: "/events", label: "Events & Music" },
+    { href: "/passes", label: "Passes & Rates" },
+    { href: "/contact", label: "Contact & Location" },
   ];
 
   return (
@@ -86,19 +86,23 @@ export default function Navbar() {
         {/* Desktop Navigation */}
         <nav className="hidden lg:flex items-center gap-6 xl:gap-8 ml-46">
           {navLinks.map((link) =>
-            link.isModal ? (
-              <button
+            link.external ? (
+              <a
                 key={link.label}
-                onClick={openMenu}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-xs font-semibold tracking-widest text-stone-300 hover:text-[#F36509] transition-colors uppercase cursor-pointer"
+                onClick={() => setMobileMenuOpen(false)} // only needed on mobile
               >
                 {link.label}
-              </button>
+              </a>
             ) : (
               <Link
                 key={link.label}
                 href={link.href}
                 className="text-xs font-semibold tracking-widest text-stone-300 hover:text-[#F36509] transition-colors uppercase"
+                onClick={() => setMobileMenuOpen(false)}
               >
                 {link.label}
               </Link>
@@ -154,20 +158,23 @@ export default function Navbar() {
           >
             <nav className="flex flex-col space-y-3">
               {navLinks.map((link) =>
-                link.isModal ? (
-                  <button
+                link.external ? (
+                  <a
                     key={link.label}
-                    onClick={openMenu}
-                    className="text-left text-sm font-semibold tracking-widest text-stone-300 hover:text-[#F36509] py-1 uppercase"
+                    href={link.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-semibold tracking-widest text-stone-300 hover:text-[#F36509] transition-colors uppercase cursor-pointer"
+                    onClick={() => setMobileMenuOpen(false)} // only needed on mobile
                   >
                     {link.label}
-                  </button>
+                  </a>
                 ) : (
                   <Link
                     key={link.label}
                     href={link.href}
+                    className="text-xs font-semibold tracking-widest text-stone-300 hover:text-[#F36509] transition-colors uppercase"
                     onClick={() => setMobileMenuOpen(false)}
-                    className="text-sm font-semibold tracking-widest text-stone-300 hover:text-[#F36509] py-1 uppercase"
                   >
                     {link.label}
                   </Link>

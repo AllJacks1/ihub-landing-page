@@ -9,6 +9,7 @@ const quickLinks = [
   { label: "Bistro", href: "/bistro" },
   { label: "Reserve", href: "/reserve" },
   { label: "Events", href: "/events" },
+  { label: "FAQs", href: "/faqs" },
 ];
 
 const socialLinks = [
