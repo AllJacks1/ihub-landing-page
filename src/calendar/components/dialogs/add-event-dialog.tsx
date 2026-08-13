@@ -218,6 +218,7 @@ export function AddEventDialog({ children, startDate, startTime }: IProps) {
             picturePath: null,
           },
           reservation: {
+            full_name: values.full_name, // ← add this
             pax: values.pax,
             zone: values.zone,
             status: values.status,
