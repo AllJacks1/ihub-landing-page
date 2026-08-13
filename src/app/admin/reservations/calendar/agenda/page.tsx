@@ -2,8 +2,11 @@ import { CalendarProvider } from "@/calendar/contexts/calendar-context";
 import { ClientContainer } from "@/calendar/components/client-container";
 import { getReservations } from "@/lib/actions";
 import { reservationToEvent } from "@/calendar/mappers";
+import { connection } from "next/server";
 
 export default async function ReservationsCalendarPage() {
+  await connection();
+
   const { data } = await getReservations();
   const events = (data || []).map(reservationToEvent);
 
