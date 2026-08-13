@@ -5,12 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import {
-  Edit2,
-  Trash2,
-  Search,
-  User,
-} from "lucide-react";
+import { Edit2, Trash2, Search, User } from "lucide-react";
 import { toast } from "sonner";
 import CreatePostModal from "@/components/sections/CreatePostModal";
 import { getPosts } from "@/lib/actions";
@@ -20,12 +15,14 @@ interface Post {
   title: string;
   slug: string;
   summary?: string;
-  status: "draft" | "published" | "archived";
+  featured_image?: string;
+  status?: "draft" | "published" | "archived"; // make optional for now
   published_at?: string;
-  created_at: string;
+  created_at?: string; // make optional for now
   author_name: string;
   category_name?: string;
   parent_category_name?: string;
+  tags?: string; // or a proper type
 }
 
 export default function PostsPage() {
@@ -227,7 +224,11 @@ export default function PostsPage() {
                         </div>
                       </td>
                       <td className="py-4 px-4">
-                        {getStatusBadge(post.status)}
+                        {post.status ? (
+                          getStatusBadge(post.status)
+                        ) : (
+                          <span className="text-stone-400 text-xs">—</span>
+                        )}
                       </td>
                       <td className="py-4 px-4 text-sm text-stone-500">
                         {post.published_at
