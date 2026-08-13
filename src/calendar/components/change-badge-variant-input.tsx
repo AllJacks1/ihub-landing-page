@@ -2,7 +2,13 @@
 
 import { useCalendar } from "@/calendar/contexts/calendar-context";
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export function ChangeBadgeVariantInput() {
   const { badgeVariant, setBadgeVariant } = useCalendar();
@@ -11,7 +17,14 @@ export function ChangeBadgeVariantInput() {
     <div className="space-y-2">
       <p className="text-sm font-semibold">Change badge variant</p>
 
-      <Select value={badgeVariant} onValueChange={setBadgeVariant}>
+      <Select
+        value={badgeVariant}
+        onValueChange={(value) => {
+          if (value === "dot" || value === "colored" || value === "mixed") {
+            setBadgeVariant(value);
+          }
+        }}
+      >
         <SelectTrigger className="w-48">
           <SelectValue />
         </SelectTrigger>
