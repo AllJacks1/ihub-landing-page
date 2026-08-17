@@ -57,15 +57,6 @@ const bookingTypes = [
   },
 ];
 
-const conferenceRooms = [
-  { value: "", label: "Any available room" },
-  { value: "CONFE A", label: "CONFE A (30 pax)" },
-  { value: "CONFE B", label: "CONFE B (4 pax)" },
-  { value: "CONFE C", label: "iSTUDY/CONFE C (10 pax)" },
-  { value: "CONFE ABC", label: "CONFE A+B+C (50 pax)" },
-  { value: "ONE HUB QUIMPO", label: "One Hub Quimpo (6–12 pax)" },
-];
-
 const bistroTableTypes = [
   { value: "", label: "Any available table" },
   { value: "solo", label: "Solo Table (1 pax)" },
@@ -226,7 +217,7 @@ const iWorkRoomsGrouped = [
   {
     id: "quimpo",
     room: "One Hub Quimpo",
-    image: "/images/rooms/quimpo.jpg",
+    image: "/images/room_quimps.png",
     capacities: [
       {
         id: "quimpo-6-8",
@@ -752,35 +743,37 @@ export default function BookingPage() {
                         })}
                       </div>
 
-                      <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
-                        <div className="mb-3 flex items-center gap-2">
-                          <Utensils className="h-4 w-4 text-[#F36509]" />
-                          <p className="text-sm font-semibold text-stone-800">
-                            Hub a Blast includes
+                      {formData.packageId?.startsWith("hub-a-blast") && (
+                        <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
+                          <div className="mb-3 flex items-center gap-2">
+                            <Utensils className="h-4 w-4 text-[#F36509]" />
+                            <p className="text-sm font-semibold text-stone-800">
+                              Hub a Blast includes
+                            </p>
+                          </div>
+                          <ul className="grid gap-1.5 sm:grid-cols-2">
+                            {[
+                              ...hubABlastDetails.food,
+                              ...hubABlastDetails.amenities,
+                            ].map((item) => (
+                              <li
+                                key={item}
+                                className="flex items-start gap-2 text-xs text-stone-600"
+                              >
+                                <Check
+                                  className="mt-0.5 h-3 w-3 shrink-0 text-[#F36509]"
+                                  strokeWidth={3}
+                                />
+                                {item}
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="mt-3 text-xs text-stone-400">
+                            Optional add-on: {hubABlastDetails.addOn.item} —{" "}
+                            {hubABlastDetails.addOn.price}
                           </p>
                         </div>
-                        <ul className="grid gap-1.5 sm:grid-cols-2">
-                          {[
-                            ...hubABlastDetails.food,
-                            ...hubABlastDetails.amenities,
-                          ].map((item) => (
-                            <li
-                              key={item}
-                              className="flex items-start gap-2 text-xs text-stone-600"
-                            >
-                              <Check
-                                className="mt-0.5 h-3 w-3 shrink-0 text-[#F36509]"
-                                strokeWidth={3}
-                              />
-                              {item}
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="mt-3 text-xs text-stone-400">
-                          Optional add-on: {hubABlastDetails.addOn.item} —{" "}
-                          {hubABlastDetails.addOn.price}
-                        </p>
-                      </div>
+                      )}
                     </section>
                   </TabsContent>
 
@@ -962,7 +955,7 @@ export default function BookingPage() {
                   </TabsContent> */}
 
                   {/* Bistro table preference */}
-                  <TabsContent value="bistro" className="mt-0">
+                  {/* <TabsContent value="bistro" className="mt-0">
                     <div className="space-y-1.5">
                       <Label className={labelClass}>
                         <UtensilsCrossed className="h-3.5 w-3.5" />
@@ -981,7 +974,7 @@ export default function BookingPage() {
                         ))}
                       </select>
                     </div>
-                  </TabsContent>
+                  </TabsContent> */}
 
                   {/* Notes */}
                   <div className="space-y-1.5">

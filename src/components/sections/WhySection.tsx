@@ -14,7 +14,7 @@ const features = [
     description:
       "High-speed internet (up to 600 Mbps), ergonomic spaces, and 24/7 access for freelancers, remote workers, and builders.",
     cta: "Try iWork Pass ₱2,500",
-    href: "/booking?type=workspace",
+    href: "/passes",
   },
   {
     image: "/images/iStudy.png",
