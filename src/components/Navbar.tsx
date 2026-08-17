@@ -60,6 +60,7 @@ export default function Navbar() {
     { href: "/coworking", label: "Coworking" },
     { href: "/events", label: "Events & Music" },
     { href: "/passes", label: "Passes & Rates" },
+    { href: "/blogs", label: "Blogs" },
     { href: "/contact", label: "Contact & Location" },
   ];
 
@@ -118,14 +119,18 @@ export default function Navbar() {
           </div> */}
 
           <button
-            onClick={() => openBooking("bistro")}
+            onClick={() => {
+              window.location.href = "/booking?type=bistro";
+            }}
             className="px-5 py-2.5 border-2 border-[#F36509] text-[#F36509] hover:bg-[#F36509] hover:text-white text-xs font-bold rounded-full transition-all cursor-pointer active:scale-95"
           >
             Table Reservation
           </button>
 
           <button
-            onClick={() => openBooking("conference")}
+            onClick={() => {
+              window.location.href = "/booking?type=conference";
+            }}
             className="px-5 py-2.5 bg-[#F36509] text-white text-xs font-bold rounded-full hover:bg-[#e05a00] hover:shadow-lg hover:shadow-orange-500/30 transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
           >
             <Calendar className="w-3.5 h-3.5" /> Conference Room

@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Award,
 } from "lucide-react";
+import Link from "next/link";
 
 interface PassesPageProps {
   onBackToHome?: () => void;
@@ -905,18 +906,14 @@ export default function PassesPage({ onBackToHome }: PassesPageProps) {
           >
             Claim Your Pass Now
           </Button>
-          <button
-            onClick={() => {
-              if (onBackToHome) {
-                onBackToHome();
-              } else {
-                window.location.hash = "";
-              }
-            }}
-            className="h-14 px-8 rounded-full border-2 border-white text-white hover:bg-white/10 font-semibold text-base transition-colors cursor-pointer"
+          <Link
+            href="https://online.fliphtml5.com/mtvla/uhye/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="h-14 px-8 rounded-full border-2 border-white text-white hover:bg-white/10 font-semibold text-base transition-colors cursor-pointer content-center"
           >
             Explore Bistro Menu
-          </button>
+          </Link>
         </div>
       </div>
     </div>
