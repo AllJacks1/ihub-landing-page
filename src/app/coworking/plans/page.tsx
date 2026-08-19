@@ -126,7 +126,7 @@ export default function AllPlansPage() {
   return (
     <main className="min-h-screen bg-stone-50">
       {/* Hero */}
-      <section className="relative overflow-hidden bg-white px-6 py-28 text-center">
+      {/* <section className="relative overflow-hidden bg-white px-6 py-28 text-center">
         <div className="pointer-events-none absolute -left-40 -top-40 h-96 w-96 rounded-full bg-orange-50 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-20 -right-20 h-80 w-80 rounded-full bg-amber-50 blur-3xl" />
 
@@ -146,7 +146,7 @@ export default function AllPlansPage() {
             Transparent pricing for iStudy, iWork, and Conference Rooms at iHub
           </p>
         </div>
-      </section>
+      </section> */}
 
       {/* iStudy Section */}
       <section className="px-6 py-24">

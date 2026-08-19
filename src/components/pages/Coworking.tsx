@@ -60,7 +60,7 @@ const plans = [
       "Free coffee refills",
     ],
     cta: "Get iWork Pass",
-    href: "/reserve",
+    href: "/contact",
     variant: "featured" as const,
   },
   {
@@ -83,7 +83,7 @@ const plans = [
       { hours: "Monthly", price: "₱2,000" },
     ],
     cta: "Reserve Study Space",
-    href: "/reserve",
+    href: "/booking",
     variant: "default" as const,
   },
   {
@@ -101,7 +101,7 @@ const plans = [
       "Discounts on café & conference rooms",
     ],
     cta: "Join iAccess",
-    href: "/reserve",
+    href: "/passes",
     variant: "highlighted" as const,
     badge: "BEST VALUE",
   },
@@ -173,7 +173,7 @@ export default function CoworkingPage() {
               className="h-12 w-full max-w-xs rounded-full bg-[#F36509] px-8 text-sm font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00] sm:h-14 sm:w-auto sm:px-10 sm:text-base"
               render={
                 <Link
-                  href="/reserve"
+                  href="/contact"
                   className="inline-flex items-center gap-2"
                 >
                   Get iWork Pass
@@ -424,7 +424,7 @@ export default function CoworkingPage() {
             size="lg"
             className="h-12 rounded-full bg-[#F36509] px-8 text-sm font-semibold text-white shadow-xl shadow-orange-500/20 transition-all hover:-translate-y-0.5 hover:bg-[#e05a00] sm:h-14 sm:px-12 sm:text-base md:text-lg"
             render={
-              <Link href="/reserve" className="inline-flex items-center gap-2">
+              <Link href="/passes" className="inline-flex items-center gap-2">
                 Start Today — ₱2,500/month
                 <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
               </Link>
