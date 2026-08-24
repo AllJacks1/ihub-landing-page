@@ -388,7 +388,7 @@ export default function BlogsPage() {
               </Card>
 
               {/* Newsletter */}
-              <Card className="border-stone-200 bg-white shadow-sm">
+              {/* <Card className="border-stone-200 bg-white shadow-sm">
                 <CardContent className="p-5 xl:p-6">
                   <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-[#F36509]/10 xl:h-12 xl:w-12">
                     <Sparkles className="h-5 w-5 text-[#F36509] xl:h-6 xl:w-6" />
@@ -413,7 +413,7 @@ export default function BlogsPage() {
                     </Button>
                   </div>
                 </CardContent>
-              </Card>
+              </Card> */}
             </div>
           </aside>
         </div>

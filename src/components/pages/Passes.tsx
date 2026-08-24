@@ -732,176 +732,354 @@ export default function PassesPage({ onBackToHome }: PassesPageProps) {
       )}
 
       {/* SECTION 3: Comparison Table */}
-      <section className="mx-auto max-w-7xl mb-24">
+      <section className="mx-auto max-w-7xl mb-24 px-4 sm:px-6 lg:px-8">
+        {/* Header */}
         <div className="mb-10 text-center">
           <Badge
             variant="outline"
             className="mb-3 border-stone-200 bg-white px-3 py-1 text-xs font-mono font-bold text-stone-500 uppercase"
           >
-            DETAILED FEATURE COMPARISON
+            Detailed Feature Comparison
           </Badge>
-          <h2 className="font-serif text-3xl sm:text-5xl font-bold text-stone-900 mb-3">
+          <h2 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-bold text-stone-900 mb-3">
             iAccess Tiers Side-by-Side
           </h2>
-          <p className="text-stone-500 max-w-xl mx-auto text-sm">
+          <p className="text-stone-500 max-w-xl mx-auto text-sm sm:text-base">
             Directly compare features, credits, and privileges across all three
             annual membership levels.
           </p>
         </div>
 
-        <div className="overflow-x-auto rounded-3xl border border-stone-200 bg-white shadow-sm">
-          <table className="w-full text-left border-collapse min-w-[700px]">
+        {/* ─── MOBILE & TABLET: Plan Cards (< lg) ─── */}
+        <div className="lg:hidden grid gap-6 md:grid-cols-3">
+          {/* Standard */}
+          <div className="rounded-2xl border border-stone-200 bg-white shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-stone-100">
+              <h3 className="font-serif text-lg font-bold text-stone-900">
+                iAccess Standard
+              </h3>
+              <div className="mt-1 text-2xl font-bold text-stone-900">
+                ₱299
+                <span className="text-sm font-normal text-stone-500">/yr</span>
+              </div>
+            </div>
+            <ul className="divide-y divide-stone-100 text-sm">
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Named Members</span>
+                <span className="font-semibold text-stone-900">1 Member</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Validity</span>
+                <span className="font-semibold text-stone-900">1 Year</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Coworking Hours</span>
+                <span className="font-semibold text-stone-900">10 Hours</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Meeting Room Credits</span>
+                <span className="text-stone-400">—</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Printing Credits</span>
+                <span className="text-stone-400">—</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Café & Printing Discount</span>
+                <span className="font-bold text-stone-800">10% Off</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Astra Partner Discounts</span>
+                <span className="font-bold text-emerald-600">5% Across 8</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Guest Passes</span>
+                <span className="text-stone-400">—</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Business Directory</span>
+                <span className="text-stone-400">—</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Networking Nights</span>
+                <span className="text-stone-400">—</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Birthday Coffee & Perks</span>
+                <span className="text-emerald-600 font-bold">✓</span>
+              </li>
+            </ul>
+          </div>
+
+          {/* Premium — Highlighted */}
+          <div className="rounded-2xl border-2 border-[#F36509] bg-white shadow-lg shadow-orange-500/10 overflow-hidden relative">
+            <div className="absolute top-0 right-0 bg-[#F36509] text-white text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-bl-xl">
+              Most Popular
+            </div>
+            <div className="p-5 border-b border-orange-100 bg-[#F36509]/[0.03]">
+              <h3 className="font-serif text-lg font-bold text-[#F36509]">
+                iAccess Premium
+              </h3>
+              <div className="mt-1 text-2xl font-bold text-[#F36509]">
+                ₱599
+                <span className="text-sm font-normal text-stone-500">/yr</span>
+              </div>
+            </div>
+            <ul className="divide-y divide-orange-50 text-sm">
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Named Members</span>
+                <span className="font-bold text-stone-900">1 Member</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Validity</span>
+                <span className="font-bold text-stone-900">1 Year</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Coworking Hours</span>
+                <span className="font-bold text-[#F36509]">30 Hours</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Meeting Room Credits</span>
+                <span className="font-bold text-stone-900">2 Hours</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Printing Credits</span>
+                <span className="text-stone-400">—</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Café & Printing Discount</span>
+                <span className="font-bold text-[#F36509]">10% Off</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Astra Partner Discounts</span>
+                <span className="font-bold text-emerald-600">5% Across 8</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Guest Passes</span>
+                <span className="font-bold text-stone-900">2 Passes</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Business Directory</span>
+                <span className="text-stone-400">—</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Networking Nights</span>
+                <span className="font-bold text-stone-900">Included ✓</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Birthday Coffee & Perks</span>
+                <span className="text-emerald-600 font-bold">✓</span>
+              </li>
+            </ul>
+          </div>
+
+          {/* Corporate */}
+          <div className="rounded-2xl border border-stone-200 bg-white shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-stone-100">
+              <h3 className="font-serif text-lg font-bold text-indigo-600">
+                iAccess Corporate
+              </h3>
+              <div className="mt-1 text-2xl font-bold text-indigo-600">
+                ₱2,999
+                <span className="text-sm font-normal text-stone-500">/yr</span>
+              </div>
+            </div>
+            <ul className="divide-y divide-stone-100 text-sm">
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Named Members</span>
+                <span className="font-semibold text-indigo-600">4 Members</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Validity</span>
+                <span className="font-semibold text-stone-900">1 Year</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Coworking Hours</span>
+                <span className="font-semibold text-indigo-600">
+                  80 Shared Hours
+                </span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Meeting Room Credits</span>
+                <span className="font-semibold text-indigo-600">4 Hours</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Printing Credits</span>
+                <span className="font-semibold text-emerald-600">60 Pages</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Café & Printing Discount</span>
+                <span className="font-bold text-stone-800">10% Off</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Astra Partner Discounts</span>
+                <span className="font-bold text-emerald-600">5% Across 8</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Guest Passes</span>
+                <span className="font-semibold text-indigo-600">
+                  4 Shared Passes
+                </span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Business Directory</span>
+                <span className="text-emerald-600 font-bold">Included ✓</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Networking Nights</span>
+                <span className="font-bold text-stone-900">Included ✓</span>
+              </li>
+              <li className="flex justify-between p-4">
+                <span className="text-stone-500">Birthday Coffee & Perks</span>
+                <span className="text-emerald-600 font-bold">✓</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        {/* ─── DESKTOP: Full Comparison Table (lg+) ─── */}
+        <div className="hidden lg:block overflow-x-auto rounded-3xl border border-stone-200 bg-white shadow-sm">
+          <table className="w-full text-left border-collapse min-w-[800px]">
             <thead>
               <tr className="border-b border-stone-200 bg-stone-50">
-                <th className="p-4 sm:p-6 text-sm font-serif font-bold text-stone-900">
+                <th className="p-6 text-sm font-serif font-bold text-stone-900 sticky left-0 bg-stone-50 z-10">
                   Feature
                 </th>
-                <th className="p-4 sm:p-6 text-sm font-bold text-stone-700">
+                <th className="p-6 text-sm font-bold text-stone-700">
                   iAccess Standard
-                  <div className="text-xs font-mono font-normal text-[#F36509]">
+                  <div className="text-xs font-mono font-normal text-[#F36509] mt-0.5">
                     ₱299/yr
                   </div>
                 </th>
-                <th className="p-4 sm:p-6 text-sm font-bold text-[#F36509] bg-[#F36509]/08">
+                <th className="p-6 text-sm font-bold text-[#F36509] bg-[#F36509]/[0.08] relative">
                   iAccess Premium
-                  <div className="text-xs font-mono font-normal text-stone-600">
+                  <span className="absolute top-0 right-0 bg-[#F36509] text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-bl-lg">
+                    Popular
+                  </span>
+                  <div className="text-xs font-mono font-normal text-stone-600 mt-0.5">
                     ₱599/yr
                   </div>
                 </th>
-                <th className="p-4 sm:p-6 text-sm font-bold text-indigo-600">
+                <th className="p-6 text-sm font-bold text-indigo-600">
                   iAccess Corporate
-                  <div className="text-xs font-mono font-normal text-indigo-400">
+                  <div className="text-xs font-mono font-normal text-indigo-400 mt-0.5">
                     ₱2,999/yr
                   </div>
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-stone-100 text-xs sm:text-sm text-stone-600">
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+            <tbody className="divide-y divide-stone-100 text-sm text-stone-600">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Named Members
                 </td>
-                <td className="p-4 sm:p-5">1 Member</td>
-                <td className="p-4 sm:p-5 font-bold text-stone-900 bg-[#F36509]/05">
+                <td className="p-5">1 Member</td>
+                <td className="p-5 font-bold text-stone-900 bg-[#F36509]/[0.05]">
                   1 Member
                 </td>
-                <td className="p-4 sm:p-5 font-semibold text-indigo-600">
-                  4 Members
-                </td>
+                <td className="p-5 font-semibold text-indigo-600">4 Members</td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Validity
                 </td>
-                <td className="p-4 sm:p-5">1 Year</td>
-                <td className="p-4 sm:p-5 font-bold text-stone-900 bg-[#F36509]/05">
+                <td className="p-5">1 Year</td>
+                <td className="p-5 font-bold text-stone-900 bg-[#F36509]/[0.05]">
                   1 Year
                 </td>
-                <td className="p-4 sm:p-5">1 Year</td>
+                <td className="p-5">1 Year</td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Coworking Hours
                 </td>
-                <td className="p-4 sm:p-5 font-semibold text-stone-700">
-                  10 Hours
-                </td>
-                <td className="p-4 sm:p-5 font-bold text-[#F36509] bg-[#F36509]/05">
+                <td className="p-5 font-semibold text-stone-700">10 Hours</td>
+                <td className="p-5 font-bold text-[#F36509] bg-[#F36509]/[0.05]">
                   30 Hours
                 </td>
-                <td className="p-4 sm:p-5 font-semibold text-indigo-600">
+                <td className="p-5 font-semibold text-indigo-600">
                   80 Shared Hours
                 </td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Meeting Room Credits
                 </td>
-                <td className="p-4 sm:p-5 text-stone-400">—</td>
-                <td className="p-4 sm:p-5 font-bold text-stone-900 bg-[#F36509]/05">
+                <td className="p-5 text-stone-400">—</td>
+                <td className="p-5 font-bold text-stone-900 bg-[#F36509]/[0.05]">
                   2 Hours
                 </td>
-                <td className="p-4 sm:p-5 font-semibold text-indigo-600">
-                  4 Hours
-                </td>
+                <td className="p-5 font-semibold text-indigo-600">4 Hours</td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Printing Credits
                 </td>
-                <td className="p-4 sm:p-5 text-stone-400">—</td>
-                <td className="p-4 sm:p-5 text-stone-400 bg-[#F36509]/05">—</td>
-                <td className="p-4 sm:p-5 font-semibold text-emerald-600">
-                  60 Pages
-                </td>
+                <td className="p-5 text-stone-400">—</td>
+                <td className="p-5 text-stone-400 bg-[#F36509]/[0.05]">—</td>
+                <td className="p-5 font-semibold text-emerald-600">60 Pages</td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Café & Printing Discount
                 </td>
-                <td className="p-4 sm:p-5 font-bold text-stone-800">10% Off</td>
-                <td className="p-4 sm:p-5 font-bold text-[#F36509] bg-[#F36509]/05">
+                <td className="p-5 font-bold text-stone-800">10% Off</td>
+                <td className="p-5 font-bold text-[#F36509] bg-[#F36509]/[0.05]">
                   10% Off
                 </td>
-                <td className="p-4 sm:p-5 font-bold text-stone-800">10% Off</td>
+                <td className="p-5 font-bold text-stone-800">10% Off</td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Astra Partner Discounts
                 </td>
-                <td className="p-4 sm:p-5 font-bold text-emerald-600">
+                <td className="p-5 font-bold text-emerald-600">
                   5% Across 8 Partners
                 </td>
-                <td className="p-4 sm:p-5 font-bold text-emerald-600 bg-[#F36509]/05">
+                <td className="p-5 font-bold text-emerald-600 bg-[#F36509]/[0.05]">
                   5% Across 8 Partners
                 </td>
-                <td className="p-4 sm:p-5 font-bold text-emerald-600">
+                <td className="p-5 font-bold text-emerald-600">
                   5% Across 8 Partners
                 </td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Guest Passes
                 </td>
-                <td className="p-4 sm:p-5 text-stone-400">—</td>
-                <td className="p-4 sm:p-5 font-bold text-stone-900 bg-[#F36509]/05">
+                <td className="p-5 text-stone-400">—</td>
+                <td className="p-5 font-bold text-stone-900 bg-[#F36509]/[0.05]">
                   2 Guest Passes
                 </td>
-                <td className="p-4 sm:p-5 font-semibold text-indigo-600">
+                <td className="p-5 font-semibold text-indigo-600">
                   4 Shared Passes
                 </td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Business Directory Listing
                 </td>
-                <td className="p-4 sm:p-5 text-stone-400">—</td>
-                <td className="p-4 sm:p-5 text-stone-400 bg-[#F36509]/05">—</td>
-                <td className="p-4 sm:p-5 text-emerald-600 font-bold">
-                  Included ✓
-                </td>
+                <td className="p-5 text-stone-400">—</td>
+                <td className="p-5 text-stone-400 bg-[#F36509]/[0.05]">—</td>
+                <td className="p-5 text-emerald-600 font-bold">Included ✓</td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Networking Nights
                 </td>
-                <td className="p-4 sm:p-5 text-stone-400">—</td>
-                <td className="p-4 sm:p-5 font-bold text-stone-900 bg-[#F36509]/05">
+                <td className="p-5 text-stone-400">—</td>
+                <td className="p-5 font-bold text-stone-900 bg-[#F36509]/[0.05]">
                   Included ✓
                 </td>
-                <td className="p-4 sm:p-5 font-bold text-stone-900">
-                  Included ✓
-                </td>
+                <td className="p-5 font-bold text-stone-900">Included ✓</td>
               </tr>
-              <tr>
-                <td className="p-4 sm:p-5 font-semibold text-stone-900">
+              <tr className="hover:bg-stone-50/50 transition-colors">
+                <td className="p-5 font-semibold text-stone-900 sticky left-0 bg-white hover:bg-stone-50/50 transition-colors">
                   Birthday Coffee & Priority Perks
                 </td>
-                <td className="p-4 sm:p-5 text-emerald-600">✓</td>
-                <td className="p-4 sm:p-5 text-emerald-600 bg-[#F36509]/05">
-                  ✓
-                </td>
-                <td className="p-4 sm:p-5 text-emerald-600">✓</td>
+                <td className="p-5 text-emerald-600">✓</td>
+                <td className="p-5 text-emerald-600 bg-[#F36509]/[0.05]">✓</td>
+                <td className="p-5 text-emerald-600">✓</td>
               </tr>
             </tbody>
           </table>
