@@ -51,7 +51,7 @@ export async function submitPassRequest(data: PassRequestData) {
     // ── 1. Admin ───────────────────────────────────────────────────────────
     await transporter.sendMail({
       from: `"iHub Passes" <${process.env.GMAIL_USER}>`,
-      to: process.env.ADMIN_EMAIL || "webdev.astra01@gmail.com",
+      to: process.env.ADMIN_EMAIL || "ihubdavao@gmail.com",
       subject: `🎫 New Pass Request — ${packageName} | ${name}`,
       html: `
         <!DOCTYPE html>
