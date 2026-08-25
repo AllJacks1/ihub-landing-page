@@ -39,7 +39,7 @@ export default function LoginModal() {
         });
 
         setOpen(false);
-        window.location.href = "/admin"; // Full refresh to load session
+        window.location.href = "/admin/dashboard";
       } else {
         toast.error("Login failed", {
           description: result.error,
