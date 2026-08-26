@@ -121,7 +121,7 @@ export async function submitBooking(data: BookingFormData) {
     // 1. Email to iHub Team
     await transporter.sendMail({
       from: `"iHub Reservations" <${process.env.GMAIL_USER}>`,
-      to: "ihubdavao@gmail.com",
+      to: "ihubdavao@gmail.com, avarissales@gmail.com",
       subject: `🔔 New Reservation Request — ${bookingTypeLabel} | ${name}`,
       html: `
         <!DOCTYPE html>
