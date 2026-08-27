@@ -36,8 +36,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { getReservations, updateReservationStatus } from "@/lib/actions";
+import { getReservations } from "@/lib/actions";
 import { cn } from "@/lib/utils";
 import {
   Reservation,
@@ -45,6 +53,7 @@ import {
   ReservationStatus,
   Zone,
 } from "@/components/sections/ReservationDialog";
+import { updateReservationStatus } from "@/lib/updateReservationStatus";
 
 /* ── helpers ── */
 const statusStyles: Record<
@@ -99,6 +108,13 @@ export default function ReservationsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [rowPendingId, setRowPendingId] = useState<string | null>(null);
+
+  // Confirmation dialog for quick actions
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState<{
+    reservation: Reservation;
+    next: ReservationStatus;
+  } | null>(null);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -178,8 +194,20 @@ export default function ReservationsPage() {
     setSelected((prev) => (prev?.id === updated.id ? updated : prev));
   };
 
-  const quickStatus = (r: Reservation, next: ReservationStatus) => {
+  // Open confirmation dialog instead of updating immediately
+  const requestQuickStatus = (r: Reservation, next: ReservationStatus) => {
+    setConfirmTarget({ reservation: r, next });
+    setConfirmOpen(true);
+  };
+
+  // Actually run the update after user confirms
+  const handleConfirmedQuickStatus = () => {
+    if (!confirmTarget) return;
+
+    const { reservation: r, next } = confirmTarget;
+    setConfirmOpen(false);
     setRowPendingId(r.id);
+
     startTransition(async () => {
       try {
         const result = await updateReservationStatus(r.id, next);
@@ -194,7 +222,7 @@ export default function ReservationsPage() {
         });
         toast.success(
           next === "confirmed"
-            ? "Booking approved"
+            ? `Approved — confirmation email sent to ${r.email}`
             : next === "cancelled"
               ? "Booking rejected"
               : `Marked as ${statusStyles[next].label}`,
@@ -203,9 +231,24 @@ export default function ReservationsPage() {
         toast.error("Failed to update status");
       } finally {
         setRowPendingId(null);
+        setConfirmTarget(null);
       }
     });
   };
+
+  const confirmTitle =
+    confirmTarget?.next === "confirmed"
+      ? "Approve this reservation?"
+      : confirmTarget?.next === "cancelled"
+        ? "Reject this reservation?"
+        : "Update status?";
+
+  const confirmDescription =
+    confirmTarget?.next === "confirmed"
+      ? `This will mark ${confirmTarget.reservation.full_name}'s booking as confirmed and automatically send a confirmation email to ${confirmTarget.reservation.email}.`
+      : confirmTarget?.next === "cancelled"
+        ? `This will reject ${confirmTarget.reservation.full_name}'s booking. The guest will not be notified automatically.`
+        : "Are you sure you want to update this reservation?";
 
   return (
     <main className="flex-1 p-8">
@@ -519,7 +562,9 @@ export default function ReservationsPage() {
                                   size="sm"
                                   disabled={busy}
                                   className="h-8 text-xs text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-                                  onClick={() => quickStatus(r, "confirmed")}
+                                  onClick={() =>
+                                    requestQuickStatus(r, "confirmed")
+                                  }
                                 >
                                   {busy ? (
                                     <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
@@ -533,7 +578,9 @@ export default function ReservationsPage() {
                                   size="sm"
                                   disabled={busy}
                                   className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
-                                  onClick={() => quickStatus(r, "cancelled")}
+                                  onClick={() =>
+                                    requestQuickStatus(r, "cancelled")
+                                  }
                                 >
                                   <X className="mr-1 h-3.5 w-3.5" />
                                   Reject
@@ -569,6 +616,52 @@ export default function ReservationsPage() {
         onOpenChange={setDialogOpen}
         onUpdated={patchLocal}
       />
+
+      {/* Quick-action confirmation dialog */}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-lg">
+              {confirmTitle}
+            </DialogTitle>
+            <DialogDescription className="text-stone-500">
+              {confirmDescription}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setConfirmOpen(false);
+                setConfirmTarget(null);
+              }}
+              disabled={isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmedQuickStatus}
+              disabled={isPending}
+              className={cn(
+                confirmTarget?.next === "cancelled"
+                  ? "bg-red-600 text-white hover:bg-red-700"
+                  : "bg-[#F36509] text-white hover:bg-[#e05a00]",
+              )}
+            >
+              {isPending ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : null}
+              {confirmTarget?.next === "confirmed"
+                ? "Approve & Send Email"
+                : confirmTarget?.next === "cancelled"
+                  ? "Reject"
+                  : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
