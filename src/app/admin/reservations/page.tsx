@@ -7,14 +7,8 @@ import {
   useCallback,
   useTransition,
 } from "react";
-import {
-  format,
-  parseISO,
-  isToday,
-  isFuture,
-  startOfDay,
-  endOfDay,
-} from "date-fns";
+import { parseISO, isToday, isFuture, startOfDay, endOfDay } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import {
   Search,
   Calendar,
@@ -378,7 +372,7 @@ export default function ReservationsPage() {
                       Zone
                     </th>
                     <th className="px-4 py-3.5 text-left font-medium text-stone-500">
-                      Date & Time
+                      Date & Time (UTC)
                     </th>
                     <th className="px-4 py-3.5 text-left font-medium text-stone-500">
                       Pax
@@ -471,7 +465,7 @@ export default function ReservationsPage() {
                             <div className="flex items-center gap-1.5 text-stone-900">
                               <Calendar className="h-3.5 w-3.5 text-stone-400" />
                               <span className="font-medium">
-                                {format(start, "MMM d, yyyy")}
+                                {formatInTimeZone(start, "UTC", "MMM d, yyyy")}
                               </span>
                               {isTodayReservation && (
                                 <Badge className="ml-1.5 h-5 border-[#F36509]/20 bg-[#F36509]/10 px-1.5 text-[10px] text-[#F36509] hover:bg-[#F36509]/20">
@@ -481,8 +475,8 @@ export default function ReservationsPage() {
                             </div>
                             <div className="flex items-center gap-1.5 text-xs text-stone-500">
                               <Clock className="h-3.5 w-3.5 text-stone-400" />
-                              {format(start, "h:mm a")} –{" "}
-                              {format(end, "h:mm a")}
+                              {formatInTimeZone(start, "UTC", "h:mm a")} –{" "}
+                              {formatInTimeZone(end, "UTC", "h:mm a")}
                             </div>
                           </div>
                         </td>

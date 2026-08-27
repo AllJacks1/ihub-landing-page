@@ -32,6 +32,17 @@ interface IProps {
   view: TCalendarView;
 }
 
+/**
+ * Strips UTC/offset suffixes (+00, Z) so parseISO parses
+ * the exact string values as wall-clock local time.
+ */
+function stripOffset(dateStr: string): string {
+  if (!dateStr) return dateStr;
+  return dateStr
+    .replace(/(Z|[+-]\d{2}:?\d{2})$/, "") // Remove trailing Z or +00:00
+    .replace(" ", "T"); // Ensure standard ISO format
+}
+
 function getViewRange(view: TCalendarView, selectedDate: Date) {
   switch (view) {
     case "year":
@@ -72,14 +83,24 @@ function matchesZone(event: IEvent, selectedZone: string) {
 export function ClientContainer({ view }: IProps) {
   const { selectedDate, selectedUserId: selectedZone, events } = useCalendar();
 
+  // 1. Sanitize event date strings up front so all child components receive clean local values
+  const normalizedEvents = useMemo(() => {
+    return events.map((event) => ({
+      ...event,
+      startDate: stripOffset(event.startDate),
+      endDate: stripOffset(event.endDate),
+    }));
+  }, [events]);
+
+  // 2. Filter using sanitized event dates
   const filteredEvents = useMemo(() => {
     const { start, end } = getViewRange(view, selectedDate);
 
-    return events.filter(
+    return normalizedEvents.filter(
       (event) =>
         isInRange(event, start, end) && matchesZone(event, selectedZone),
     );
-  }, [selectedDate, selectedZone, events, view]);
+  }, [selectedDate, selectedZone, normalizedEvents, view]);
 
   const singleDayEvents = useMemo(
     () =>

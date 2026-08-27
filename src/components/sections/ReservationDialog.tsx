@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { format, parseISO } from "date-fns";
+import { useState, useTransition, useEffect } from "react";
+import { format, parseISO, isValid } from "date-fns";
 import {
   Calendar,
   Clock,
@@ -33,8 +33,19 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { updateReservationStatus } from "@/lib/actions";
+import { formatInTimeZone } from "date-fns-tz";
 
-/* ── types ── */
+function safeFormatUtc(isoString: string, formatStr: string): string {
+  try {
+    const parsed = parseISO(isoString);
+    return isValid(parsed)
+      ? formatInTimeZone(parsed, "UTC", formatStr)
+      : "Invalid date";
+  } catch {
+    return "Invalid date";
+  }
+}
+
 export type Zone = "bistro" | "study" | "room";
 export type ReservationStatus =
   | "pending"
@@ -91,75 +102,72 @@ const statusStyles: Record<
 };
 
 const zoneLabel = (z: Zone) =>
-  ({ bistro: "Bistro", study: "Study Zone", room: "Private Room" })[z];
+  ({ bistro: "Bistro", study: "Study Zone", room: "Private Room" })[z] ?? z;
 
-/** Allowed next statuses from the current one */
-function nextActions(
-  status: ReservationStatus,
-): {
-  status: ReservationStatus;
-  label: string;
-  icon: React.ElementType;
-  variant: "default" | "outline" | "destructive" | "secondary";
-}[] {
+function nextActions(status: ReservationStatus) {
   switch (status) {
     case "pending":
       return [
         {
-          status: "confirmed",
+          status: "confirmed" as const,
           label: "Approve",
           icon: Check,
-          variant: "default",
+          variant: "default" as const,
         },
         {
-          status: "cancelled",
+          status: "cancelled" as const,
           label: "Reject",
           icon: X,
-          variant: "destructive",
+          variant: "destructive" as const,
         },
       ];
     case "confirmed":
       return [
         {
-          status: "seated",
+          status: "seated" as const,
           label: "Mark seated",
           icon: Armchair,
-          variant: "default",
+          variant: "default" as const,
         },
         {
-          status: "no_show",
+          status: "no_show" as const,
           label: "No show",
           icon: UserX,
-          variant: "outline",
+          variant: "outline" as const,
         },
         {
-          status: "cancelled",
+          status: "cancelled" as const,
           label: "Cancel",
           icon: Ban,
-          variant: "destructive",
+          variant: "destructive" as const,
         },
       ];
     case "seated":
       return [
         {
-          status: "completed",
+          status: "completed" as const,
           label: "Close / Complete",
           icon: CircleCheck,
-          variant: "default",
+          variant: "default" as const,
         },
         {
-          status: "cancelled",
+          status: "cancelled" as const,
           label: "Cancel",
           icon: Ban,
-          variant: "destructive",
+          variant: "destructive" as const,
         },
       ];
-    case "completed":
-    case "cancelled":
-    case "no_show":
-      return [];
     default:
       return [];
+  }
+}
+
+function safeFormatDate(isoString: string, formatStr: string): string {
+  try {
+    const parsed = parseISO(isoString);
+    return isValid(parsed) ? format(parsed, formatStr) : "Invalid date";
+  } catch {
+    return "Invalid date";
   }
 }
 
@@ -180,12 +188,17 @@ export function ReservationDetailsDialog({
   const [pendingStatus, setPendingStatus] = useState<ReservationStatus | null>(
     null,
   );
+  const [currentStatus, setCurrentStatus] = useState<ReservationStatus | null>(
+    reservation?.status ?? null,
+  );
 
-  if (!reservation) return null;
+  useEffect(() => {
+    setCurrentStatus(reservation?.status ?? null);
+  }, [reservation]);
 
-  const start = parseISO(reservation.start_at);
-  const end = parseISO(reservation.end_at);
-  const actions = nextActions(reservation.status);
+  if (!reservation || !currentStatus) return null;
+
+  const actions = nextActions(currentStatus);
 
   const handleStatusChange = (next: ReservationStatus) => {
     setPendingStatus(next);
@@ -196,14 +209,16 @@ export function ReservationDetailsDialog({
           toast.error(result.message || "Failed to update status");
           return;
         }
+
         const updated: Reservation = {
           ...reservation,
           status: next,
           updated_at: new Date().toISOString(),
         };
+
+        setCurrentStatus(next);
         onUpdated?.(updated);
         toast.success(`Marked as ${statusStyles[next].label}`);
-        // Keep dialog open so staff can see the new state / further actions
       } catch {
         toast.error("Failed to update status");
       } finally {
@@ -211,11 +226,6 @@ export function ReservationDetailsDialog({
       }
     });
   };
-
-  const plainNotes = reservation.notes
-    ?.replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -234,16 +244,16 @@ export function ReservationDetailsDialog({
               variant="outline"
               className={cn(
                 "shrink-0 font-medium capitalize",
-                statusStyles[reservation.status].className,
+                statusStyles[currentStatus].className,
               )}
             >
-              {statusStyles[reservation.status].label}
+              {statusStyles[currentStatus].label}
             </Badge>
           </div>
         </DialogHeader>
 
         <div className="space-y-5 px-6 py-5">
-          {/* Contact */}
+          {/* Guest */}
           <div className="space-y-2.5">
             <p className="text-xs font-bold uppercase tracking-wider text-stone-400">
               Guest
@@ -283,19 +293,21 @@ export function ReservationDetailsDialog({
               <div className="rounded-xl border border-stone-100 bg-stone-50 p-3">
                 <div className="mb-1 flex items-center gap-1.5 text-xs text-stone-500">
                   <Calendar className="size-3.5" />
-                  Date
+                  Date (UTC)
                 </div>
                 <p className="text-sm font-medium text-stone-900">
-                  {format(start, "EEE, MMM d, yyyy")}
+                  {safeFormatUtc(reservation.start_at, "EEE, MMM d, yyyy")}
                 </p>
               </div>
+
               <div className="rounded-xl border border-stone-100 bg-stone-50 p-3">
                 <div className="mb-1 flex items-center gap-1.5 text-xs text-stone-500">
                   <Clock className="size-3.5" />
-                  Time
+                  Time (UTC)
                 </div>
                 <p className="text-sm font-medium text-stone-900">
-                  {format(start, "h:mm a")} – {format(end, "h:mm a")}
+                  {safeFormatUtc(reservation.start_at, "HH:mm")} –{" "}
+                  {safeFormatUtc(reservation.end_at, "HH:mm 'UTC'")}
                 </p>
               </div>
               <div className="rounded-xl border border-stone-100 bg-stone-50 p-3">
@@ -325,30 +337,26 @@ export function ReservationDetailsDialog({
               <p className="text-xs font-bold uppercase tracking-wider text-stone-400">
                 Notes
               </p>
-              {/<[a-z][\s\S]*>/i.test(reservation.notes) ? (
+              <div className="flex gap-2.5 rounded-xl border border-stone-100 bg-stone-50 p-4 text-sm text-stone-700">
+                <StickyNote className="mt-0.5 size-4 shrink-0 text-stone-400" />
                 <div
-                  className="prose prose-sm prose-stone max-w-none rounded-xl border border-stone-100 bg-stone-50 p-4 text-stone-700"
+                  className="prose prose-sm prose-stone max-w-none prose-p:my-0 prose-p:leading-normal"
                   dangerouslySetInnerHTML={{ __html: reservation.notes }}
                 />
-              ) : (
-                <div className="flex gap-2 rounded-xl border border-stone-100 bg-stone-50 p-4 text-sm text-stone-700">
-                  <StickyNote className="mt-0.5 size-4 shrink-0 text-stone-400" />
-                  <p>{plainNotes}</p>
-                </div>
-              )}
+              </div>
             </div>
           )}
 
           <p className="text-xs text-stone-400">
             Created{" "}
-            {format(parseISO(reservation.created_at), "MMM d, yyyy · h:mm a")}
+            {safeFormatDate(reservation.created_at, "MMM d, yyyy · h:mm a")}
           </p>
         </div>
 
         {/* Actions */}
-        {actions.length > 0 && (
-          <DialogFooter className="flex-col gap-2 border-t border-stone-100 bg-stone-50/80 px-6 py-4 sm:flex-row sm:justify-end">
-            {actions.map((action) => {
+        <DialogFooter className="flex-col gap-2 border-t border-stone-100 bg-stone-50/80 px-6 py-4 sm:flex-row sm:justify-end">
+          {actions.length > 0 ? (
+            actions.map((action) => {
               const Icon = action.icon;
               const loading = isPending && pendingStatus === action.status;
               return (
@@ -372,12 +380,8 @@ export function ReservationDetailsDialog({
                   {action.label}
                 </Button>
               );
-            })}
-          </DialogFooter>
-        )}
-
-        {actions.length === 0 && (
-          <DialogFooter className="border-t border-stone-100 px-6 py-4">
+            })
+          ) : (
             <Button
               type="button"
               variant="outline"
@@ -386,8 +390,8 @@ export function ReservationDetailsDialog({
             >
               Close
             </Button>
-          </DialogFooter>
-        )}
+          )}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
