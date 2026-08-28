@@ -82,6 +82,10 @@ const statusStyles: Record<
     label: "Cancelled",
     className: "bg-red-50 text-red-700 border-red-200 hover:bg-red-100",
   },
+  rejected: {
+    label: "Rejected",
+    className: "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100",
+  },
   no_show: {
     label: "No Show",
     className:
