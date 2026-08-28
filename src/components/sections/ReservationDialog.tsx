@@ -47,6 +47,7 @@ function safeFormatUtc(isoString: string, formatStr: string): string {
 }
 
 export type Zone = "bistro" | "study" | "room";
+
 export type ReservationStatus =
   | "pending"
   | "confirmed"
