@@ -995,6 +995,7 @@ type ReservationStatus =
   | "confirmed"
   | "seated"
   | "completed"
+  | "rejected"
   | "cancelled"
   | "no_show";
 
@@ -1786,6 +1787,7 @@ export async function updateReservation(
       | "confirmed"
       | "seated"
       | "completed"
+      | "rejeced"
       | "cancelled"
       | "no_show";
   },
