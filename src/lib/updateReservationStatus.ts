@@ -20,6 +20,7 @@ type ReservationStatus =
   | "seated"
   | "completed"
   | "cancelled"
+  | "rejected"
   | "no_show";
 
 const zoneLabel = (z: string) =>
@@ -81,8 +82,10 @@ export async function updateReservationStatus(
   revalidatePath("/admin/reservations");
   revalidatePath("/admin/reservations/calendar");
 
-  // 2. Send confirmation email only when status becomes "confirmed"
-  if (status === "confirmed") {
+  // 2. Send email based on new status
+  if (status === "confirmed" || status === "rejected") {
+    const isConfirmed = status === "confirmed";
+
     try {
       const dateStr = safeFormatUtc(reservation.start_at, "EEEE, MMMM d, yyyy");
       const timeStr = `${safeFormatUtc(reservation.start_at, "HH:mm")} – ${safeFormatUtc(reservation.end_at, "HH:mm")} UTC`;
@@ -91,8 +94,11 @@ export async function updateReservationStatus(
       await transporter.sendMail({
         from: `"iHub Davao" <${process.env.GMAIL_USER}>`,
         to: reservation.email,
-        subject: `✅ Your reservation is confirmed, ${reservation.full_name}!`,
-        html: `
+        subject: isConfirmed
+          ? `✅ Your reservation is confirmed, ${reservation.full_name}!`
+          : `Update on your reservation request, ${reservation.full_name}`,
+        html: isConfirmed
+          ? `
           <!DOCTYPE html>
           <html>
           <head>
@@ -200,13 +206,133 @@ export async function updateReservationStatus(
             </table>
           </body>
           </html>
+        `
+          : `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Reservation Update — iHub</title>
+          </head>
+          <body style="${emailStyles.container}">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" style="padding:40px 20px;">
+                  <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="${emailStyles.card}">
+                    
+                    <!-- Header -->
+                    <tr>
+                      <td style="${emailStyles.header}">
+                        <div style="width:56px;height:56px;background:rgba(255,255,255,0.2);border-radius:16px;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;">
+                          <span style="color:#ffffff;font-size:28px;">📅</span>
+                        </div>
+                        <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.02em;font-family:Georgia,'Times New Roman',serif;">
+                          Reservation Update
+                        </h1>
+                        <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:15px;">
+                          Hi ${reservation.full_name}, thank you for your interest in iHub.
+                        </p>
+                      </td>
+                    </tr>
+                    
+                    <!-- Badge -->
+                    <tr>
+                      <td style="padding:24px 40px 0;">
+                        <span style="${emailStyles.badge};background:#fef2f2;color:#b91c1c;">Unable to Accommodate</span>
+                      </td>
+                    </tr>
+                    
+                    <!-- Message -->
+                    <tr>
+                      <td style="padding:32px 40px 24px;">
+                        <h2 style="${emailStyles.sectionTitle}">We're fully booked</h2>
+                        <p style="margin:0 0 16px;color:#57534e;font-size:15px;line-height:1.6;">
+                          We’re sorry — we are currently fully booked and cannot accommodate any more reservations for the requested date and time.
+                        </p>
+                        <p style="margin:0 0 16px;color:#57534e;font-size:15px;line-height:1.6;">
+                          We truly appreciate you choosing iHub and hope to welcome you on another occasion. Feel free to check our availability for a different date or time.
+                        </p>
+                      </td>
+                    </tr>
+                    
+                    <!-- Requested Details (for reference) -->
+                    <tr>
+                      <td style="padding:0 40px 24px;">
+                        <h2 style="${emailStyles.sectionTitle}">Your Requested Details</h2>
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="${emailStyles.detailCard}">
+                          <tr>
+                            <td>
+                              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                  <td width="50%" style="padding:8px 0;vertical-align:top;">
+                                    <span style="${emailStyles.label}">Date</span>
+                                    <p style="${emailStyles.value}">${dateStr}</p>
+                                  </td>
+                                  <td width="50%" style="padding:8px 0;vertical-align:top;">
+                                    <span style="${emailStyles.label}">Time</span>
+                                    <p style="${emailStyles.value}">${timeStr}</p>
+                                  </td>
+                                </tr>
+                                <tr>
+                                  <td width="50%" style="padding:8px 0;vertical-align:top;">
+                                    <span style="${emailStyles.label}">Zone</span>
+                                    <p style="${emailStyles.value}">${zone}</p>
+                                  </td>
+                                  <td width="50%" style="padding:8px 0;vertical-align:top;">
+                                    <span style="${emailStyles.label}">Guests</span>
+                                    <p style="${emailStyles.value}">${reservation.pax} pax</p>
+                                  </td>
+                                </tr>
+                              </table>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    
+                    <!-- Contact -->
+                    <tr>
+                      <td style="padding:0 40px 32px;">
+                        <h2 style="${emailStyles.sectionTitle}">Questions?</h2>
+                        <p style="margin:0;color:#57534e;font-size:15px;line-height:1.6;">
+                          Call or message us at <a href="tel:09855713768" style="${emailStyles.link}">0985 571 3768</a>
+                          or email <a href="mailto:ihubdavao@gmail.com" style="${emailStyles.link}">ihubdavao@gmail.com</a>.
+                        </p>
+                      </td>
+                    </tr>
+                    
+                    <!-- Tagline -->
+                    <tr>
+                      <td style="padding:0 40px 32px;text-align:center;">
+                        <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:20px;font-style:italic;color:#d6d3d1;letter-spacing:-0.01em;">
+                          Create your future. Celebrate your now.
+                        </p>
+                      </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                      <td style="${emailStyles.footer}">
+                        <p style="margin:0;color:#a8a29e;font-size:13px;">iHub Coworking Bistro • Pines Place, Pioneer Drive, Bajada, Davao City</p>
+                        <p style="margin:8px 0 0;color:#d6d3d1;font-size:12px;">Open 24/7 • <a href="tel:09855713768" style="${emailStyles.link}">0985 571 3768</a></p>
+                      </td>
+                    </tr>
+                    
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+          </html>
         `,
       });
     } catch (emailError) {
       // Status was already updated — log the email failure but still return success
-      console.error("Confirmation email failed:", emailError);
-      // Optionally return a soft warning:
-      // return { success: true, message: "Status updated, but email failed to send." };
+      console.error(
+        isConfirmed ? "Confirmation email failed:" : "Rejection email failed:",
+        emailError,
+      );
     }
   }
 

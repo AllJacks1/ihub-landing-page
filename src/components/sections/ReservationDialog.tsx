@@ -52,6 +52,7 @@ export type ReservationStatus =
   | "confirmed"
   | "seated"
   | "completed"
+  | "rejected"
   | "cancelled"
   | "no_show";
 
@@ -90,6 +91,10 @@ const statusStyles: Record<
   completed: {
     label: "Completed",
     className: "bg-stone-100 text-stone-600 border-stone-200",
+  },
+  rejected: {
+    label: "Rejected",
+    className: "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100",
   },
   cancelled: {
     label: "Cancelled",
@@ -193,6 +198,11 @@ const confirmMessages: Record<
   completed: {
     title: "Complete this reservation?",
     description: "Mark the booking as finished / closed.",
+  },
+  rejected: {
+    title: "Reject this reservation?",
+    description:
+      "This will mark the booking as rejected and automatically send an email notifying the guest that we are fully booked.",
   },
   no_show: {
     title: "Mark as no-show?",
