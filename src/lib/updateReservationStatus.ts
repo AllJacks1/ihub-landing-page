@@ -239,7 +239,9 @@ export async function updateReservationStatus(
                     <!-- Badge -->
                     <tr>
                       <td style="padding:24px 40px 0;">
-                        <span style="${emailStyles.badge};background:#fef2f2;color:#b91c1c;">Unable to Accommodate</span>
+                        <span style="display:inline-block;background:#fef2f2;color:#b91c1c;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:8px 16px;border-radius:100px;border:1px solid #fecaca;">
+                          Unable to Accommodate
+                        </span>
                       </td>
                     </tr>
                     

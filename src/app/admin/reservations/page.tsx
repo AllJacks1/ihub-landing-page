@@ -227,7 +227,7 @@ export default function ReservationsPage() {
         toast.success(
           next === "confirmed"
             ? `Approved — confirmation email sent to ${r.email}`
-            : next === "cancelled"
+            : next === "rejected"
               ? "Booking rejected"
               : `Marked as ${statusStyles[next].label}`,
         );
@@ -243,14 +243,14 @@ export default function ReservationsPage() {
   const confirmTitle =
     confirmTarget?.next === "confirmed"
       ? "Approve this reservation?"
-      : confirmTarget?.next === "cancelled"
+      : confirmTarget?.next === "rejected"
         ? "Reject this reservation?"
         : "Update status?";
 
   const confirmDescription =
     confirmTarget?.next === "confirmed"
       ? `This will mark ${confirmTarget.reservation.full_name}'s booking as confirmed and automatically send a confirmation email to ${confirmTarget.reservation.email}.`
-      : confirmTarget?.next === "cancelled"
+      : confirmTarget?.next === "rejected"
         ? `This will reject ${confirmTarget.reservation.full_name}'s booking. The guest will not be notified automatically.`
         : "Are you sure you want to update this reservation?";
 
@@ -583,7 +583,7 @@ export default function ReservationsPage() {
                                   disabled={busy}
                                   className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
                                   onClick={() =>
-                                    requestQuickStatus(r, "cancelled")
+                                    requestQuickStatus(r, "rejected")
                                   }
                                 >
                                   <X className="mr-1 h-3.5 w-3.5" />
@@ -649,7 +649,7 @@ export default function ReservationsPage() {
               onClick={handleConfirmedQuickStatus}
               disabled={isPending}
               className={cn(
-                confirmTarget?.next === "cancelled"
+                confirmTarget?.next === "rejected"
                   ? "bg-red-600 text-white hover:bg-red-700"
                   : "bg-[#F36509] text-white hover:bg-[#e05a00]",
               )}
@@ -659,7 +659,7 @@ export default function ReservationsPage() {
               ) : null}
               {confirmTarget?.next === "confirmed"
                 ? "Approve & Send Email"
-                : confirmTarget?.next === "cancelled"
+                : confirmTarget?.next === "rejected"
                   ? "Reject"
                   : "Confirm"}
             </Button>
