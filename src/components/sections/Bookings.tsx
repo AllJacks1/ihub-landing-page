@@ -91,6 +91,62 @@ const bistroTableTypes = [
   { value: "outdoor", label: "Outdoor Seating" },
 ];
 
+/** Seating layouts available for Confe A */
+const confeALayouts = [
+  {
+    value: "classroom",
+    label: "Classroom",
+    description: "Tables + chairs facing front",
+    image: "/images/venue-layouts/classroom.png",
+  },
+  {
+    value: "u-shape",
+    label: "U-Shape",
+    description: "Open U for discussion",
+    image: "/images/venue-layouts/u-shape.png",
+  },
+  {
+    value: "boardroom",
+    label: "Boardroom",
+    description: "Conference table setup",
+    image: "/images/venue-layouts/conference.png",
+  },
+  {
+    value: "banquet",
+    label: "Banquet",
+    description: "Round tables",
+    image: "/images/venue-layouts/banquet.png",
+  },
+  {
+    value: "theatre",
+    label: "Theatre",
+    description: "Rows facing front",
+    image: "/images/venue-layouts/theatre.png",
+  },
+];
+
+/** Venue layouts available for Events (Hub a Blast) */
+const eventLayouts = [
+  {
+    value: "theatre",
+    label: "Theatre",
+    description: "Rows facing front",
+    image: "/images/venue-layouts/theatre.png",
+  },
+  {
+    value: "classroom",
+    label: "Classroom",
+    description: "Tables + chairs facing front",
+    image: "/images/venue-layouts/classroom.png",
+  },
+  {
+    value: "banquet",
+    label: "Banquet",
+    description: "Round tables",
+    image: "/images/venue-layouts/banquet.png",
+  },
+];
+
 const cancellationTiers = [
   {
     window: "14 days or more before",
@@ -153,6 +209,7 @@ const emptyForm = (type: BookingType = "coworking") => ({
   pax: 1,
   room: "",
   tableType: "",
+  layout: "",
   notes: "",
   packageId: "",
   packageLabel: "",
@@ -166,6 +223,14 @@ const emptyForm = (type: BookingType = "coworking") => ({
 });
 
 const iStudyPackages = [
+  {
+    id: "ilounge",
+    name: "iLounge",
+    price: 0,
+    unit: "",
+    note: "No hourly fee · Min. F&B purchase required",
+    billing: "min_fb" as const,
+  },
   {
     id: "istudy-hourly",
     name: "Hourly Rate",
@@ -625,6 +690,7 @@ export default function BookingPage() {
       ...prev,
       packageId: "",
       packageLabel: "",
+      layout: "",
       notes: stripPackageBlock(prev.notes),
       addOnProjector: false,
       addOnSpeaker: false,
@@ -686,10 +752,15 @@ export default function BookingPage() {
         packageId: id,
         packageLabel: `${roomName} · ${rate.label}`,
         room: roomValue || prev.room,
+        // Layout only applies to Confe A — reset when switching rooms
+        layout: roomName === "Confe A" ? prev.layout : "",
         notes: nextNotes,
       };
     });
   };
+
+  const isConfeASelected =
+    workRateMeta?.roomName === "Confe A" || formData.room === "CONFE A";
 
   const selectBistroPackage = (pkg: (typeof bistroPackages)[0]) => {
     if (formData.packageId === pkg.id) {
@@ -811,10 +882,27 @@ export default function BookingPage() {
 
     setIsSubmitting(true);
 
+    const layoutLabel =
+      confeALayouts.find((l) => l.value === formData.layout)?.label ||
+      eventLayouts.find((l) => l.value === formData.layout)?.label;
+    const layoutContext =
+      activeTab === "events"
+        ? "Events"
+        : activeTab === "conference"
+          ? "Confe A"
+          : "venue";
+    const layoutNote =
+      formData.layout && layoutLabel
+        ? `<p><strong>Preferred layout (${layoutContext}):</strong> ${layoutLabel}</p>`
+        : "";
+
     const payload: BookingPayload = {
       ...formData,
       pax: Number(formData.pax),
       type: activeTab,
+      notes: layoutNote
+        ? `${layoutNote}${formData.notes || ""}`
+        : formData.notes,
       billLines: bill.lines,
       billTotal: bill.total,
       billDeposit: bill.deposit,
@@ -984,7 +1072,7 @@ export default function BookingPage() {
       <section className="px-4 py-12 sm:px-6 sm:py-16">
         <div className="mx-auto max-w-3xl">
           {/* Step indicator */}
-          <div className="mb-8 items-center justify-center px-4 py-3 sm:flex sm:px-6">
+          <div className="mb-8">
             <ol className="flex items-center justify-between gap-1">
               {STEPS.map((s, i) => {
                 const active = step === s.id;
@@ -1001,7 +1089,11 @@ export default function BookingPage() {
                               : "bg-white text-stone-400 ring-1 ring-stone-200"
                         }`}
                       >
-                        {done ? <Check className="h-4 w-4" strokeWidth={3} /> : s.id}
+                        {done ? (
+                          <Check className="h-4 w-4" strokeWidth={3} />
+                        ) : (
+                          s.id
+                        )}
                       </span>
                       <span
                         className={`hidden text-[11px] font-semibold sm:block ${
@@ -1124,7 +1216,7 @@ export default function BookingPage() {
                     className="w-full"
                   >
                     <div className="mb-8">
-                      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-2xl bg-stone-100 p-1.5 sm:grid-cols-4   pb-20">
+                      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-2xl bg-stone-100 p-1.5 sm:grid-cols-4 pb-20">
                         {bookingTypes.map((type) => (
                           <TabsTrigger
                             key={type.id}
@@ -1180,11 +1272,17 @@ export default function BookingPage() {
                                   {pkg.name}
                                 </p>
                                 <p className="mt-2 font-serif text-2xl font-semibold tracking-tight text-stone-900">
-                                  {formatPHP(pkg.price)}
-                                  {pkg.unit && (
-                                    <span className="ml-0.5 text-sm font-normal text-stone-400">
-                                      {pkg.unit}
-                                    </span>
+                                  {pkg.price === 0 ? (
+                                    "Min. F&B purchase"
+                                  ) : (
+                                    <>
+                                      {formatPHP(pkg.price)}
+                                      {pkg.unit && (
+                                        <span className="ml-0.5 text-sm font-normal text-stone-400">
+                                          {pkg.unit}
+                                        </span>
+                                      )}
+                                    </>
                                   )}
                                 </p>
                                 <p className="mt-2 text-xs leading-relaxed text-stone-500">
@@ -1221,6 +1319,88 @@ export default function BookingPage() {
                           selectedCardClass={selectedCardClass}
                           idleCardClass={idleCardClass}
                         />
+
+                        {/* Confe A seating layout */}
+                        {isConfeASelected && formData.packageId && (
+                          <div className="space-y-3 pt-1">
+                            <div className="flex items-center justify-between">
+                              <Label className={labelClass}>
+                                <Users className="h-3.5 w-3.5" />
+                                Preferred layout (Confe A)
+                              </Label>
+                              {formData.layout && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      layout: "",
+                                    }))
+                                  }
+                                  className="text-[11px] font-medium text-stone-400 hover:text-[#F36509]"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                              {confeALayouts.map((opt) => {
+                                const selected = formData.layout === opt.value;
+                                return (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() =>
+                                      setFormData((prev) => ({
+                                        ...prev,
+                                        layout:
+                                          prev.layout === opt.value
+                                            ? ""
+                                            : opt.value,
+                                      }))
+                                    }
+                                    className={`group relative overflow-hidden rounded-2xl border text-left transition-all duration-150 ${
+                                      selected
+                                        ? selectedCardClass
+                                        : idleCardClass
+                                    }`}
+                                  >
+                                    <div className="relative aspect-[4/3] w-full bg-stone-100">
+                                      <Image
+                                        src={opt.image}
+                                        alt={opt.label}
+                                        fill
+                                        className="object-cover"
+                                        sizes="(max-width: 640px) 100vw, 220px"
+                                      />
+                                      {selected && (
+                                        <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#F36509] shadow-md">
+                                          <Check
+                                            className="h-3.5 w-3.5 text-white"
+                                            strokeWidth={3}
+                                          />
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="p-3">
+                                      <p className="text-sm font-semibold text-stone-900">
+                                        {opt.label}
+                                      </p>
+                                      <p className="mt-0.5 text-xs text-stone-500">
+                                        {opt.description}
+                                      </p>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <p className="text-[11px] text-stone-400">
+                              Subject to availability and room capacity. Our
+                              team will confirm the final setup.
+                            </p>
+                          </div>
+                        )}
+
                         <div className="pt-2">
                           <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
                             Equipment add-ons
@@ -1286,67 +1466,24 @@ export default function BookingPage() {
                         description="Reserve a table at our café for dining or casual work"
                       />
                       <section className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-sm font-semibold text-stone-800">
-                            Choose a bistro option
-                          </h4>
-                          <span className="rounded-full bg-stone-100 px-2.5 py-0.5 text-[11px] font-medium text-stone-500">
-                            Required
-                          </span>
+                        <div className="space-y-1.5">
+                          <Label className={labelClass}>
+                            <Users className="h-3.5 w-3.5" />
+                            Preferred Table
+                          </Label>
+                          <select
+                            name="tableType"
+                            value={formData.tableType}
+                            onChange={handleChange}
+                            className="h-12 w-full rounded-xl border border-stone-200 bg-white px-4 text-stone-900 focus:border-[#F36509] focus:outline-none focus:ring-2 focus:ring-[#F36509]/20"
+                          >
+                            {bistroTableTypes.map((table) => (
+                              <option key={table.value} value={table.value}>
+                                {table.label}
+                              </option>
+                            ))}
+                          </select>
                         </div>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          {bistroPackages.map((pkg) => {
-                            const selected = formData.packageId === pkg.id;
-                            return (
-                              <button
-                                key={pkg.id}
-                                type="button"
-                                onClick={() => selectBistroPackage(pkg)}
-                                className={`group relative rounded-2xl border p-4 text-left transition-all duration-150 ${
-                                  selected ? selectedCardClass : idleCardClass
-                                }`}
-                              >
-                                {selected && (
-                                  <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-[#F36509]">
-                                    <Check
-                                      className="h-3 w-3 text-white"
-                                      strokeWidth={3}
-                                    />
-                                  </span>
-                                )}
-                                <p className="pr-6 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
-                                  {pkg.name}
-                                </p>
-                                <p className="mt-2 font-serif text-xl font-semibold tracking-tight text-stone-900">
-                                  Min. F&B purchase
-                                </p>
-                                <p className="mt-2 text-xs leading-relaxed text-stone-500">
-                                  {pkg.note}
-                                </p>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {formData.packageId && (
-                          <div className="space-y-1.5">
-                            <Label className={labelClass}>
-                              <Users className="h-3.5 w-3.5" />
-                              Preferred Table
-                            </Label>
-                            <select
-                              name="tableType"
-                              value={formData.tableType}
-                              onChange={handleChange}
-                              className="h-12 w-full rounded-xl border border-stone-200 bg-white px-4 text-stone-900 focus:border-[#F36509] focus:outline-none focus:ring-2 focus:ring-[#F36509]/20"
-                            >
-                              {bistroTableTypes.map((table) => (
-                                <option key={table.value} value={table.value}>
-                                  {table.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
                       </section>
                     </TabsContent>
 
@@ -1433,6 +1570,86 @@ export default function BookingPage() {
                                   </li>
                                 ))}
                               </ul>
+                            </div>
+
+                            {/* Events venue layout */}
+                            <div className="space-y-3 pt-1">
+                              <div className="flex items-center justify-between">
+                                <Label className={labelClass}>
+                                  <Users className="h-3.5 w-3.5" />
+                                  Preferred venue layout
+                                </Label>
+                                {formData.layout && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setFormData((prev) => ({
+                                        ...prev,
+                                        layout: "",
+                                      }))
+                                    }
+                                    className="text-[11px] font-medium text-stone-400 hover:text-[#F36509]"
+                                  >
+                                    Clear
+                                  </button>
+                                )}
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-3">
+                                {eventLayouts.map((opt) => {
+                                  const selected =
+                                    formData.layout === opt.value;
+                                  return (
+                                    <button
+                                      key={opt.value}
+                                      type="button"
+                                      onClick={() =>
+                                        setFormData((prev) => ({
+                                          ...prev,
+                                          layout:
+                                            prev.layout === opt.value
+                                              ? ""
+                                              : opt.value,
+                                        }))
+                                      }
+                                      className={`group relative overflow-hidden rounded-2xl border text-left transition-all duration-150 ${
+                                        selected
+                                          ? selectedCardClass
+                                          : idleCardClass
+                                      }`}
+                                    >
+                                      <div className="relative aspect-[4/3] w-full bg-stone-100">
+                                        <Image
+                                          src={opt.image}
+                                          alt={opt.label}
+                                          fill
+                                          className="object-cover"
+                                          sizes="(max-width: 640px) 100vw, 220px"
+                                        />
+                                        {selected && (
+                                          <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#F36509] shadow-md">
+                                            <Check
+                                              className="h-3.5 w-3.5 text-white"
+                                              strokeWidth={3}
+                                            />
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="p-3">
+                                        <p className="text-sm font-semibold text-stone-900">
+                                          {opt.label}
+                                        </p>
+                                        <p className="mt-0.5 text-xs text-stone-500">
+                                          {opt.description}
+                                        </p>
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <p className="text-[11px] text-stone-400">
+                                Subject to availability and guest count. Our
+                                team will confirm the final setup.
+                              </p>
                             </div>
 
                             <div className="space-y-4 rounded-2xl border border-[#F36509]/20 bg-[#F36509]/[0.03] p-4">
@@ -1769,7 +1986,8 @@ export default function BookingPage() {
                         <dt className="text-stone-500">When</dt>
                         <dd className="font-semibold text-stone-900">
                           {formData.date}
-                          {formData.endDate && formData.endDate !== formData.date
+                          {formData.endDate &&
+                          formData.endDate !== formData.date
                             ? ` → ${formData.endDate}`
                             : ""}{" "}
                           · {formData.time}
@@ -1782,6 +2000,24 @@ export default function BookingPage() {
                           {formData.pax} pax
                         </dd>
                       </div>
+                      {formData.layout && (
+                        <div>
+                          <dt className="text-stone-500">
+                            {activeTab === "events"
+                              ? "Venue layout"
+                              : "Layout (Confe A)"}
+                          </dt>
+                          <dd className="font-semibold text-stone-900">
+                            {confeALayouts.find(
+                              (l) => l.value === formData.layout,
+                            )?.label ||
+                              eventLayouts.find(
+                                (l) => l.value === formData.layout,
+                              )?.label ||
+                              formData.layout}
+                          </dd>
+                        </div>
+                      )}
                     </dl>
                   </div>
 
