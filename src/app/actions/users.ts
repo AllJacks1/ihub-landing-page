@@ -46,12 +46,38 @@ export interface SignUpPayload {
   referralCode?: string | null;
 }
 
+export interface SignUpSponsoredPayload {
+  userId: string;
+  firstname: string;
+  surname: string;
+  birthday: string;
+  contactNumber: string;
+  address: string;
+  email: string;
+  sponsorshipVoucher: string;
+  voucherCode: string;
+  referralCode?: string | null;
+}
+
 export interface SignUpResult {
   success: boolean;
   account?: {
     email: string;
     secret: string;
   };
+  error?: string;
+}
+
+export interface LogEntry {
+  logsId: string | number;
+  activity: string | null;
+  created_at: string;
+  // add any other columns you have in the logs table
+}
+
+export interface ActionResult<T = unknown> {
+  success: boolean;
+  data?: T;
   error?: string;
 }
 
@@ -463,6 +489,172 @@ export async function signUpUser({
     return {
       success: false,
       error: err instanceof Error ? err.message : "Something went wrong",
+    };
+  }
+}
+
+export async function signUpSponsoredUser({
+  userId,
+  firstname,
+  surname,
+  birthday,
+  contactNumber,
+  address,
+  email,
+  sponsorshipVoucher,
+  voucherCode,
+  referralCode,
+}: SignUpSponsoredPayload): Promise<SignUpResult> {
+  const SECRET = "ihubdavao123";
+
+  const PASSES = [
+    {
+      slug: "5-hour-iaccess-sponsorship-voucher",
+      name: "iStudy Pass: 5 Hour Voucher",
+      id: 25,
+    },
+    {
+      slug: "10-hour-iaccess-sponsorship-voucher",
+      name: "iStudy Pass: 10 Hour Voucher",
+      id: 26,
+    },
+    {
+      slug: "20-hour-iaccess-sponsorship-voucher",
+      name: "iStudy Pass: 20 Hour Voucher",
+      id: 27,
+    },
+  ] as const;
+
+  const selectedPass = PASSES.find(
+    (pass) =>
+      pass.slug === sponsorshipVoucher ||
+      String(pass.id) === String(sponsorshipVoucher),
+  );
+
+  if (!selectedPass) {
+    return { success: false, error: "Invalid sponsorship voucher selected." };
+  }
+
+  try {
+    // Basic validation
+    if (
+      !userId?.trim() ||
+      !firstname?.trim() ||
+      !surname?.trim() ||
+      !birthday ||
+      !contactNumber?.trim() ||
+      !address?.trim() ||
+      !email?.trim() ||
+      !voucherCode?.trim()
+    ) {
+      return { success: false, error: "All required fields must be filled." };
+    }
+
+    const hashedPassword = crypto
+      .createHash("sha256")
+      .update(SECRET)
+      .digest("hex");
+
+    const memberSince = new Date();
+    const memberUntil = new Date();
+    memberUntil.setFullYear(memberUntil.getFullYear() + 1);
+
+    const supabase = await createSupabaseClient();
+
+    // 1. Insert User
+    const { error: userError } = await supabase.from("users").insert([
+      {
+        userId: userId.trim(),
+        firstname: firstname.trim(),
+        surname: surname.trim(),
+        birthday,
+        contactNumber: contactNumber.trim(),
+        email: email.trim().toLowerCase(),
+        address: address.trim(),
+        secret: hashedPassword,
+        referralCode: referralCode?.trim() || null,
+        memberSince,
+        memberUntil,
+      },
+    ]);
+
+    if (userError) {
+      throw new Error(`User creation failed: ${userError.message}`);
+    }
+
+    // 2. Insert Transaction
+    const { error: txError } = await supabase.from("transactions").insert({
+      userId: userId.trim(),
+      points: 0,
+      receiptNumber: voucherCode.trim(),
+      description: `Redeemed exclusive reward: ${selectedPass.name}`,
+      transactionType: "redeem",
+      voucherGroupId: selectedPass.id,
+    });
+
+    if (txError) {
+      console.warn("Failed to create transaction record:", txError.message);
+      // Non-blocking — user is already created
+    }
+
+    // 3. Send email (non-blocking)
+    try {
+      await sendMemberEmail(
+        email.trim().toLowerCase(),
+        SECRET,
+        firstname.trim(),
+      );
+    } catch (emailErr) {
+      console.error(
+        "Email service error:",
+        emailErr instanceof Error ? emailErr.message : emailErr,
+      );
+    }
+
+    revalidatePath("/users");
+
+    return {
+      success: true,
+      account: {
+        email: email.trim().toLowerCase(),
+        secret: SECRET,
+      },
+    };
+  } catch (err) {
+    console.error(
+      "Error in signUpSponsoredUser:",
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Something went wrong",
+    };
+  }
+}
+
+export async function fetchLogs(): Promise<ActionResult<LogEntry[]>> {
+  try {
+    const supabase = await createSupabaseClient();
+
+    const { data, error } = await supabase
+      .from("logs")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching logs:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    return {
+      success: true,
+      data: (data as LogEntry[]) ?? [],
+    };
+  } catch (err) {
+    console.error("Unexpected error fetching logs:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to load logs",
     };
   }
 }
