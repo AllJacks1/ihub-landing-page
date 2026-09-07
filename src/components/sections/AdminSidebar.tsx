@@ -17,6 +17,9 @@ import {
   ChevronDown,
   ChevronRight,
   BetweenHorizontalStart,
+  Users,
+  Ad,
+  Terminal,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -70,7 +73,7 @@ const sidebarGroups: SidebarGroup[] = [
         label: "Comments",
         icon: MessageSquare,
         href: "/admin/comments",
-        badge: "3",
+        //badge: "3",
       },
     ],
   },
@@ -104,6 +107,36 @@ const sidebarGroups: SidebarGroup[] = [
       },
     ],
   },
+  {
+    id: "iaccess",
+    label: "iAccess",
+    items: [
+      {
+        id: "users",
+        label: "Users",
+        icon: Users,
+        href: "/admin/iaccess/users",
+      },
+      {
+        id: "create-account",
+        label: "Create Account",
+        icon: Plus,
+        href: "/admin/iaccess/users/new",
+      },
+      {
+        id: "sponsorship",
+        label: "Sponsorship",
+        icon: Ad,
+        href: "/admin/iaccess/sponsorship/new",
+      },
+      {
+        id: "activity-logs",
+        label: "Activity Logs",
+        icon: Terminal,
+        href: "/admin/iaccess/activity-logs",
+      },
+    ],
+  },
 ];
 
 function AdminSidebar() {
@@ -113,6 +146,7 @@ function AdminSidebar() {
       overview: true,
       blogs: true,
       reservations: true,
+      iaccess: true,
     },
   );
 
