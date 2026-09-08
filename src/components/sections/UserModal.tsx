@@ -10,9 +10,10 @@ import {
   Award,
   History,
   Loader2,
-  X,
   Save,
   RefreshCw,
+  Plus,
+  Ticket,
 } from "lucide-react";
 import {
   Dialog,
@@ -27,9 +28,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getUserById, updateUser } from "@/app/actions/users";
+import { addPoints, redeemVoucher } from "@/app/actions/points";
 
 /* ── types ── */
 interface UserData {
@@ -88,12 +91,21 @@ export default function UserModal({
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
   // Editable fields
   const [editFirstname, setEditFirstname] = useState("");
   const [editSurname, setEditSurname] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editContact, setEditContact] = useState("");
+
+  // Add points form
+  const [amount, setAmount] = useState("");
+  const [receiptNumber, setReceiptNumber] = useState("");
+  const [description, setDescription] = useState("");
+
+  // Redeem voucher form
+  const [redeemCode, setRedeemCode] = useState("");
 
   const loadUser = useCallback(async () => {
     setIsLoading(true);
@@ -107,8 +119,8 @@ export default function UserModal({
 
       const data = result.data;
       setUser(data);
-      setTransactions(data.transactions);
-      setTotalPoints(data.totalPoints);
+      setTransactions(data.transactions ?? []);
+      setTotalPoints(data.totalPoints ?? 0);
 
       setEditFirstname(data.firstname ?? "");
       setEditSurname(data.surname ?? "");
@@ -150,6 +162,76 @@ export default function UserModal({
       toast.error("Failed to update user");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleAddPoints = async () => {
+    if (!user) return;
+
+    const toCompute = Number(amount);
+    if (!toCompute || toCompute <= 0) {
+      toast.error("Enter a positive amount.");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const result = await addPoints({
+        userId: user.userId,
+        amount: toCompute,
+        receiptNumber: receiptNumber || null,
+        description: description || null,
+        // optional: pass admin email if you have it from session
+      });
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to add points");
+        return;
+      }
+
+      toast.success(result.message || "Points added");
+      setAmount("");
+      setReceiptNumber("");
+      setDescription("");
+      onUserUpdated?.();
+      await loadUser();
+    } catch {
+      toast.error("Failed to add points");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRedeemVoucher = async () => {
+    if (!user) return;
+
+    const code = redeemCode.trim();
+    if (!code) {
+      toast.error("Please enter a voucher code.");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const result = await redeemVoucher({
+        userId: user.userId,
+        voucherCode: code,
+        currentPoints: totalPoints,
+      });
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to redeem voucher");
+        return;
+      }
+
+      toast.success(result.message || "Voucher redeemed");
+      setRedeemCode("");
+      onUserUpdated?.();
+      await loadUser();
+    } catch {
+      toast.error("Failed to redeem voucher");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -337,6 +419,101 @@ export default function UserModal({
 
             <Separator className="bg-stone-200" />
 
+            {/* ── Add Points ── */}
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <Plus className="h-4 w-4 text-stone-500" />
+                <h4 className="text-sm font-semibold text-stone-900">
+                  Add Points
+                </h4>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-stone-500">Amount (₱)</Label>
+                  <Input
+                    type="number"
+                    placeholder="e.g. 1500"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20"
+                  />
+                  {amount && Number(amount) > 0 && (
+                    <p className="text-xs text-stone-400">
+                      = {(Number(amount) / 150).toFixed(2)} points
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-stone-500">
+                    Receipt Number
+                  </Label>
+                  <Input
+                    placeholder="Optional"
+                    value={receiptNumber}
+                    onChange={(e) => setReceiptNumber(e.target.value)}
+                    className="border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-stone-500">Description</Label>
+                  <Input
+                    placeholder="Optional"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20"
+                  />
+                </div>
+              </div>
+              <Button
+                onClick={handleAddPoints}
+                disabled={actionLoading || !amount}
+                className="mt-3 bg-[#F36509] text-white hover:bg-[#e05a00]"
+                size="sm"
+              >
+                {actionLoading ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="mr-2 h-3.5 w-3.5" />
+                )}
+                Add Points
+              </Button>
+            </div>
+
+            <Separator className="bg-stone-200" />
+
+            {/* ── Redeem Voucher ── */}
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <Ticket className="h-4 w-4 text-stone-500" />
+                <h4 className="text-sm font-semibold text-stone-900">
+                  Redeem Voucher
+                </h4>
+              </div>
+              <div className="flex gap-3">
+                <Input
+                  placeholder="Enter voucher code"
+                  value={redeemCode}
+                  onChange={(e) => setRedeemCode(e.target.value)}
+                  className="border-stone-200 focus:border-[#F36509] focus:ring-[#F36509]/20"
+                />
+                <Button
+                  onClick={handleRedeemVoucher}
+                  disabled={actionLoading || !redeemCode.trim()}
+                  className="shrink-0 bg-[#F36509] text-white hover:bg-[#e05a00]"
+                  size="sm"
+                >
+                  {actionLoading ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Ticket className="mr-2 h-3.5 w-3.5" />
+                  )}
+                  Redeem
+                </Button>
+              </div>
+            </div>
+
+            <Separator className="bg-stone-200" />
+
             {/* Transaction history */}
             <div>
               <div className="mb-3 flex items-center gap-2">
@@ -415,7 +592,6 @@ export default function UserModal({
                 variant="outline"
                 onClick={() => {
                   setIsEditing(false);
-                  // reset fields
                   if (user) {
                     setEditFirstname(user.firstname ?? "");
                     setEditSurname(user.surname ?? "");

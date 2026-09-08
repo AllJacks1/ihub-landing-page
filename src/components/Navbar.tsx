@@ -58,6 +58,7 @@ export default function Navbar() {
       external: true,
     },
     { href: "/coworking", label: "Coworking" },
+    { href: "/iaccess/login", label: "iAccess" },
     { href: "/events", label: "Events & Music" },
     { href: "/passes", label: "Passes & Rates" },
     { href: "/blogs", label: "Blogs" },

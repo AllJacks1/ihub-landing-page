@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { ChevronDown, LogOut, Loader2 } from "lucide-react";
+import Cookies from "js-cookie";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -20,7 +21,7 @@ export function UserMenu({
   name = "Juan Dela Cruz",
   email = "juan@ihubdavao.com",
   avatarUrl,
-  initials = "JD"
+  initials = "JD",
 }: {
   name?: string;
   email?: string;
@@ -33,8 +34,11 @@ export function UserMenu({
     startTransition(async () => {
       const result = await logoutUser();
       if (result.success) {
+        // Extra safety on the client
+        Cookies.remove("adminId");
+        // Cookies.remove("userId");
+
         toast.success("Logged out");
-        // Full navigation so cookies/session clear cleanly
         window.location.href = "/";
       } else {
         toast.error(result.error || "Failed to log out");

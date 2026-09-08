@@ -1,5 +1,6 @@
 import CTASection from "@/components/sections/CTASection";
 import EventsSection from "@/components/sections/EventsSection";
+import FloatingLoginBanner from "@/components/sections/FloatingLoginBanner";
 import FoodDrinksSection from "@/components/sections/FoodDrinksSection";
 import Hero from "@/components/sections/HeroSection";
 import ILoungeSection from "@/components/sections/ILoungeSection";
@@ -20,6 +21,8 @@ export default function Home() {
       <EventsSection />
       <LocationSection />
       <CTASection />
+
+      <FloatingLoginBanner/>
     </div>
   );
 }

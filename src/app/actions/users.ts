@@ -4,6 +4,7 @@ import { createSupabaseClient } from "@/lib/actions";
 import { revalidatePath } from "next/cache";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
+import { cookies } from "next/headers";
 
 /* ── types ── */
 export type MembershipStatus = "active" | "expired" | "none";
@@ -78,6 +79,19 @@ export interface LogEntry {
 export interface ActionResult<T = unknown> {
   success: boolean;
   data?: T;
+  error?: string;
+}
+
+export interface SignInPayload {
+  email: string;
+  secret: string;
+}
+
+export interface SignInResult {
+  success: boolean;
+  user?: {
+    userId: string;
+  };
   error?: string;
 }
 
@@ -657,4 +671,74 @@ export async function fetchLogs(): Promise<ActionResult<LogEntry[]>> {
       error: err instanceof Error ? err.message : "Failed to load logs",
     };
   }
+}
+
+export async function signInUser({
+  email,
+  secret,
+}: SignInPayload): Promise<SignInResult> {
+  try {
+    if (!email?.trim() || !secret?.trim()) {
+      return { success: false, error: "Email and password required" };
+    }
+
+    // Hash password
+    const hashedPassword = crypto
+      .createHash("sha256")
+      .update(secret)
+      .digest("hex");
+
+    const supabase = await createSupabaseClient();
+
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("userId, secret")
+      .eq("email", email.trim().toLowerCase())
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!user) {
+      return { success: false, error: "No account found" };
+    }
+
+    if (hashedPassword !== user.secret) {
+      return { success: false, error: "Incorrect password" };
+    }
+
+    // ─── Set cookie ───────────────────────────────────────
+    const cookieStore = await cookies();
+
+    cookieStore.set("userId", user.userId, {
+      httpOnly: true, // not accessible from JS (more secure)
+      //secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30, // 30 days
+    });
+
+    return {
+      success: true,
+      user: { userId: user.userId },
+    };
+  } catch (err) {
+    console.error(
+      "signInUser error:",
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Something went wrong",
+    };
+  }
+}
+
+export async function getCurrentUserId() {
+  const cookieStore = await cookies();
+  const userId = cookieStore.get("userId")?.value;
+  return userId ?? null;
+}
+
+export async function logout() {
+  const cookieStore = await cookies();
+  cookieStore.delete("userId");
 }

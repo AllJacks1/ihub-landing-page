@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { Separator } from "@/components/ui/separator";
 import CreatePostModal from "@/components/sections/CreatePostModal";
 import { Eye, Sparkles } from "lucide-react";
@@ -13,6 +15,13 @@ export default async function AdminLayout({
 }: {
   children: ReactNode;
 }) {
+  const cookieStore = await cookies();
+  const adminId = cookieStore.get("adminId")?.value;
+
+  if (!adminId) {
+    redirect("/");
+  }
+
   const user = await getCurrentUser();
 
   return (

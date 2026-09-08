@@ -234,6 +234,17 @@ export async function loginUser(email: string, password: string) {
       };
     }
 
+    // Set the userId cookie (readable by js-cookie on the client)
+    if (data.user?.id) {
+      const cookieStore = await cookies();
+      cookieStore.set("adminId", data.user.id, {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30, // 30 days
+        sameSite: "lax",
+        // httpOnly: false  ← leave false / omit so client-side js-cookie can read it
+      });
+    }
+
     // Revalidate protected routes
     revalidatePath("/admin");
     revalidatePath("/admin/*");
