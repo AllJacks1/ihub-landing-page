@@ -24,6 +24,7 @@ import {
   Check,
   Clock,
 } from "lucide-react";
+import Image from "next/image";
 
 const istudyPlans = [
   {
@@ -161,6 +162,14 @@ export default function AllPlansPage() {
             <p className="mx-auto max-w-xl text-xl text-stone-500">
               Flexible hours for focused study sessions.
             </p>
+          </div>
+
+          <div className="mb-12 overflow-hidden rounded-2xl">
+            <Image
+              src="/images/istudy-rates.jpg" 
+              alt="iStudy cubicles"
+              className="h-64 w-full object-cover md:h-80"
+            />
           </div>
 
           <div className="grid gap-6 md:grid-cols-3">

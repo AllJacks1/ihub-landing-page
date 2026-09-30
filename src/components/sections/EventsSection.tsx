@@ -13,7 +13,7 @@ const events = [
     icon: Music,
     iconBg: "bg-rose-500/15 border border-rose-500/30",
     iconColor: "text-rose-400",
-    tag: "Every Friday Night",
+    tag: "Every Saturday & Sunday Night",
   },
   {
     title: "Friday Game Nights",

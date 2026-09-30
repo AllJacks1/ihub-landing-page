@@ -240,6 +240,22 @@ const iStudyPackages = [
     billing: "hourly" as const,
   },
   {
+    id: "istudy-3h",
+    name: "3-Hour Focus",
+    price: 135,
+    unit: "",
+    note: "Your space to Focus (Same day use)",
+    billing: "fixed" as const,
+  },
+  {
+    id: "istudy-6h",
+    name: "6-Hour Grind",
+    price: 240,
+    unit: "",
+    note: "For serious grinders (Same day use)",
+    billing: "fixed" as const,
+  },
+  {
     id: "istudy-10h",
     name: "10-Hour Pass",
     price: 450,
@@ -439,6 +455,7 @@ const bistroPackages = [
 ];
 
 const eventPackages = [
+  // ── Hub a Blast (catered, per head) ──
   {
     id: "hub-a-blast-day",
     name: "Hub a Blast (Day)",
@@ -447,6 +464,8 @@ const eventPackages = [
     note: "6:00 AM – 3:00 PM · Min 50 pax · Up to 4 hours · Full catering included",
     billing: "per_head" as const,
     minPax: 50,
+    maxPax: undefined as number | undefined,
+    series: "hub-a-blast" as const,
   },
   {
     id: "hub-a-blast-evening",
@@ -456,6 +475,54 @@ const eventPackages = [
     note: "4:00 PM onwards · Min 50 pax · Up to 4 hours · Full catering included",
     billing: "per_head" as const,
     minPax: 50,
+    maxPax: undefined as number | undefined,
+    series: "hub-a-blast" as const,
+  },
+
+  // ── Venue only ──
+  {
+    id: "alfresco-am",
+    name: "Alfresco (AM)",
+    price: 5000,
+    unit: "",
+    note: "Venue only · Up to ~20 pax · Morning rate",
+    billing: "fixed" as const,
+    minPax: 1,
+    maxPax: 20,
+    series: "venue" as const,
+  },
+  {
+    id: "alfresco-pm",
+    name: "Alfresco (PM)",
+    price: 8000,
+    unit: "",
+    note: "Venue only · Up to ~20 pax · Afternoon / evening rate",
+    billing: "fixed" as const,
+    minPax: 1,
+    maxPax: 20,
+    series: "venue" as const,
+  },
+  {
+    id: "full-venue-am",
+    name: "Full Venue — Alfresco + iLounge (AM)",
+    price: 12000,
+    unit: "",
+    note: "Venue only · Up to ~50 pax · Morning rate",
+    billing: "fixed" as const,
+    minPax: 1,
+    maxPax: 50,
+    series: "venue" as const,
+  },
+  {
+    id: "full-venue-pm",
+    name: "Full Venue — Alfresco + iLounge (PM)",
+    price: 20000,
+    unit: "",
+    note: "Venue only · Up to ~50 pax · Afternoon / evening rate",
+    billing: "fixed" as const,
+    minPax: 1,
+    maxPax: 50,
+    series: "venue" as const,
   },
 ];
 
@@ -640,14 +707,24 @@ export default function BookingPage() {
     if (activeTab === "events") {
       const pkg = eventPackages.find((p) => p.id === formData.packageId);
       if (pkg) {
-        const pax = Math.max(formData.pax || 1, pkg.minPax || 1);
-        const amount = pkg.price * pax;
-        lines.push({
-          label: `Events — ${pkg.name}`,
-          detail: `${formatPHP(pkg.price)}/head × ${pax} pax`,
-          amount,
-        });
-        total += amount;
+        if (pkg.billing === "per_head") {
+          const pax = Math.max(formData.pax || 1, pkg.minPax || 1);
+          const amount = pkg.price * pax;
+          lines.push({
+            label: `Events — ${pkg.name}`,
+            detail: `${formatPHP(pkg.price)}/head × ${pax} pax`,
+            amount,
+          });
+          total += amount;
+        } else {
+          // fixed venue rates
+          lines.push({
+            label: `Events — ${pkg.name}`,
+            detail: pkg.note,
+            amount: pkg.price,
+          });
+          total += pkg.price;
+        }
 
         if (formData.addOnSoundSystem) {
           lines.push({
@@ -1073,12 +1150,16 @@ export default function BookingPage() {
         <div className="mx-auto max-w-3xl">
           {/* Step indicator */}
           <div className="mb-8">
-            <ol className="flex items-center justify-between gap-1">
+            <ol className="mx-auto flex w-full max-w-md items-center">
               {STEPS.map((s, i) => {
                 const active = step === s.id;
                 const done = step > s.id;
                 return (
-                  <li key={s.id} className="flex flex-1 items-center gap-1">
+                  <li
+                    key={s.id}
+                    className="flex flex-1 items-center last:flex-none"
+                  >
+                    {/* Step circle + label */}
                     <div className="flex flex-col items-center gap-1.5">
                       <span
                         className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition ${
@@ -1103,9 +1184,11 @@ export default function BookingPage() {
                         {s.label}
                       </span>
                     </div>
+
+                    {/* Connector — only between steps */}
                     {i < STEPS.length - 1 && (
                       <div
-                        className={`mx-1 h-0.5 flex-1 rounded-full ${
+                        className={`mx-2 h-0.5 flex-1 rounded-full ${
                           step > s.id ? "bg-[#F36509]" : "bg-stone-200"
                         }`}
                       />
@@ -1504,44 +1587,97 @@ export default function BookingPage() {
                           </span>
                         </div>
                         <div className="grid gap-3 sm:grid-cols-2">
-                          {eventPackages.map((pkg) => {
-                            const selected = formData.packageId === pkg.id;
-                            return (
-                              <button
-                                key={pkg.id}
-                                type="button"
-                                onClick={() => selectEventPackage(pkg)}
-                                className={`group relative rounded-2xl border p-4 text-left transition-all duration-150 ${
-                                  selected
-                                    ? selectedCardClass
-                                    : "border-[#F36509]/25 bg-gradient-to-b from-[#F36509]/[0.03] to-white hover:border-[#F36509]/40"
-                                }`}
-                              >
-                                {selected && (
-                                  <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-[#F36509]">
-                                    <Check
-                                      className="h-3 w-3 text-white"
-                                      strokeWidth={3}
-                                    />
-                                  </span>
-                                )}
-                                <p className="pr-6 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
-                                  {pkg.name}
-                                </p>
-                                <p className="mt-2 font-serif text-xl font-semibold tracking-tight text-stone-900">
-                                  {formatPHP(pkg.price)}
-                                  {pkg.unit && (
-                                    <span className="ml-0.5 text-sm font-normal text-stone-400">
-                                      {pkg.unit}
+                          {eventPackages
+                            .filter((p) => p.series === "hub-a-blast")
+                            .map((pkg) => {
+                              const selected = formData.packageId === pkg.id;
+                              return (
+                                <button
+                                  key={pkg.id}
+                                  type="button"
+                                  onClick={() => selectEventPackage(pkg)}
+                                  className={`group relative rounded-2xl border p-4 text-left transition-all duration-150 ${
+                                    selected
+                                      ? selectedCardClass
+                                      : "border-[#F36509]/25 bg-gradient-to-b from-[#F36509]/[0.03] to-white hover:border-[#F36509]/40"
+                                  }`}
+                                >
+                                  {selected && (
+                                    <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-[#F36509]">
+                                      <Check
+                                        className="h-3 w-3 text-white"
+                                        strokeWidth={3}
+                                      />
                                     </span>
                                   )}
-                                </p>
-                                <p className="mt-2 text-xs leading-relaxed text-stone-500">
-                                  {pkg.note}
-                                </p>
-                              </button>
-                            );
-                          })}
+                                  <p className="pr-6 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+                                    {pkg.name}
+                                  </p>
+                                  <p className="mt-2 font-serif text-xl font-semibold tracking-tight text-stone-900">
+                                    {formatPHP(pkg.price)}
+                                    {pkg.unit && (
+                                      <span className="ml-0.5 text-sm font-normal text-stone-400">
+                                        {pkg.unit}
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className="mt-2 text-xs leading-relaxed text-stone-500">
+                                    {pkg.note}
+                                  </p>
+                                </button>
+                              );
+                            })}
+                        </div>
+
+                        <div className="space-y-3 pt-4">
+                          <h4 className="text-sm font-semibold text-stone-800">
+                            Venue only
+                          </h4>
+                          <p className="text-xs text-stone-500 -mt-1">
+                            Space rental · No catering · Fixed rate
+                          </p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {eventPackages
+                              .filter((p) => p.series === "venue")
+                              .map((pkg) => {
+                                const selected = formData.packageId === pkg.id;
+                                return (
+                                  <button
+                                    key={pkg.id}
+                                    type="button"
+                                    onClick={() => selectEventPackage(pkg)}
+                                    className={`group relative rounded-2xl border p-4 text-left transition-all duration-150 ${
+                                      selected
+                                        ? selectedCardClass
+                                        : "border-[#F36509]/25 bg-gradient-to-b from-[#F36509]/[0.03] to-white hover:border-[#F36509]/40"
+                                    }`}
+                                  >
+                                    {selected && (
+                                      <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-[#F36509]">
+                                        <Check
+                                          className="h-3 w-3 text-white"
+                                          strokeWidth={3}
+                                        />
+                                      </span>
+                                    )}
+                                    <p className="pr-6 text-[11px] font-semibold uppercase tracking-wider text-stone-400">
+                                      {pkg.name}
+                                    </p>
+                                    <p className="mt-2 font-serif text-xl font-semibold tracking-tight text-stone-900">
+                                      {formatPHP(pkg.price)}
+                                      {pkg.unit && (
+                                        <span className="ml-0.5 text-sm font-normal text-stone-400">
+                                          {pkg.unit}
+                                        </span>
+                                      )}
+                                    </p>
+                                    <p className="mt-2 text-xs leading-relaxed text-stone-500">
+                                      {pkg.note}
+                                    </p>
+                                  </button>
+                                );
+                              })}
+                          </div>
                         </div>
 
                         {isHubABlast && (
