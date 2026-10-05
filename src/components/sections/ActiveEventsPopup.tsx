@@ -61,7 +61,7 @@ export default function ActiveEventsPopup() {
   const [events, setEvents] = useState<Event[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
+  const [zoomSrc, setZoomSrc] = useState<string | null | undefined>(null);
   const [zoomScale, setZoomScale] = useState(1);
   const [index, setIndex] = useState(0);
   const [direction, setDirection] = useState(0); // -1 = left, 1 = right
