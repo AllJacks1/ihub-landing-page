@@ -16,18 +16,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { getActiveEvents } from "@/lib/actions"; // adjust path if needed
-
-type Event = {
-  id: string;
-  title: string;
-  description: string | null;
-  image: string | null;
-  start_date: string;
-  end_date: string;
-  published_at: string | null;
-  published_by: string | null;
-  status: string;
-};
+import { Event } from "@/lib/types/event";
 
 const DISMISS_KEY = "ihub_active_events_dismissed";
 const DISMISS_TTL_MS = 10 * 60 * 1000; // 10 minutes
