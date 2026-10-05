@@ -1,7 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
   reactCompiler: true,
   images: {
     remotePatterns: [
@@ -11,9 +10,14 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: "https",
-        hostname: "**", // Allow ALL external images (less secure)
+        hostname: "**",
       },
     ],
+  },
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "5mb",
+    },
   },
 };
 

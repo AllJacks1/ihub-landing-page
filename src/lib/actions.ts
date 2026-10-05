@@ -4,6 +4,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Event } from "./types/event";
 
 interface Tag {
   id: string;
@@ -1922,4 +1923,513 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     initials: getInitials(full_name, email),
     avatarUrl: null,
   };
+}
+
+// 1. Base object schema (no refinements)
+const eventBaseSchema = z.object({
+  title: z
+    .string()
+    .min(1, "Title is required")
+    .max(255, "Title must be less than 255 characters")
+    .trim(),
+  description: z
+    .string()
+    .max(5000, "Description is too long")
+    .optional()
+    .nullable()
+    .transform((val) => (val?.trim() ? val.trim() : null)),
+  image: z
+    .string()
+    .url("Image must be a valid URL")
+    .optional()
+    .nullable()
+    .or(z.literal(""))
+    .transform((val) => (val === "" ? null : val)),
+  start_date: z
+    .string()
+    .datetime({ message: "Start date must be a valid ISO datetime" }),
+  end_date: z
+    .string()
+    .datetime({ message: "End date must be a valid ISO datetime" }),
+  published_at: z
+    .string()
+    .datetime({ message: "Published at must be a valid ISO datetime" })
+    .optional()
+    .nullable()
+    .or(z.literal(""))
+    .transform((val) => (val === "" || val == null ? null : val)),
+  published_by: z
+    .string()
+    .max(150)
+    .optional()
+    .nullable()
+    .transform((val) => (val?.trim() ? val.trim() : null)),
+  status: z.enum(["draft", "published", "archived"]).default("draft"),
+});
+
+// 2. Full schema used for create / complete validation
+const eventSchema = eventBaseSchema.refine(
+  (data) => new Date(data.end_date) >= new Date(data.start_date),
+  {
+    message: "End date must be on or after start date",
+    path: ["end_date"],
+  },
+);
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+async function getAuthenticatedProfile() {
+  const supabase = await createSupabaseClient();
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return {
+      supabase,
+      user: null,
+      profile: null,
+      error: "Unauthorized" as const,
+    };
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("id, full_name, email")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    console.error("Fetch profile error:", profileError);
+    return {
+      supabase,
+      user,
+      profile: null,
+      error: profileError.message,
+    };
+  }
+
+  return { supabase, user, profile, error: null };
+}
+
+// ─── READ ───────────────────────────────────────────────────────────────────
+
+export async function getEvents() {
+  try {
+    const supabase = await createSupabaseClientForRead();
+    const now = new Date().toISOString();
+
+    // Auto-archive published events that have already ended
+    // (use a client that has write permission if RLS blocks the public client)
+    const { error: archiveError } = await supabase
+      .from("events")
+      .update({
+        status: "archived",
+        updated_at: now,
+      })
+      .eq("status", "published")
+      .lte("end_date", now);
+
+    if (archiveError) {
+      // Log but don't fail the whole fetch
+      console.error("Auto-archive events error:", archiveError);
+    }
+
+    const { data, error } = await supabase
+      .from("events")
+      .select(
+        `
+        id,
+        title,
+        description,
+        image,
+        start_date,
+        end_date,
+        published_at,
+        published_by,
+        status,
+        created_at,
+        updated_at
+      `,
+      )
+      .order("start_date", { ascending: false });
+
+    if (error) {
+      console.error("Fetch events error:", error);
+      return { success: false, error: error.message, data: [] as Event[] };
+    }
+
+    return {
+      success: true,
+      data: (data ?? []) as Event[],
+    };
+  } catch (error) {
+    console.error("Unexpected error in getEvents:", error);
+    return {
+      success: false,
+      error: "Failed to fetch events",
+      data: [] as Event[],
+    };
+  }
+}
+
+export async function getEventById(id: string) {
+  try {
+    const supabase = await createSupabaseClientForRead();
+
+    const { data, error } = await supabase
+      .from("events")
+      .select(
+        `
+        id,
+        title,
+        description,
+        image,
+        start_date,
+        end_date,
+        published_at,
+        published_by,
+        status,
+        created_at,
+        updated_at
+      `,
+      )
+      .eq("id", id)
+      .single();
+
+    if (error || !data) {
+      return { success: false, error: "Event not found" };
+    }
+
+    return { success: true, data: data as Event };
+  } catch (error) {
+    console.error("Error fetching event:", error);
+    return { success: false, error: "Failed to load event" };
+  }
+}
+
+// ─── CREATE ─────────────────────────────────────────────────────────────────
+
+export async function createEvent(formData: {
+  title: string;
+  description?: string | null;
+  image?: string | null;
+  start_date: string;
+  end_date: string;
+  published_at?: string | null;
+  published_by?: string | null;
+  status?: "draft" | "published" | "archived";
+}) {
+  try {
+    const validated = eventSchema.parse(formData);
+
+    const {
+      supabase,
+      user,
+      profile,
+      error: authError,
+    } = await getAuthenticatedProfile();
+
+    if (authError || !user) {
+      return {
+        success: false,
+        error: "You must be logged in to create an event",
+      };
+    }
+
+    // Default published_by to the current user's display name when not provided
+    const publishedBy =
+      validated.published_by ??
+      profile?.full_name ??
+      profile?.email?.split("@")[0] ??
+      user.email?.split("@")[0] ??
+      null;
+
+    // If status is published and published_at is empty, set it to now
+    const publishedAt =
+      validated.status === "published" && !validated.published_at
+        ? new Date().toISOString()
+        : validated.published_at;
+
+    const { data, error } = await supabase
+      .from("events")
+      .insert({
+        title: validated.title,
+        description: validated.description,
+        image: validated.image,
+        start_date: validated.start_date,
+        end_date: validated.end_date,
+        published_at: publishedAt,
+        published_by: publishedBy,
+        status: validated.status,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Supabase create event error:", error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/events");
+    revalidatePath("/events");
+
+    return { success: true, data: data as Event };
+  } catch (error) {
+    console.error("Create event error:", error);
+
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: error.issues[0]?.message || "Invalid input data",
+      };
+    }
+
+    return {
+      success: false,
+      error: "Failed to create event. Please try again.",
+    };
+  }
+}
+
+// ─── UPDATE ─────────────────────────────────────────────────────────────────
+
+export async function updateEvent(
+  eventId: string,
+  formData: Partial<{
+    title: string;
+    description?: string | null;
+    image?: string | null;
+    start_date: string;
+    end_date: string;
+    published_at?: string | null;
+    published_by?: string | null;
+    status: "draft" | "published" | "archived";
+  }>,
+) {
+  try {
+    const partialSchema = eventBaseSchema.partial();
+    const validated = partialSchema.parse(formData);
+
+    // Keep your existing date-order guard
+    if (validated.start_date && validated.end_date) {
+      if (new Date(validated.end_date) < new Date(validated.start_date)) {
+        return {
+          success: false,
+          error: "End date must be on or after start date",
+        };
+      }
+    }
+
+    const {
+      supabase,
+      user,
+      error: authError,
+    } = await getAuthenticatedProfile();
+
+    if (authError || !user) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      ...validated,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Auto-set published_at when transitioning to published and row has none yet
+    if (
+      validated.status === "published" &&
+      (validated.published_at === undefined || validated.published_at === null)
+    ) {
+      const { data: existing } = await supabase
+        .from("events")
+        .select("published_at")
+        .eq("id", eventId)
+        .maybeSingle();
+
+      if (!existing?.published_at) {
+        updatePayload.published_at = new Date().toISOString();
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("events")
+      .update(updatePayload)
+      .eq("id", eventId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Supabase update event error:", error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/events");
+    revalidatePath("/events");
+
+    return { success: true, data: data as Event };
+  } catch (error) {
+    console.error("Error updating event:", error);
+
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+
+    return { success: false, error: "Failed to update event" };
+  }
+}
+
+// ─── DELETE ─────────────────────────────────────────────────────────────────
+
+export async function deleteEvent(eventId: string) {
+  try {
+    const {
+      supabase,
+      user,
+      error: authError,
+    } = await getAuthenticatedProfile();
+
+    if (authError || !user) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const { error } = await supabase.from("events").delete().eq("id", eventId);
+
+    if (error) {
+      console.error("Supabase delete event error:", error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/events");
+    revalidatePath("/events");
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting event:", error);
+    return { success: false, error: "Failed to delete event" };
+  }
+}
+
+// ─── IMAGE UPLOAD ────────────────────────────────────────────────────────────
+
+export async function uploadEventImage(formData: FormData) {
+  try {
+    const {
+      supabase,
+      user,
+      error: authError,
+    } = await getAuthenticatedProfile();
+
+    if (authError || !user) {
+      return {
+        success: false,
+        error: "You must be logged in to upload images",
+      };
+    }
+
+    const file = formData.get("file") as File | null;
+
+    if (!file || !(file instanceof File)) {
+      return { success: false, error: "No file provided" };
+    }
+
+    // Basic validation
+    if (!file.type.startsWith("image/")) {
+      return { success: false, error: "Only image files are allowed" };
+    }
+
+    const maxSize = 5 * 1024 * 1024; // 5 MB
+    if (file.size > maxSize) {
+      return { success: false, error: "Image must be smaller than 5 MB" };
+    }
+
+    // Unique path: events/uuid-filename
+    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+    const filename = `${crypto.randomUUID()}.${ext}`;
+    const path = `events/${filename}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("img")
+      .upload(path, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: file.type,
+      });
+
+    if (uploadError) {
+      console.error("Storage upload error:", uploadError);
+      return { success: false, error: uploadError.message };
+    }
+
+    // Get the public URL
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("img").getPublicUrl(path);
+
+    return { success: true, url: publicUrl };
+  } catch (error) {
+    console.error("Upload error:", error);
+    return { success: false, error: "Failed to upload image" };
+  }
+}
+
+export async function getActiveEvents() {
+  try {
+    const supabase = await createSupabaseClientForRead();
+    const now = new Date().toISOString();
+
+    // Optional: also auto-archive here so the public page stays clean
+    await supabase
+      .from("events")
+      .update({ status: "archived", updated_at: now })
+      .eq("status", "published")
+      .lte("end_date", now);
+
+    const { data, error } = await supabase
+      .from("events")
+      .select(
+        `
+        id,
+        title,
+        description,
+        image,
+        start_date,
+        end_date,
+        published_at,
+        published_by,
+        status,
+        created_at,
+        updated_at
+      `,
+      )
+      .eq("status", "published")
+      .lte("start_date", now) // has started
+      .gt("end_date", now) // has not ended yet
+      .order("start_date", { ascending: true }); // soonest first
+
+    if (error) {
+      console.error("Fetch active events error:", error);
+      return { success: false, error: error.message, data: [] as Event[] };
+    }
+
+    return {
+      success: true,
+      data: (data ?? []) as Event[],
+    };
+  } catch (error) {
+    console.error("Unexpected error in getActiveEvents:", error);
+    return {
+      success: false,
+      error: "Failed to fetch active events",
+      data: [] as Event[],
+    };
+  }
 }

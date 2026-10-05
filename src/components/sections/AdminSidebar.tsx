@@ -20,6 +20,7 @@ import {
   Users,
   Ad,
   Terminal,
+  PartyPopper,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -46,6 +47,24 @@ const sidebarGroups: SidebarGroup[] = [
         label: "Dashboard",
         icon: LayoutDashboard,
         href: "/admin",
+      },
+      //{
+      //   id: "settings",
+      //   label: "Settings",
+      //   icon: Settings,
+      //   href: "/admin/settings",
+      // },
+    ],
+  },
+  {
+    id: "events",
+    label: "Events",
+    items: [
+      {
+        id: "events",
+        label: "Events",
+        icon: PartyPopper,
+        href: "/admin/events",
       },
       //{
       //   id: "settings",
@@ -144,6 +163,7 @@ function AdminSidebar() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
     {
       overview: true,
+      events: true,
       blogs: true,
       reservations: true,
       iaccess: true,

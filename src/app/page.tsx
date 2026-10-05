@@ -1,3 +1,4 @@
+import ActiveEventsPopup from "@/components/sections/ActiveEventsPopup";
 import CTASection from "@/components/sections/CTASection";
 import EventsSection from "@/components/sections/EventsSection";
 import FloatingLoginBanner from "@/components/sections/FloatingLoginBanner";
@@ -22,7 +23,8 @@ export default function Home() {
       <LocationSection />
       <CTASection />
 
-      <FloatingLoginBanner/>
+      <FloatingLoginBanner />
+      <ActiveEventsPopup />
     </div>
   );
 }
