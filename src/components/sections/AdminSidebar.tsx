@@ -22,17 +22,7 @@ import {
   Terminal as TerminalIcon,
   PartyPopper,
   Monitor,
-  Eye,
-  BarChart3,
-  UserCircle,
-  Package,
-  Building2,
-  RotateCcw,
-  AlertCircle,
   Warehouse,
-  Activity,
-  Clock,
-  TrendingUp,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -49,13 +39,6 @@ type SidebarGroup = {
   items: SidebarItem[];
 };
 
-type PosNestedGroup = {
-  id: string;
-  label: string;
-  icon: React.ElementType;
-  items: SidebarItem[];
-};
-
 const sidebarGroups: SidebarGroup[] = [
   {
     id: "overview",
@@ -65,7 +48,7 @@ const sidebarGroups: SidebarGroup[] = [
         id: "overview",
         label: "Dashboard",
         icon: LayoutDashboard,
-        href: "/admin",
+        href: "/admin/dashboard",
       },
     ],
   },
@@ -118,36 +101,6 @@ const sidebarGroups: SidebarGroup[] = [
     ],
   },
   {
-    id: "reservations",
-    label: "Reservations",
-    items: [
-      {
-        id: "reservations",
-        label: "All Reservations",
-        icon: CalendarCheck,
-        href: "/admin/reservations",
-      },
-      {
-        id: "new-reservation",
-        label: "New Reservation",
-        icon: Plus,
-        href: "/admin/reservations/new",
-      },
-      {
-        id: "spaces",
-        label: "Tables",
-        icon: BetweenHorizontalStart,
-        href: "/admin/spaces",
-      },
-      {
-        id: "calendar",
-        label: "Calendar",
-        icon: CalendarDays,
-        href: "/admin/reservations/calendar",
-      },
-    ],
-  },
-  {
     id: "pos",
     label: "POS",
     items: [
@@ -162,6 +115,18 @@ const sidebarGroups: SidebarGroup[] = [
         label: "Reservations",
         icon: CalendarCheck,
         href: "/admin/pos/terminal/reservation",
+      },
+      {
+        id: "calendar",
+        label: "Calendar",
+        icon: CalendarDays,
+        href: "/admin/reservations/calendar",
+      },
+      {
+        id: "spaces",
+        label: "Tables",
+        icon: BetweenHorizontalStart,
+        href: "/admin/spaces",
       },
       {
         id: "sales",
