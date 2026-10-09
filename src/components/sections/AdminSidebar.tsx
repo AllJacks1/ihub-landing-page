@@ -19,8 +19,20 @@ import {
   BetweenHorizontalStart,
   Users,
   Ad,
-  Terminal,
+  Terminal as TerminalIcon,
   PartyPopper,
+  Monitor,
+  Eye,
+  BarChart3,
+  UserCircle,
+  Package,
+  Building2,
+  RotateCcw,
+  AlertCircle,
+  Warehouse,
+  Activity,
+  Clock,
+  TrendingUp,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -37,6 +49,13 @@ type SidebarGroup = {
   items: SidebarItem[];
 };
 
+type PosNestedGroup = {
+  id: string;
+  label: string;
+  icon: React.ElementType;
+  items: SidebarItem[];
+};
+
 const sidebarGroups: SidebarGroup[] = [
   {
     id: "overview",
@@ -48,12 +67,6 @@ const sidebarGroups: SidebarGroup[] = [
         icon: LayoutDashboard,
         href: "/admin",
       },
-      //{
-      //   id: "settings",
-      //   label: "Settings",
-      //   icon: Settings,
-      //   href: "/admin/settings",
-      // },
     ],
   },
   {
@@ -66,33 +79,41 @@ const sidebarGroups: SidebarGroup[] = [
         icon: PartyPopper,
         href: "/admin/events",
       },
-      //{
-      //   id: "settings",
-      //   label: "Settings",
-      //   icon: Settings,
-      //   href: "/admin/settings",
-      // },
     ],
   },
   {
     id: "blogs",
     label: "Blogs",
     items: [
-      { id: "posts", label: "All Posts", icon: FileText, href: "/admin/posts" },
-      { id: "new", label: "New Post", icon: Plus, href: "/admin/posts/new" },
+      {
+        id: "posts",
+        label: "All Posts",
+        icon: FileText,
+        href: "/admin/posts",
+      },
+      {
+        id: "new",
+        label: "New Post",
+        icon: Plus,
+        href: "/admin/posts/new",
+      },
       {
         id: "categories",
         label: "Categories",
         icon: FolderTree,
         href: "/admin/categories",
       },
-      { id: "tags", label: "Tags", icon: Tag, href: "/admin/tags" },
+      {
+        id: "tags",
+        label: "Tags",
+        icon: Tag,
+        href: "/admin/tags",
+      },
       {
         id: "comments",
         label: "Comments",
         icon: MessageSquare,
         href: "/admin/comments",
-        //badge: "3",
       },
     ],
   },
@@ -151,21 +172,153 @@ const sidebarGroups: SidebarGroup[] = [
       {
         id: "activity-logs",
         label: "Activity Logs",
-        icon: Terminal,
+        icon: TerminalIcon,
         href: "/admin/iaccess/activity-logs",
       },
     ],
   },
 ];
 
+const posTopItems: SidebarItem[] = [
+  {
+    id: "pos-dashboard",
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    href: "/admin/pos",
+  },
+  {
+    id: "end-shift",
+    label: "End Shift Monitoring",
+    icon: Clock,
+    href: "/admin/pos/end-shift",
+  },
+];
+
+const posNestedGroups: PosNestedGroup[] = [
+  {
+    id: "pos-terminal",
+    label: "Terminal",
+    icon: Monitor,
+    items: [
+      {
+        id: "primary-terminal",
+        label: "Primary Terminal",
+        icon: Monitor,
+        href: "/admin/pos/terminal/primary",
+      },
+      {
+        id: "reservation-terminal",
+        label: "Reservation Terminal",
+        icon: CalendarCheck,
+        href: "/admin/pos/terminal/reservation",
+      },
+      {
+        id: "reservation-monitor",
+        label: "Reservation Monitor",
+        icon: Eye,
+        href: "/admin/pos/terminal/reservation-monitor",
+      },
+    ],
+  },
+  {
+    id: "pos-sales",
+    label: "Sales",
+    icon: BarChart3,
+    items: [
+      {
+        id: "sales-cashier",
+        label: "Sales per Cashier",
+        icon: UserCircle,
+        href: "/admin/pos/sales/cashier",
+      },
+      {
+        id: "sales-category",
+        label: "Sales per Category",
+        icon: Tag,
+        href: "/admin/pos/sales/category",
+      },
+      {
+        id: "sales-product",
+        label: "Sales per Product",
+        icon: Package,
+        href: "/admin/pos/sales/product",
+      },
+      {
+        id: "sales-branch",
+        label: "Sales per Branch",
+        icon: Building2,
+        href: "/admin/pos/sales/branch",
+      },
+    ],
+  },
+  {
+    id: "pos-inventory",
+    label: "Inventory",
+    icon: Package,
+    items: [
+      {
+        id: "inventory-turnover",
+        label: "Inventory Turnover",
+        icon: RotateCcw,
+        href: "/admin/pos/inventory/turnover",
+      },
+      {
+        id: "inventory-out-of-stock",
+        label: "Out-of-Stock Monitoring",
+        icon: AlertCircle,
+        href: "/admin/pos/inventory/out-of-stock",
+      },
+      {
+        id: "inventory-branch",
+        label: "Branch Inventory",
+        icon: Warehouse,
+        href: "/admin/pos/inventory/branch",
+      },
+    ],
+  },
+  {
+    id: "pos-monitoring",
+    label: "Monitoring",
+    icon: Activity,
+    items: [
+      {
+        id: "monitoring-shift",
+        label: "Shift Monitoring",
+        icon: Clock,
+        href: "/admin/pos/monitoring/shift",
+      },
+      {
+        id: "monitoring-sales",
+        label: "Sales Monitoring",
+        icon: TrendingUp,
+        href: "/admin/pos/monitoring/sales",
+      },
+      {
+        id: "monitoring-reports",
+        label: "Reports",
+        icon: FileText,
+        href: "/admin/pos/monitoring/reports",
+      },
+    ],
+  },
+];
+
 function AdminSidebar() {
+  const pathname = usePathname();
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
     {
       overview: true,
       events: true,
       blogs: true,
       reservations: true,
+      pos: true,
+      "pos-terminal": true,
+      "pos-sales": true,
+      "pos-inventory": true,
+      "pos-monitoring": true,
       iaccess: true,
     },
   );
@@ -177,6 +330,8 @@ function AdminSidebar() {
     }));
   };
 
+  const isPosRoute = pathname.startsWith("/admin/pos");
+
   return (
     <aside
       className={`sticky top-16 h-[calc(100vh-4rem)] border-r border-stone-200 bg-white transition-all duration-300 ${
@@ -184,53 +339,195 @@ function AdminSidebar() {
       }`}
     >
       <div className="flex h-full flex-col p-3">
-        <nav className="flex-1 space-y-4">
-          {sidebarGroups.map((group) => (
-            <div key={group.id}>
-              {!sidebarCollapsed && (
-                <button
-                  onClick={() => toggleGroup(group.id)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-stone-400 transition-colors hover:text-stone-600"
-                >
-                  {expandedGroups[group.id] ? (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  )}
-                  {group.label}
-                </button>
-              )}
+        <nav className="flex-1 space-y-4 overflow-y-auto">
+          {sidebarGroups
+            .filter((group) => group.id !== "iaccess")
+            .map((group) => (
+              <div key={group.id}>
+                {!sidebarCollapsed && (
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.id)}
+                    className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-stone-400 transition-colors hover:text-stone-600"
+                  >
+                    {expandedGroups[group.id] ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )}
+                    {group.label}
+                  </button>
+                )}
 
-              <div
-                className={`space-y-0.5 ${
-                  sidebarCollapsed
-                    ? "block"
-                    : expandedGroups[group.id]
+                <div
+                  className={`space-y-0.5 ${
+                    sidebarCollapsed
                       ? "block"
-                      : "hidden"
-                }`}
-              >
-                {group.items.map((item) => (
-                  <SidebarLink
-                    key={item.id}
-                    icon={item.icon}
-                    label={item.label}
-                    href={item.href}
-                    badge={item.badge}
-                    collapsed={sidebarCollapsed}
-                  />
-                ))}
+                      : expandedGroups[group.id]
+                        ? "block"
+                        : "hidden"
+                  }`}
+                >
+                  {group.items.map((item) => (
+                    <SidebarLink
+                      key={item.id}
+                      icon={item.icon}
+                      label={item.label}
+                      href={item.href}
+                      badge={item.badge}
+                      collapsed={sidebarCollapsed}
+                    />
+                  ))}
+                </div>
               </div>
+            ))}
+
+          {/* POS */}
+          <div>
+            {!sidebarCollapsed && (
+              <button
+                type="button"
+                onClick={() => toggleGroup("pos")}
+                className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-stone-400 transition-colors hover:text-stone-600"
+              >
+                {expandedGroups.pos ? (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5" />
+                )}
+                POS
+              </button>
+            )}
+
+            <div
+              className={`space-y-1 ${
+                sidebarCollapsed || expandedGroups.pos ? "block" : "hidden"
+              }`}
+            >
+              {/* POS Dashboard */}
+              <SidebarLink
+                icon={LayoutDashboard}
+                label="Dashboard"
+                href="/admin/pos"
+                collapsed={sidebarCollapsed}
+              />
+
+              {/* Nested POS groups */}
+              {posNestedGroups.map((group) => {
+                const groupActive = pathname.startsWith(
+                  `/admin/pos/${group.id.replace("pos-", "")}`,
+                );
+
+                return (
+                  <div key={group.id}>
+                    {!sidebarCollapsed && (
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(group.id)}
+                        className={`mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                          groupActive
+                            ? "text-[#F36509]"
+                            : "text-stone-500 hover:bg-stone-50 hover:text-stone-800"
+                        }`}
+                      >
+                        {expandedGroups[group.id] ? (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        )}
+
+                        <group.icon className="h-4 w-4" />
+
+                        <span>{group.label}</span>
+                      </button>
+                    )}
+
+                    <div
+                      className={`space-y-0.5 ${
+                        sidebarCollapsed ||
+                        expandedGroups[group.id]
+                          ? "block"
+                          : "hidden"
+                      }`}
+                    >
+                      {group.items.map((item) => (
+                        <div
+                          key={item.id}
+                          className={sidebarCollapsed ? "" : "pl-5"}
+                        >
+                          <SidebarLink
+                            icon={item.icon}
+                            label={item.label}
+                            href={item.href}
+                            badge={item.badge}
+                            collapsed={sidebarCollapsed}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* End Shift Monitoring */}
+              <SidebarLink
+                icon={Clock}
+                label="End Shift Monitoring"
+                href="/admin/pos/end-shift"
+                collapsed={sidebarCollapsed}
+              />
             </div>
-          ))}
+          </div>
+
+          {/* iAccess stays last */}
+          {sidebarGroups
+            .filter((group) => group.id === "iaccess")
+            .map((group) => (
+              <div key={group.id}>
+                {!sidebarCollapsed && (
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.id)}
+                    className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-stone-400 transition-colors hover:text-stone-600"
+                  >
+                    {expandedGroups[group.id] ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )}
+                    {group.label}
+                  </button>
+                )}
+
+                <div
+                  className={`space-y-0.5 ${
+                    sidebarCollapsed
+                      ? "block"
+                      : expandedGroups[group.id]
+                        ? "block"
+                        : "hidden"
+                  }`}
+                >
+                  {group.items.map((item) => (
+                    <SidebarLink
+                      key={item.id}
+                      icon={item.icon}
+                      label={item.label}
+                      href={item.href}
+                      badge={item.badge}
+                      collapsed={sidebarCollapsed}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
         </nav>
 
-        {/* Collapse Toggle */}
         <Button
           variant="ghost"
           size="sm"
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          className="mt-auto w-full justify-center rounded-xl text-stone-400 hover:bg-stone-100 hover:text-stone-600"
+          className="mt-3 w-full justify-center rounded-xl text-stone-400 hover:bg-stone-100 hover:text-stone-600"
         >
           {sidebarCollapsed ? "→" : "← Collapse"}
         </Button>
@@ -253,7 +550,10 @@ function SidebarLink({
   collapsed: boolean;
 }) {
   const pathname = usePathname();
-  const isActive = pathname === href;
+
+  const isActive =
+    pathname === href ||
+    (href !== "/admin/pos" && pathname.startsWith(`${href}/`));
 
   return (
     <Link
@@ -265,9 +565,11 @@ function SidebarLink({
       }`}
     >
       <Icon className="h-5 w-5 shrink-0" />
+
       {!collapsed && (
         <>
           <span className="flex-1 text-sm">{label}</span>
+
           {badge && (
             <Badge className="h-5 min-w-5 bg-[#F36509] px-1.5 text-[10px] text-white hover:bg-[#F36509]">
               {badge}
