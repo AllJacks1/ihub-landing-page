@@ -1,11 +1,12 @@
-export const dynamic = "force-dynamic";
-
 import { CalendarProvider } from "@/calendar/contexts/calendar-context";
 import { ClientContainer } from "@/calendar/components/client-container";
 import { getReservations } from "@/lib/actions";
 import { reservationToEvent } from "@/calendar/mappers";
+import { connection } from "next/server";
 
-export default async function ReservationsCalendarYearPage() {
+export default async function ReservationsCalendarPage() {
+  await connection();
+  
   const { data } = await getReservations();
   const events = (data || []).map(reservationToEvent);
 
@@ -23,11 +24,11 @@ export default async function ReservationsCalendarYearPage() {
               </p>
 
               <h1 className="mt-1 font-serif text-2xl font-semibold text-stone-900">
-                Yearly Reservations
+                Monthly Reservations
               </h1>
 
               <p className="mt-1 text-sm text-stone-500">
-                Overview of all reservations across the year.
+                Overview of all reservations across the month.
               </p>
             </div>
           </div>
@@ -35,8 +36,8 @@ export default async function ReservationsCalendarYearPage() {
 
         {/* Calendar */}
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto w-full max-w-7xl">
-            <ClientContainer view="year" />
+          <div className="mx-auto w-full">
+            <ClientContainer view="month" />
           </div>
         </div>
       </main>

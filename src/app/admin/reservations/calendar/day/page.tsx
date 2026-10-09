@@ -14,11 +14,33 @@ export default async function ReservationsCalendarPage() {
 
   return (
     <CalendarProvider events={events} users={users}>
-      <div className="flex w-full justify-center p-6">
-        <div className="w-full max-w-7xl shrink-0">
-          <ClientContainer view="day" />
+      <main className="flex min-h-[calc(100vh-4rem)] flex-1 flex-col bg-stone-50">
+        {/* Header */}
+        <div className="border-b border-stone-200 bg-white px-6 py-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-[#F36509]">
+                Reservations
+              </p>
+
+              <h1 className="mt-1 font-serif text-2xl font-semibold text-stone-900">
+                Daily Reservations
+              </h1>
+
+              <p className="mt-1 text-sm text-stone-500">
+                Overview of all reservations across the day.
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
+
+        {/* Calendar */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="mx-auto w-full">
+            <ClientContainer view="day" />
+          </div>
+        </div>
+      </main>
     </CalendarProvider>
   );
 }

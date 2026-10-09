@@ -31,31 +31,31 @@ const VIEW_OPTIONS = [
     value: "day" as const,
     href: "/admin/reservations/calendar/day",
     icon: List,
-    label: "Day view",
+    label: "Daily",
   },
   {
     value: "week" as const,
     href: "/admin/reservations/calendar/week",
     icon: Columns,
-    label: "Week view",
+    label: "Weekly",
   },
   {
     value: "month" as const,
-    href: "/admin/reservations/calendar",
+    href: "/admin/reservations/calendar/month",
     icon: Grid2x2,
-    label: "Month view",
+    label: "Monthly",
   },
   {
     value: "year" as const,
     href: "/admin/reservations/calendar/year",
     icon: Grid3x3,
-    label: "Year view",
+    label: "Yearly",
   },
   {
     value: "agenda" as const,
     href: "/admin/reservations/calendar/agenda",
     icon: CalendarRange,
-    label: "Agenda view",
+    label: "Agenda",
   },
 ];
 
@@ -77,13 +77,13 @@ export function CalendarHeader({ view, events }: IProps) {
               return (
                 <Button
                   key={option.value}
-                  size="icon"
                   variant={isActive ? "default" : "outline"}
-                  aria-label={option.label}
                   aria-current={isActive ? "page" : undefined}
                   render={<Link href={option.href} />}
+                  className={isActive ? "bg-[#F36509]" : ""}
                 >
                   <Icon strokeWidth={1.8} />
+                  <span>{option.label}</span>
                 </Button>
               );
             })}
@@ -93,7 +93,7 @@ export function CalendarHeader({ view, events }: IProps) {
         </div>
 
         <AddEventDialog>
-          <Button className="w-full sm:w-auto">
+          <Button className="w-full sm:w-auto bg-[#F36509]">
             <Plus data-icon="inline-start" />
             Add Reservation
           </Button>
