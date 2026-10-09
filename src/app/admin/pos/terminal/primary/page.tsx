@@ -14,12 +14,7 @@ import {
   RefreshCw,
   Package,
   QrCode,
-  WifiOff,
-  Clock,
-  CheckCircle,
-  Copy,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,25 +22,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { QRCodeSVG } from "qrcode.react";
-import {
   getPosCategories,
   getPosProducts,
   getPosSessions,
-  createPosSession,
-  deactivatePosSession,
   type PosProduct,
-  type PosSession,
 } from "@/lib/pos-actions";
 import Image from "next/image";
+import Link from "next/link";
 
 type CartItem = PosProduct & {
   quantity: number;
@@ -67,34 +50,22 @@ export default function PrimaryTerminalPage() {
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeCount, setActiveCount] = useState(0);
 
-  // Session management
-  const [tables, setTables] = useState<
-    Array<{
-      id: string;
-      table_number: string;
-      zone: string;
-      seats: number;
-      is_active: boolean;
-    }>
-  >([]);
-  const [rooms, setRooms] = useState<
-    Array<{ id: string; name: string; seats: number; is_active: boolean }>
-  >([]);
-  const [sessions, setSessions] = useState<PosSession[]>([]);
-  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
-  const [showCreateSessionDialog, setShowCreateSessionDialog] = useState(false);
-  const [createSessionForm, setCreateSessionForm] = useState<{
-    type: "table" | "room";
-    id: string;
-  }>({ type: "table", id: "" });
-  const [isCreatingSession, setIsCreatingSession] = useState(false);
-  const [createdSessionUrl, setCreatedSessionUrl] = useState<string | null>(
-    null,
-  );
-  const [createdSessionToken, setCreatedSessionToken] = useState<string | null>(
-    null,
-  );
+  async function loadActiveSessions() {
+    const result = await getPosSessions();
+    if (result.success) {
+      const count = result.data.filter(
+        (s) => s.is_active && new Date(s.expires_at) > new Date(),
+      ).length;
+      setActiveCount(count);
+    }
+  }
+
+  useEffect(() => {
+    loadProducts();
+    loadActiveSessions();
+  }, []);
 
   async function loadProducts() {
     setIsLoading(true);
@@ -126,154 +97,8 @@ export default function PrimaryTerminalPage() {
     }
   }
 
-  async function loadTablesAndRooms() {
-    try {
-      const [tablesResult, roomsResult] = await Promise.all([
-        fetch("/api/admin/tables").then((r) => r.json()),
-        fetch("/api/admin/rooms").then((r) => r.json()),
-      ]);
-
-      if (tablesResult.success) {
-        setTables(tablesResult.data.filter((t: any) => t.is_active));
-      }
-      if (roomsResult.success) {
-        setRooms(roomsResult.data.filter((r: any) => r.is_active));
-      }
-    } catch (error) {
-      console.error("Failed to load tables/rooms:", error);
-    }
-  }
-
-  async function loadSessions() {
-    setIsLoadingSessions(true);
-    try {
-      const result = await getPosSessions();
-      if (result.success) {
-        setSessions(result.data);
-      } else {
-        console.error(result.error);
-      }
-    } catch (error) {
-      console.error("Failed to load sessions:", error);
-    } finally {
-      setIsLoadingSessions(false);
-    }
-  }
-
-  function getSessionStatus(
-    session: PosSession,
-  ): "active" | "expired" | "deactivated" {
-    if (!session.is_active) return "deactivated";
-    const expiresAt = new Date(session.expires_at);
-    if (expiresAt <= new Date()) return "expired";
-    return "active";
-  }
-
-  function getSessionLocation(session: PosSession): string {
-    if (session.table_number) return `Table ${session.table_number}`;
-    if (session.room_name) return `Room ${session.room_name}`;
-    return "Unknown";
-  }
-
-  function getSessionStatusBadge(status: string) {
-    switch (status) {
-      case "active":
-        return (
-          <Badge
-            variant="outline"
-            className="border-emerald-200 bg-emerald-50 text-emerald-700"
-          >
-            <CheckCircle className="mr-1 h-3 w-3" />
-            Active
-          </Badge>
-        );
-      case "expired":
-        return (
-          <Badge
-            variant="outline"
-            className="border-amber-200 bg-amber-50 text-amber-700"
-          >
-            <Clock className="mr-1 h-3 w-3" />
-            Expired
-          </Badge>
-        );
-      case "deactivated":
-        return (
-          <Badge
-            variant="outline"
-            className="border-stone-200 bg-stone-100 text-stone-600"
-          >
-            <WifiOff className="mr-1 h-3 w-3" />
-            Deactivated
-          </Badge>
-        );
-      default:
-        return null;
-    }
-  }
-
-  async function handleCreateSession() {
-    if (!createSessionForm.id) return;
-
-    setIsCreatingSession(true);
-    try {
-      const result = await createPosSession({
-        table_id:
-          createSessionForm.type === "table" ? createSessionForm.id : undefined,
-        room_id:
-          createSessionForm.type === "room" ? createSessionForm.id : undefined,
-      });
-
-      if (result.success && result.data) {
-        const baseUrl =
-          typeof window !== "undefined" ? window.location.origin : "";
-        const sessionUrl = `${baseUrl}/menu?session=${result.data.qr_token}`;
-        setCreatedSessionUrl(sessionUrl);
-        setCreatedSessionToken(result.data.qr_token);
-        await loadSessions();
-        toast.success("QR session created successfully");
-      } else {
-        toast.error(result.error || "Failed to create session");
-      }
-    } catch (error) {
-      console.error("Create session error:", error);
-      toast.error("Failed to create session");
-    } finally {
-      setIsCreatingSession(false);
-      setShowCreateSessionDialog(false);
-      setCreateSessionForm({ type: "table", id: "" });
-    }
-  }
-
-  async function handleDeactivateSession(sessionId: string) {
-    try {
-      const result = await deactivatePosSession(sessionId);
-      if (result.success) {
-        await loadSessions();
-        toast.success("Session deactivated");
-      } else {
-        toast.error(result.error || "Failed to deactivate session");
-      }
-    } catch (error) {
-      console.error("Deactivate session error:", error);
-      toast.error("Failed to deactivate session");
-    }
-  }
-
-  function copySessionUrl() {
-    if (createdSessionUrl) {
-      navigator.clipboard.writeText(createdSessionUrl);
-      toast.success("URL copied to clipboard");
-    }
-  }
-
   useEffect(() => {
     loadProducts();
-  }, []);
-
-  useEffect(() => {
-    loadTablesAndRooms();
-    loadSessions();
   }, []);
 
   const filteredProducts = useMemo(() => {
@@ -393,316 +218,6 @@ export default function PrimaryTerminalPage() {
               </p>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* QR Session Management */}
-      <div className="border-b border-stone-200 bg-white px-4 py-4 sm:px-6">
-        <div className="mx-auto max-w-6xl">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
-              <div className="rounded-xl bg-[#F36509]/10 p-2">
-                <QrCode className="h-5 w-5 text-[#F36509]" />
-              </div>
-              <div>
-                <h2 className="font-medium text-stone-900">
-                  QR Order Sessions
-                </h2>
-                <p className="text-sm text-stone-500">
-                  Create sessions for tables or rooms. Customers scan to order.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Active sessions summary */}
-              {sessions.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600">
-                  <span>Active:</span>
-                  {sessions
-                    .filter((s) => getSessionStatus(s) === "active")
-                    .map((s) => (
-                      <Badge
-                        key={s.id}
-                        variant="outline"
-                        className="border-emerald-200 bg-emerald-50 text-emerald-700"
-                      >
-                        {getSessionLocation(s)}
-                      </Badge>
-                    ))}
-                </div>
-              )}
-
-              <Dialog
-                open={showCreateSessionDialog}
-                onOpenChange={setShowCreateSessionDialog}
-              >
-                <DialogTrigger>
-                  <Button
-                    className="rounded-full bg-[#F36509] text-white hover:bg-[#d95a08]"
-                    disabled={
-                      isCreatingSession ||
-                      (tables.length === 0 && rooms.length === 0)
-                    }
-                  >
-                    <QrCode className="mr-2 h-4 w-4" />
-                    {isCreatingSession ? "Creating..." : "Create QR Session"}
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="w-[calc(100vw-2rem)] rounded-2xl sm:max-w-md">
-                  <DialogHeader>
-                    <DialogTitle className="font-serif text-xl">
-                      Create QR Session
-                    </DialogTitle>
-                    <DialogDescription>
-                      Select a table or room to generate a QR code for customer
-                      ordering.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-stone-700">
-                        Location Type
-                      </label>
-                      <div className="flex gap-4">
-                        <label className="flex cursor-pointer items-center gap-2">
-                          <input
-                            type="radio"
-                            name="sessionType"
-                            value="table"
-                            checked={createSessionForm.type === "table"}
-                            onChange={() =>
-                              setCreateSessionForm({
-                                ...createSessionForm,
-                                type: "table",
-                                id: "",
-                              })
-                            }
-                            className="h-4 w-4 border-stone-300 text-[#F36509] focus:ring-[#F36509]"
-                          />
-                          <span className="text-sm text-stone-700">Table</span>
-                        </label>
-                        <label className="flex cursor-pointer items-center gap-2">
-                          <input
-                            type="radio"
-                            name="sessionType"
-                            value="room"
-                            checked={createSessionForm.type === "room"}
-                            onChange={() =>
-                              setCreateSessionForm({
-                                ...createSessionForm,
-                                type: "room",
-                                id: "",
-                              })
-                            }
-                            className="h-4 w-4 border-stone-300 text-[#F36509] focus:ring-[#F36509]"
-                          />
-                          <span className="text-sm text-stone-700">Room</span>
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-stone-700">
-                        {createSessionForm.type === "table"
-                          ? "Select Table"
-                          : "Select Room"}
-                      </label>
-                      <select
-                        value={createSessionForm.id}
-                        onChange={(e) =>
-                          setCreateSessionForm({
-                            ...createSessionForm,
-                            id: e.target.value,
-                          })
-                        }
-                        className="w-full rounded-xl border-stone-200 bg-white px-3 py-2 text-sm focus-visible:ring-[#F36509]/30"
-                      >
-                        <option value="">Choose...</option>
-                        {createSessionForm.type === "table"
-                          ? tables.map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {t.table_number} ({t.zone}, {t.seats} seats)
-                              </option>
-                            ))
-                          : rooms.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.name} ({r.seats} seats)
-                              </option>
-                            ))}
-                      </select>
-                    </div>
-                  </div>
-                  <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setShowCreateSessionDialog(false)}
-                      disabled={isCreatingSession}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={handleCreateSession}
-                      disabled={isCreatingSession || !createSessionForm.id}
-                      className="rounded-xl bg-[#F36509] text-white hover:bg-[#d95a08]"
-                    >
-                      {isCreatingSession ? "Creating..." : "Create Session"}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={loadSessions}
-                disabled={isLoadingSessions}
-                className="text-stone-500"
-              >
-                <RefreshCw
-                  className={`mr-2 h-4 w-4 ${isLoadingSessions ? "animate-spin" : ""}`}
-                />
-                Refresh
-              </Button>
-            </div>
-          </div>
-
-          {/* Sessions list — card-based so it works at every breakpoint */}
-          {sessions.length > 0 && (
-            <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50/50 p-3 sm:p-4">
-              <div className="space-y-2">
-                {sessions.map((session) => {
-                  const status = getSessionStatus(session);
-                  return (
-                    <div
-                      key={session.id}
-                      className="rounded-xl border border-stone-200 bg-white p-3 sm:p-4"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-medium text-stone-900">
-                              {getSessionLocation(session)}
-                            </p>
-                            {getSessionStatusBadge(status)}
-                          </div>
-                          <p className="mt-1 font-mono text-[10px] text-stone-400">
-                            {session.id.slice(0, 8)}...
-                          </p>
-                          <p className="mt-0.5 text-xs text-stone-500">
-                            Expires{" "}
-                            {new Date(session.expires_at).toLocaleString()}
-                          </p>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          {status === "active" && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                handleDeactivateSession(session.id)
-                              }
-                              className="text-red-600 hover:bg-red-50"
-                            >
-                              Deactivate
-                            </Button>
-                          )}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              const baseUrl =
-                                typeof window !== "undefined"
-                                  ? window.location.origin
-                                  : "";
-                              navigator.clipboard.writeText(
-                                `${baseUrl}/menu?session=${session.qr_token}`,
-                              );
-                              toast.success("URL copied");
-                            }}
-                            className="text-stone-600 hover:bg-stone-100"
-                          >
-                            <Copy className="mr-1 h-3.5 w-3.5" />
-                            Copy URL
-                          </Button>
-
-                          {createdSessionToken === session.qr_token &&
-                            createdSessionUrl && (
-                              <Dialog
-                                open={true}
-                                onOpenChange={() => setCreatedSessionUrl(null)}
-                              >
-                                <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl sm:max-w-md">
-                                  <DialogHeader>
-                                    <DialogTitle className="font-serif text-xl">
-                                      QR Session Created
-                                    </DialogTitle>
-                                  </DialogHeader>
-                                  <div className="space-y-4 py-4">
-                                    <div className="flex justify-center">
-                                      <QRCodeSVG
-                                        value={createdSessionUrl}
-                                        size={180}
-                                        level="M"
-                                      />
-                                    </div>
-                                    <div className="space-y-2 text-center">
-                                      <p className="font-medium text-stone-900">
-                                        {getSessionLocation(session)}
-                                      </p>
-                                      <p className="break-all text-sm text-stone-500">
-                                        {createdSessionUrl}
-                                      </p>
-                                      <p className="text-xs text-stone-400">
-                                        Expires:{" "}
-                                        {new Date(
-                                          session.expires_at,
-                                        ).toLocaleString()}
-                                      </p>
-                                    </div>
-                                    <div className="flex flex-col gap-2 sm:flex-row">
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        onClick={copySessionUrl}
-                                        className="flex-1"
-                                      >
-                                        Copy URL
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        onClick={() =>
-                                          setCreatedSessionUrl(null)
-                                        }
-                                        className="flex-1 bg-[#F36509] text-white hover:bg-[#d95a08]"
-                                      >
-                                        Done
-                                      </Button>
-                                    </div>
-                                  </div>
-                                </DialogContent>
-                              </Dialog>
-                            )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {sessions.length === 0 && !isLoadingSessions && (
-            <div className="mt-4 py-8 text-center text-stone-500">
-              <QrCode className="mx-auto mb-2 h-8 w-8 text-stone-300" />
-              <p>No QR sessions yet. Create one to get started.</p>
-            </div>
-          )}
         </div>
       </div>
 
@@ -886,8 +401,9 @@ export default function PrimaryTerminalPage() {
 
         {/* Cart */}
         <aside className="flex w-full flex-col border-t border-stone-200 bg-white xl:h-full xl:min-h-0 xl:w-[400px] xl:border-l xl:border-t-0">
+          {/* Cart header */}
           <div className="border-b border-stone-100 px-4 py-4 sm:px-6 sm:py-5">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
                   <ShoppingCart className="h-5 w-5 text-[#F36509]" />
@@ -900,17 +416,37 @@ export default function PrimaryTerminalPage() {
                 </p>
               </div>
 
-              {cart.length > 0 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearCart}
-                  className="text-xs text-stone-500 hover:text-red-600"
+              <div className="flex items-center gap-2">
+                {cart.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearCart}
+                    className="text-xs text-stone-500 hover:text-red-600"
+                  >
+                    Clear
+                  </Button>
+                )}
+
+                <Link
+                  href="/admin/pos/terminal/qr-sessions"
+                  className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 transition-colors hover:border-[#F36509]/40"
                 >
-                  Clear
-                </Button>
-              )}
+                  <QrCode className="h-4 w-4 text-[#F36509]" />
+                  <span className="hidden text-sm font-medium text-stone-900 sm:inline">
+                    QR Sessions
+                  </span>
+                  {activeCount > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                    >
+                      {activeCount}
+                    </Badge>
+                  )}
+                </Link>
+              </div>
             </div>
           </div>
 

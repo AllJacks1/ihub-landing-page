@@ -35,6 +35,21 @@ export type PosSession = {
   room_name?: string | null;
 };
 
+export interface Table {
+  id: string;
+  table_number: string;
+  zone: string;
+  seats: number;
+  is_active: boolean;
+}
+
+export interface Room {
+  id: string;
+  name: string;
+  seats: number;
+  is_active: boolean;
+}
+
 function generateQrToken(): string {
   return randomBytes(16).toString("hex");
 }
@@ -88,9 +103,7 @@ export async function getPosCategories(): Promise<{
       success: false,
       data: [],
       error:
-        error instanceof Error
-          ? error.message
-          : "Failed to load categories",
+        error instanceof Error ? error.message : "Failed to load categories",
     };
   }
 }
@@ -120,8 +133,16 @@ export async function getPosProducts(): Promise<{
 
     if (productsError) {
       console.log("DEBUG getPosProducts: productsError =", productsError);
-      console.log("DEBUG getPosProducts: env SUPABASE_SERVICE_ROLE_KEY =", process.env.SUPABASE_SERVICE_ROLE_KEY ? "SET" : "NOT SET");
-      console.log("DEBUG getPosProducts: env keys =", Object.keys(process.env).filter(k => k.includes("SUPABASE") || k.includes("DATABASE")).join(", "));
+      console.log(
+        "DEBUG getPosProducts: env SUPABASE_SERVICE_ROLE_KEY =",
+        process.env.SUPABASE_SERVICE_ROLE_KEY ? "SET" : "NOT SET",
+      );
+      console.log(
+        "DEBUG getPosProducts: env keys =",
+        Object.keys(process.env)
+          .filter((k) => k.includes("SUPABASE") || k.includes("DATABASE"))
+          .join(", "),
+      );
       return {
         success: false,
         data: [],
@@ -130,11 +151,20 @@ export async function getPosProducts(): Promise<{
     }
 
     console.log("DEBUG getPosProducts: products =", products?.length, "items");
-    console.log("DEBUG getPosProducts: categories =", categories?.length, "items");
+    console.log(
+      "DEBUG getPosProducts: categories =",
+      categories?.length,
+      "items",
+    );
     if (products && products.length > 0) {
-      console.log("DEBUG getPosProducts: first product =", JSON.stringify(products[0]));
+      console.log(
+        "DEBUG getPosProducts: first product =",
+        JSON.stringify(products[0]),
+      );
     } else {
-      console.log("DEBUG getPosProducts: products is null/empty, checking count...");
+      console.log(
+        "DEBUG getPosProducts: products is null/empty, checking count...",
+      );
       console.log("DEBUG getPosProducts: products raw =", products);
     }
 
@@ -146,7 +176,7 @@ export async function getPosProducts(): Promise<{
       ...product,
       price: Number(product.price),
       category_name: product.category_id
-        ? categoryMap.get(product.category_id) ?? "Uncategorized"
+        ? (categoryMap.get(product.category_id) ?? "Uncategorized")
         : "Uncategorized",
     }));
 
@@ -158,8 +188,7 @@ export async function getPosProducts(): Promise<{
     return {
       success: false,
       data: [],
-      error:
-        error instanceof Error ? error.message : "Failed to load products",
+      error: error instanceof Error ? error.message : "Failed to load products",
     };
   }
 }
@@ -174,7 +203,8 @@ export async function getPosSessions(): Promise<{
 
     const { data, error } = await supabase
       .from("pos_sessions")
-      .select(`
+      .select(
+        `
         id,
         table_id,
         room_id,
@@ -185,7 +215,8 @@ export async function getPosSessions(): Promise<{
         is_active,
         tables:table_id (table_number),
         rooms:room_id (name)
-      `)
+      `,
+      )
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -210,8 +241,7 @@ export async function getPosSessions(): Promise<{
     return {
       success: false,
       data: [],
-      error:
-        error instanceof Error ? error.message : "Failed to load sessions",
+      error: error instanceof Error ? error.message : "Failed to load sessions",
     };
   }
 }
@@ -253,7 +283,8 @@ export async function createPosSession(input: {
         expires_at,
         is_active: true,
       })
-      .select(`
+      .select(
+        `
         id,
         table_id,
         room_id,
@@ -264,7 +295,8 @@ export async function createPosSession(input: {
         is_active,
         tables:table_id (table_number),
         rooms:room_id (name)
-      `)
+      `,
+      )
       .single();
 
     if (error) {
@@ -332,7 +364,8 @@ export async function getPosSessionByToken(qr_token: string): Promise<{
 
     const { data, error } = await supabase
       .from("pos_sessions")
-      .select(`
+      .select(
+        `
         id,
         table_id,
         room_id,
@@ -343,7 +376,8 @@ export async function getPosSessionByToken(qr_token: string): Promise<{
         is_active,
         tables:table_id (table_number),
         rooms:room_id (name)
-      `)
+      `,
+      )
       .eq("qr_token", qr_token)
       .single();
 
