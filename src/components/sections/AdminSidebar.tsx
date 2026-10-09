@@ -158,70 +158,22 @@ const sidebarGroups: SidebarGroup[] = [
         href: "/admin/pos/terminal/primary",
       },
       {
-        id: "reservation-terminal",
-        label: "Reservation Terminal",
+        id: "reservations",
+        label: "Reservations",
         icon: CalendarCheck,
         href: "/admin/pos/terminal/reservation",
       },
       {
-        id: "reservation-monitor",
-        label: "Reservation Monitor",
-        icon: Eye,
-        href: "/admin/pos/terminal/reservation-monitor",
-      },
-      {
-        id: "sales-cashier",
-        label: "Sales per Cashier",
-        icon: UserCircle,
-        href: "/admin/pos/sales/cashier",
-      },
-      {
-        id: "sales-category",
-        label: "Sales per Category",
+        id: "sales",
+        label: "Sales",
         icon: Tag,
-        href: "/admin/pos/sales/category",
+        href: "/admin/pos/sales",
       },
       {
-        id: "sales-product",
-        label: "Sales per Product",
-        icon: Package,
-        href: "/admin/pos/sales/product",
-      },
-      {
-        id: "sales-branch",
-        label: "Sales per Branch",
-        icon: Building2,
-        href: "/admin/pos/sales/branch",
-      },
-      {
-        id: "inventory-turnover",
-        label: "Inventory Turnover",
-        icon: RotateCcw,
-        href: "/admin/pos/inventory/turnover",
-      },
-      {
-        id: "inventory-out-of-stock",
-        label: "Out-of-Stock Monitoring",
-        icon: AlertCircle,
-        href: "/admin/pos/inventory/out-of-stock",
-      },
-      {
-        id: "inventory-branch",
-        label: "Branch Inventory",
+        id: "inventory",
+        label: "Inventory",
         icon: Warehouse,
-        href: "/admin/pos/inventory/branch",
-      },
-      {
-        id: "monitoring-shift",
-        label: "Shift Monitoring",
-        icon: Clock,
-        href: "/admin/pos/monitoring/shift",
-      },
-      {
-        id: "monitoring-sales",
-        label: "Sales Monitoring",
-        icon: TrendingUp,
-        href: "/admin/pos/monitoring/sales",
+        href: "/admin/pos/inventory",
       },
       {
         id: "monitoring-reports",
@@ -268,11 +220,6 @@ function AdminSidebar() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
     {
       overview: true,
-      events: true,
-      blogs: true,
-      reservations: true,
-      pos: true,
-      iaccess: true,
     },
   );
 
