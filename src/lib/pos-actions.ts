@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerClient } from "@supabase/ssr";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { randomBytes } from "crypto";
 import { z } from "zod";
@@ -102,6 +103,12 @@ const updateLocationSchema = z.object({
   description: z.string().max(500).optional().nullable(),
 });
 
+const createSessionInputSchema = z.object({
+  table_id: z.string().uuid().optional(),
+  room_id: z.string().uuid().optional(),
+  cubicle_id: z.string().uuid().optional(),
+});
+
 function generateQrToken(): string {
   return randomBytes(16).toString("hex");
 }
@@ -125,30 +132,96 @@ async function createPosSupabaseClient() {
   );
 }
 
-// Privileged client for staff-side mutations (session + location management).
-// Server actions run only on the server, so the service-role key is never
-// exposed to the browser. Falls back to the anon key when the service-role
-// key is not configured (relies on RLS policies for authenticated staff).
-async function createPosAdminClient() {
-  const cookieStore = await cookies();
+// Server-only privileged client for staff-side operations (session +
+// location management). Every query runs as the service role, which
+// bypasses RLS, so this client must never run in the browser and must
+// only be used after the requester has passed staff authorization
+// (see requirePosStaff). Auth persistence and refresh are disabled so
+// no user session or JWT is ever attached — queries execute with the
+// service key itself, not with the signed-in user's JWT (a user JWT
+// would be blocked by RLS on pos_sessions). The service-role key is
+// a server-side secret and is never sent to the browser.
+let posAdminClient: SupabaseClient | null = null;
+
+function createPosAdminClient(): SupabaseClient {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    serviceRoleKey && serviceRoleKey.trim() !== ""
-      ? serviceRoleKey
-      : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll() {
-          // Server action does not need to modify cookies here.
-        },
+  if (!supabaseUrl) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL is not configured");
+  }
+
+  if (!serviceRoleKey || serviceRoleKey.trim() === "") {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is not configured; staff-side POS operations are disabled",
+    );
+  }
+
+  if (!posAdminClient) {
+    posAdminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
       },
-    },
-  );
+    });
+  }
+
+  return posAdminClient;
+}
+
+// Staff authorization for privileged POS operations. Mirrors the
+// project's existing trusted admin mechanism (createPost() and
+// getCurrentUser() in src/lib/actions.ts):
+//   1. identify the requester from their Supabase Auth session, and
+//   2. verify the account exists in the profiles staff directory.
+//
+// auth.getUser() alone is NOT treated as sufficient — any
+// authenticated Supabase account passes it — so the profiles
+// directory check is what restricts these operations to known
+// staff accounts. The adminId cookie gate in src/app/admin/layout.tsx
+// is a route convenience, not a security boundary, and is not
+// relied on here.
+type PosStaffUser = {
+  id: string;
+  email: string | null;
+};
+
+async function requirePosStaff(): Promise<
+  | { authorized: true; user: PosStaffUser }
+  | { authorized: false; error: string }
+> {
+  const authClient = await createPosSupabaseClient();
+
+  const {
+    data: { user },
+    error: authError,
+  } = await authClient.auth.getUser();
+
+  if (authError || !user) {
+    return { authorized: false, error: "Unauthorized" };
+  }
+
+  const adminClient = createPosAdminClient();
+
+  const { data: profile, error: profileError } = await adminClient
+    .from("profiles")
+    .select("id")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    return { authorized: false, error: "Staff verification failed" };
+  }
+
+  if (!profile) {
+    return { authorized: false, error: "Unauthorized: staff account required" };
+  }
+
+  return {
+    authorized: true,
+    user: { id: user.id, email: user.email ?? null },
+  };
 }
 
 export async function getPosCategories(): Promise<{
@@ -251,22 +324,19 @@ export async function getPosSessions(): Promise<{
   error?: string;
 }> {
   try {
-    // Staff-only: session rows embed QR tokens, so listing requires a
-    // verified Supabase Auth session and the privileged client (which
-    // uses SUPABASE_SERVICE_ROLE_KEY when configured). Without the
-    // service key, RLS blocks the read and an empty list is returned.
-    const supabase = await createPosAdminClient();
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
+    // Staff-only: session rows embed QR tokens, so listing is
+    // restricted to authorized staff and runs through the
+    // service-role client (see requirePosStaff).
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
       return {
         success: false,
         data: [],
-        error: "Unauthorized",
+        error: staff.error,
       };
     }
+
+    const supabase = createPosAdminClient();
 
     const { data, error } = await supabase
       .from("pos_sessions")
@@ -322,32 +392,63 @@ export async function createPosSession(input: {
   error?: string;
 }> {
   try {
-    const providedIds = [
-      input.table_id,
-      input.room_id,
-      input.cubicle_id,
-    ].filter(Boolean);
+    const validated = createSessionInputSchema.parse(input);
 
-    if (providedIds.length === 0) {
+    // A QR session must reference exactly one location.
+    const provided: Array<[LocationType, string]> = [
+      ["table", validated.table_id],
+      ["room", validated.room_id],
+      ["cubicle", validated.cubicle_id],
+    ].filter((entry): entry is [LocationType, string] => Boolean(entry[1]));
+
+    if (provided.length === 0) {
       return {
         success: false,
         error: "A table, room, or cubicle must be provided",
       };
     }
 
-    if (providedIds.length > 1) {
+    if (provided.length > 1) {
       return {
         success: false,
         error: "Cannot specify more than one location type",
       };
     }
 
-    const supabase = await createPosAdminClient();
+    // Staff authorization (see requirePosStaff).
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Unauthorized" };
+    const [locationType, locationId] = provided[0];
+    const supabase = createPosAdminClient();
+
+    // The submitted location must exist and be active before a
+    // QR session is issued for it.
+    const { data: location, error: locationError } = await supabase
+      .from(getLocationTableName(locationType))
+      .select("id, is_active")
+      .eq("id", locationId)
+      .maybeSingle();
+
+    if (locationError) {
+      return { success: false, error: locationError.message };
+    }
+
+    if (!location) {
+      return {
+        success: false,
+        error: "The selected location no longer exists",
+      };
+    }
+
+    if (!location.is_active) {
+      return {
+        success: false,
+        error: `The selected ${LOCATION_TYPE_LABELS[locationType].toLowerCase()} is deactivated`,
+      };
+    }
 
     const qr_token = generateQrToken();
     const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -355,9 +456,9 @@ export async function createPosSession(input: {
     const { data, error } = await supabase
       .from("pos_sessions")
       .insert({
-        table_id: input.table_id ?? null,
-        room_id: input.room_id ?? null,
-        cubicle_id: input.cubicle_id ?? null,
+        table_id: locationType === "table" ? locationId : null,
+        room_id: locationType === "room" ? locationId : null,
+        cubicle_id: locationType === "cubicle" ? locationId : null,
         qr_token,
         expires_at,
         is_active: true,
@@ -407,12 +508,12 @@ export async function deactivatePosSession(sessionId: string): Promise<{
   error?: string;
 }> {
   try {
-    const supabase = await createPosAdminClient();
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Unauthorized" };
+    const supabase = createPosAdminClient();
 
     const { error } = await supabase
       .from("pos_sessions")
@@ -560,12 +661,13 @@ export async function createLocation(input: {
 }> {
   try {
     const validated = createLocationSchema.parse(input);
-    const supabase = await createPosAdminClient();
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Unauthorized" };
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
 
     // Prevent duplicate location names within the same scope
     const nameColumn = getLocationNameColumn(validated.type);
@@ -648,12 +750,13 @@ export async function updateLocation(input: {
 }> {
   try {
     const validated = updateLocationSchema.parse(input);
-    const supabase = await createPosAdminClient();
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Unauthorized" };
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
 
     // Prevent duplicate names (excluding the row being edited).
     // For tables, uniqueness is scoped per zone — resolve the row's
@@ -767,12 +870,13 @@ export async function setLocationActive(input: {
         is_active: z.boolean(),
       })
       .parse(input);
-    const supabase = await createPosAdminClient();
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Unauthorized" };
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
 
     const { error } = await supabase
       .from(getLocationTableName(validated.type))
@@ -819,12 +923,13 @@ export async function deleteLocation(input: {
         id: z.string().min(1),
       })
       .parse(input);
-    const supabase = await createPosAdminClient();
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Unauthorized" };
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
 
     // Block hard delete while QR sessions still reference the location.
     // Staff should deactivate it instead so existing session history is kept.
