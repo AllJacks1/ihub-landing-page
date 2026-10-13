@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 
 const stats = [
   {
@@ -83,18 +82,16 @@ export default function PosDashboardPage() {
           </p>
         </div>
 
-        <Button
-          className="bg-[#F36509] text-white hover:bg-[#d95a08]"
-          asChild
+                  <a
+          href="/admin/pos/terminal/primary"
+          className="inline-flex h-10 items-center justify-center rounded-md bg-[#F36509] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#d95a08]"
         >
-          <a href="/admin/pos/terminal/primary">
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            Open Terminal
-          </a>
-        </Button>
+          <ShoppingCart className="mr-2 h-4 w-4" />
+          Open Terminal
+        </a>
       </div>
 
-      {/* Stats */}
+      {/* Stats */} 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {stats.map((stat) => {
           const Icon = stat.icon;
@@ -199,13 +196,14 @@ export default function PosDashboardPage() {
                 Open a cashier shift before processing POS transactions.
               </p>
 
-              <Button
-                variant="outline"
-                className="mt-4 border-stone-200"
-                asChild
+                
+              <a
+                href="/admin/pos/end-shift"
+                className="mt-4 inline-flex h-10 items-center justify-center rounded-md border border-stone-200 bg-white px-4 py-2 text-sm font-medium text-stone-900 transition-colors hover:bg-stone-50"
               >
-                <a href="/admin/pos/end-shift">Manage Shift</a>
-              </Button>
+                Manage Shift
+              </a>
+
             </div>
           </CardContent>
         </Card>
