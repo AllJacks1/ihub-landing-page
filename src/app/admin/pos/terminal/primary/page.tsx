@@ -21,14 +21,32 @@ import {
   CheckCircle,
   AlertCircle,
   Copy,
+  Pencil,
+  MapPin,
+  Armchair,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -45,9 +63,21 @@ import {
   getPosSessions,
   createPosSession,
   deactivatePosSession,
+  getLocations,
+  createLocation,
+  updateLocation,
+  setLocationActive,
+  deleteLocation,
   type PosProduct,
   type PosSession,
+  type PosLocation,
+  type LocationType,
 } from "@/lib/pos-actions";
+import {
+  getLocationLabel,
+  LOCATION_TYPE_LABELS,
+  LOCATION_TYPES,
+} from "@/lib/pos-locations";
 
 type CartItem = PosProduct & {
   quantity: number;
@@ -71,15 +101,34 @@ export default function PrimaryTerminalPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Session management
-  const [tables, setTables] = useState<Array<{ id: string; table_number: string; zone: string; seats: number; is_active: boolean }>>([]);
-  const [rooms, setRooms] = useState<Array<{ id: string; name: string; seats: number; is_active: boolean }>>([]);
+  const [locations, setLocations] = useState<Record<LocationType, PosLocation[]>>({
+    table: [],
+    room: [],
+    cubicle: [],
+  });
+  const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const [sessions, setSessions] = useState<PosSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [showCreateSessionDialog, setShowCreateSessionDialog] = useState(false);
-  const [createSessionForm, setCreateSessionForm] = useState<{ type: "table" | "room"; id: string }>({ type: "table", id: "" });
+  const [createSessionForm, setCreateSessionForm] = useState<{ type: LocationType; id: string }>({ type: "table", id: "" });
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [createdSessionUrl, setCreatedSessionUrl] = useState<string | null>(null);
   const [createdSessionToken, setCreatedSessionToken] = useState<string | null>(null);
+
+  // Location management
+  const [showManageLocationsDialog, setShowManageLocationsDialog] = useState(false);
+  const [activeLocationTab, setActiveLocationTab] = useState<LocationType>("table");
+  const [locationForm, setLocationForm] = useState({
+    name: "",
+    seats: 4,
+    zone: "bistro" as "bistro" | "coworking",
+    description: "",
+  });
+  const [editingLocation, setEditingLocation] = useState<PosLocation | null>(null);
+  const [isLocationFormOpen, setIsLocationFormOpen] = useState(false);
+  const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const [togglingLocationId, setTogglingLocationId] = useState<string | null>(null);
+  const [removingLocationId, setRemovingLocationId] = useState<string | null>(null);
 
   async function loadProducts() {
     setIsLoading(true);
@@ -111,21 +160,40 @@ export default function PrimaryTerminalPage() {
     }
   }
 
-  async function loadTablesAndRooms() {
+  async function loadLocations() {
+    setIsLoadingLocations(true);
     try {
-      const [tablesResult, roomsResult] = await Promise.all([
-        fetch("/api/admin/tables").then(r => r.json()),
-        fetch("/api/admin/rooms").then(r => r.json()),
+      const [tablesResult, roomsResult, cubiclesResult] = await Promise.all([
+        getLocations("table"),
+        getLocations("room"),
+        getLocations("cubicle"),
       ]);
 
       if (tablesResult.success) {
-        setTables(tablesResult.data.filter((t: any) => t.is_active));
+        setLocations((prev) => ({ ...prev, table: tablesResult.data }));
+      } else {
+        console.error(tablesResult.error);
+        toast.error(tablesResult.error || "Failed to load tables");
       }
+
       if (roomsResult.success) {
-        setRooms(roomsResult.data.filter((r: any) => r.is_active));
+        setLocations((prev) => ({ ...prev, room: roomsResult.data }));
+      } else {
+        console.error(roomsResult.error);
+        toast.error(roomsResult.error || "Failed to load rooms");
+      }
+
+      if (cubiclesResult.success) {
+        setLocations((prev) => ({ ...prev, cubicle: cubiclesResult.data }));
+      } else {
+        console.error(cubiclesResult.error);
+        toast.error(cubiclesResult.error || "Failed to load cubicles");
       }
     } catch (error) {
-      console.error("Failed to load tables/rooms:", error);
+      console.error("Failed to load locations:", error);
+      toast.error("Failed to load locations");
+    } finally {
+      setIsLoadingLocations(false);
     }
   }
 
@@ -153,8 +221,9 @@ export default function PrimaryTerminalPage() {
   }
 
   function getSessionLocation(session: PosSession): string {
-    if (session.table_number) return `Table ${session.table_number}`;
-    if (session.room_name) return `Room ${session.room_name}`;
+    if (session.table_number) return getLocationLabel("table", session.table_number);
+    if (session.room_name) return getLocationLabel("room", session.room_name);
+    if (session.cubicle_name) return getLocationLabel("cubicle", session.cubicle_name);
     return "Unknown";
   }
 
@@ -194,6 +263,7 @@ export default function PrimaryTerminalPage() {
       const result = await createPosSession({
         table_id: createSessionForm.type === "table" ? createSessionForm.id : undefined,
         room_id: createSessionForm.type === "room" ? createSessionForm.id : undefined,
+        cubicle_id: createSessionForm.type === "cubicle" ? createSessionForm.id : undefined,
       });
 
       if (result.success && result.data) {
@@ -213,6 +283,122 @@ export default function PrimaryTerminalPage() {
       setIsCreatingSession(false);
       setShowCreateSessionDialog(false);
       setCreateSessionForm({ type: "table", id: "" });
+    }
+  }
+
+  function openAddLocationForm(type: LocationType) {
+    setActiveLocationTab(type);
+    setEditingLocation(null);
+    setIsLocationFormOpen(true);
+    setLocationForm({
+      name: "",
+      seats: type === "cubicle" ? 1 : 4,
+      zone: "bistro",
+      description: "",
+    });
+  }
+
+  function openEditLocationForm(location: PosLocation) {
+    setActiveLocationTab(location.type);
+    setEditingLocation(location);
+    setIsLocationFormOpen(true);
+    setLocationForm({
+      name: location.name,
+      seats: location.seats,
+      zone: (location.zone as "bistro" | "coworking") ?? "bistro",
+      description: location.description ?? "",
+    });
+  }
+
+  function cancelLocationForm() {
+    setEditingLocation(null);
+    setIsLocationFormOpen(false);
+    setLocationForm({ name: "", seats: 4, zone: "bistro", description: "" });
+  }
+
+  async function handleSaveLocation() {
+    if (!locationForm.name.trim()) {
+      toast.error("Location name is required");
+      return;
+    }
+
+    setIsSavingLocation(true);
+    try {
+      const payload = {
+        type: activeLocationTab,
+        name: locationForm.name.trim(),
+        seats: locationForm.seats,
+        zone: locationForm.zone,
+        description: locationForm.description.trim() || null,
+      };
+
+      const result = editingLocation
+        ? await updateLocation({ ...payload, id: editingLocation.id })
+        : await createLocation(payload);
+
+      if (result.success) {
+        toast.success(
+          editingLocation
+            ? `${LOCATION_TYPE_LABELS[activeLocationTab]} updated`
+            : `${LOCATION_TYPE_LABELS[activeLocationTab]} created`,
+        );
+        cancelLocationForm();
+        await loadLocations();
+      } else {
+        toast.error(result.error || "Failed to save location");
+      }
+    } catch (error) {
+      console.error("Save location error:", error);
+      toast.error("Failed to save location");
+    } finally {
+      setIsSavingLocation(false);
+    }
+  }
+
+  async function handleToggleLocation(location: PosLocation) {
+    setTogglingLocationId(location.id);
+    try {
+      const result = await setLocationActive({
+        type: location.type,
+        id: location.id,
+        is_active: !location.is_active,
+      });
+
+      if (result.success) {
+        toast.success(
+          `${getLocationLabel(location.type, location.name)} ${!location.is_active ? "activated" : "deactivated"}`,
+        );
+        await loadLocations();
+      } else {
+        toast.error(result.error || "Failed to update location");
+      }
+    } catch (error) {
+      console.error("Toggle location error:", error);
+      toast.error("Failed to update location");
+    } finally {
+      setTogglingLocationId(null);
+    }
+  }
+
+  async function handleDeleteLocation(location: PosLocation) {
+    setRemovingLocationId(location.id);
+    try {
+      const result = await deleteLocation({
+        type: location.type,
+        id: location.id,
+      });
+
+      if (result.success) {
+        toast.success(`${LOCATION_TYPE_LABELS[location.type]} removed`);
+        await loadLocations();
+      } else {
+        toast.error(result.error || "Failed to remove location");
+      }
+    } catch (error) {
+      console.error("Remove location error:", error);
+      toast.error("Failed to remove location");
+    } finally {
+      setRemovingLocationId(null);
     }
   }
 
@@ -243,7 +429,7 @@ export default function PrimaryTerminalPage() {
   }, []);
 
   useEffect(() => {
-    loadTablesAndRooms();
+    loadLocations();
     loadSessions();
   }, []);
 
@@ -387,7 +573,7 @@ export default function PrimaryTerminalPage() {
               <div>
                 <h2 className="font-medium text-stone-900">QR Order Sessions</h2>
                 <p className="text-sm text-stone-500">
-                  Create sessions for tables or rooms. Customers scan to order.
+                  Create sessions for tables, rooms, or cubicles. Customers scan to order.
                 </p>
               </div>
             </div>
@@ -409,7 +595,12 @@ export default function PrimaryTerminalPage() {
                 <DialogTrigger>
                   <Button
                     className="rounded-full bg-[#F36509] text-white hover:bg-[#d95a08]"
-                    disabled={isCreatingSession || tables.length === 0 && rooms.length === 0}
+                    disabled={
+                      isCreatingSession ||
+                      (locations.table.length === 0 &&
+                        locations.room.length === 0 &&
+                        locations.cubicle.length === 0)
+                    }
                   >
                     <QrCode className="mr-2 h-4 w-4" />
                     {isCreatingSession ? "Creating..." : "Create QR Session"}
@@ -419,41 +610,34 @@ export default function PrimaryTerminalPage() {
                   <DialogHeader>
                     <DialogTitle className="font-serif text-xl">Create QR Session</DialogTitle>
                     <DialogDescription>
-                      Select a table or room to generate a QR code for customer ordering.
+                      Select a table, room, or cubicle to generate a QR code for customer ordering.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4 py-4">
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-stone-700">Location Type</label>
-                      <div className="flex gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="sessionType"
-                            value="table"
-                            checked={createSessionForm.type === "table"}
-                            onChange={() => setCreateSessionForm({ ...createSessionForm, type: "table", id: "" })}
-                            className="h-4 w-4 text-[#F36509] border-stone-300 focus:ring-[#F36509]"
-                          />
-                          <span className="text-sm text-stone-700">Table</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="sessionType"
-                            value="room"
-                            checked={createSessionForm.type === "room"}
-                            onChange={() => setCreateSessionForm({ ...createSessionForm, type: "room", id: "" })}
-                            className="h-4 w-4 text-[#F36509] border-stone-300 focus:ring-[#F36509]"
-                          />
-                          <span className="text-sm text-stone-700">Room</span>
-                        </label>
+                      <div className="flex flex-wrap gap-4">
+                        {LOCATION_TYPES.map((type) => (
+                          <label key={type} className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="sessionType"
+                              value={type}
+                              checked={createSessionForm.type === type}
+                              onChange={() => setCreateSessionForm({ ...createSessionForm, type, id: "" })}
+                              className="h-4 w-4 text-[#F36509] border-stone-300 focus:ring-[#F36509]"
+                            />
+                            <span className="text-sm text-stone-700">
+                              {LOCATION_TYPE_LABELS[type]}
+                            </span>
+                          </label>
+                        ))}
                       </div>
                     </div>
 
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-stone-700">
-                        {createSessionForm.type === "table" ? "Select Table" : "Select Room"}
+                        Select {LOCATION_TYPE_LABELS[createSessionForm.type]}
                       </label>
                       <select
                         value={createSessionForm.id}
@@ -461,18 +645,21 @@ export default function PrimaryTerminalPage() {
                         className="w-full rounded-xl border-stone-200 bg-white px-3 py-2 text-sm focus-visible:ring-[#F36509]/30"
                       >
                         <option value="">Choose...</option>
-                        {createSessionForm.type === "table"
-                          ? tables.map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {t.table_number} ({t.zone}, {t.seats} seats)
-                              </option>
-                            ))
-                          : rooms.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.name} ({r.seats} seats)
-                              </option>
-                            ))}
+                        {locations[createSessionForm.type]
+                          .filter((location) => location.is_active)
+                          .map((location) => (
+                            <option key={location.id} value={location.id}>
+                              {createSessionForm.type === "table"
+                                ? `${getLocationLabel("table", location.name)} (${location.zone}, ${location.seats} seats)`
+                                : `${getLocationLabel(createSessionForm.type, location.name)} (${location.seats} seats)`}
+                            </option>
+                          ))}
                       </select>
+                      {locations[createSessionForm.type].filter((l) => l.is_active).length === 0 && (
+                        <p className="text-xs text-stone-500">
+                          No active {LOCATION_TYPE_LABELS[createSessionForm.type].toLowerCase()}s available. Add one via Manage Locations.
+                        </p>
+                      )}
                     </div>
                   </div>
                   <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row">
@@ -495,6 +682,21 @@ export default function PrimaryTerminalPage() {
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setEditingLocation(null);
+                  setIsLocationFormOpen(false);
+                  setShowManageLocationsDialog(true);
+                }}
+                disabled={isLoadingLocations}
+                className="text-stone-500"
+              >
+                <MapPin className="mr-2 h-4 w-4" />
+                Manage Locations
+              </Button>
 
               <Button
                 type="button"
@@ -629,6 +831,288 @@ export default function PrimaryTerminalPage() {
               <p>No QR sessions yet. Create one to get started.</p>
             </div>
           )}
+
+          {/* Location management */}
+          <Dialog
+            open={showManageLocationsDialog}
+            onOpenChange={(open) => {
+              if (!open) {
+                setShowManageLocationsDialog(false);
+                setEditingLocation(null);
+                setIsLocationFormOpen(false);
+              }
+            }}
+          >
+            <DialogContent className="rounded-2xl sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle className="font-serif text-xl">
+                  Manage Locations
+                </DialogTitle>
+                <DialogDescription>
+                  Add, edit, deactivate, or remove tables, rooms, and cubicles.
+                  Changes apply immediately to QR session creation.
+                </DialogDescription>
+              </DialogHeader>
+
+              <Tabs
+                value={activeLocationTab}
+                onValueChange={(value) => {
+                  setActiveLocationTab(value as LocationType);
+                  setEditingLocation(null);
+                }}
+                className="mt-2"
+              >
+                <TabsList className="grid w-full grid-cols-3 rounded-xl bg-stone-100 p-1">
+                  {LOCATION_TYPES.map((type) => (
+                    <TabsTrigger
+                      key={type}
+                      value={type}
+                      className="rounded-lg py-2 text-stone-500 transition-all data-[state=active]:bg-white data-[state=active]:text-stone-900 data-[state=active]:shadow-sm"
+                    >
+                      {LOCATION_TYPE_LABELS[type]}s
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+
+                {LOCATION_TYPES.map((type) => (
+                  <TabsContent key={type} value={type} className="mt-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-stone-500">
+                        {locations[type].length} {LOCATION_TYPE_LABELS[type].toLowerCase()}{" "}
+                        {locations[type].length !== 1 ? "s" : ""} ·{" "}
+                        {locations[type].filter((l) => l.is_active).length} active
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => openAddLocationForm(type)}
+                        className="rounded-full bg-[#F36509] text-white hover:bg-[#d95a08]"
+                      >
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />
+                        Add {LOCATION_TYPE_LABELS[type]}
+                      </Button>
+                    </div>
+
+                    {isLocationFormOpen && activeLocationTab === type && (
+                        <div className="space-y-3 rounded-xl border border-stone-200 bg-stone-50/70 p-4">
+                          <p className="text-sm font-medium text-stone-700">
+                            {editingLocation
+                              ? `Edit ${LOCATION_TYPE_LABELS[type]}`
+                              : `Add ${LOCATION_TYPE_LABELS[type]}`}
+                          </p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-stone-600">
+                                {type === "table" ? "Table number" : "Name"}
+                              </Label>
+                              <Input
+                                value={locationForm.name}
+                                onChange={(e) =>
+                                  setLocationForm({ ...locationForm, name: e.target.value })
+                                }
+                                placeholder={
+                                  type === "table"
+                                    ? "e.g. 5"
+                                    : type === "room"
+                                      ? "e.g. Confe D"
+                                      : "e.g. Cubicle 5"
+                                }
+                                className="rounded-xl border-stone-200 bg-white focus-visible:ring-[#F36509]/30"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-stone-600">Seats</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={50}
+                                value={locationForm.seats}
+                                onChange={(e) =>
+                                  setLocationForm({
+                                    ...locationForm,
+                                    seats: parseInt(e.target.value) || 1,
+                                  })
+                                }
+                                className="rounded-xl border-stone-200 bg-white focus-visible:ring-[#F36509]/30"
+                              />
+                            </div>
+                            {type === "table" && (
+                              <div className="space-y-1.5">
+                                <Label className="text-xs text-stone-600">Zone</Label>
+                                <Select
+                                  value={locationForm.zone}
+                                  onValueChange={(v) => {
+                                    if (v) {
+                                      setLocationForm({
+                                        ...locationForm,
+                                        zone: v as "bistro" | "coworking",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  <SelectTrigger className="rounded-xl border-stone-200 bg-white focus:ring-[#F36509]/30">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-xl">
+                                    <SelectItem value="bistro">Bistro</SelectItem>
+                                    <SelectItem value="coworking">Coworking</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            )}
+                            {type !== "table" && (
+                              <div className="space-y-1.5">
+                                <Label className="text-xs text-stone-600">
+                                  Description <span className="font-normal text-stone-400">(optional)</span>
+                                </Label>
+                                <Input
+                                  value={locationForm.description}
+                                  onChange={(e) =>
+                                    setLocationForm({ ...locationForm, description: e.target.value })
+                                  }
+                                  placeholder="e.g. Projector, whiteboard"
+                                  className="rounded-xl border-stone-200 bg-white focus-visible:ring-[#F36509]/30"
+                                />
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={handleSaveLocation}
+                              disabled={isSavingLocation || !locationForm.name.trim()}
+                              className="rounded-full bg-[#F36509] text-white hover:bg-[#d95a08]"
+                            >
+                              {isSavingLocation
+                                ? "Saving..."
+                                : editingLocation
+                                  ? "Save changes"
+                                  : `Add ${LOCATION_TYPE_LABELS[type]}`}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={cancelLocationForm}
+                              disabled={isSavingLocation}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                    {isLoadingLocations && activeLocationTab === type ? (
+                      <div className="flex items-center gap-2 py-6 text-sm text-stone-500">
+                        <RefreshCw className="h-4 w-4 animate-spin text-[#F36509]" />
+                        Loading {LOCATION_TYPE_LABELS[type].toLowerCase()}s...
+                      </div>
+                    ) : locations[type].length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-stone-300 py-8 text-center">
+                        <Armchair className="mx-auto mb-2 h-6 w-6 text-stone-300" />
+                        <p className="text-sm text-stone-500">
+                          No {LOCATION_TYPE_LABELS[type].toLowerCase()}s yet. Add one to get started.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {locations[type].map((location) => (
+                          <div
+                            key={location.id}
+                            className="flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 bg-white p-3"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium text-stone-900">
+                                  {getLocationLabel(type, location.name)}
+                                </p>
+                                {!location.is_active && (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-stone-200 bg-stone-100 text-stone-500"
+                                  >
+                                    Inactive
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="mt-0.5 flex items-center gap-2 text-xs text-stone-500">
+                                <span className="flex items-center gap-1">
+                                  <Armchair className="h-3 w-3 text-stone-400" />
+                                  {location.seats} seats
+                                </span>
+                                {location.zone && (
+                                  <span className="flex items-center gap-1">
+                                    <MapPin className="h-3 w-3 text-stone-400" />
+                                    {location.zone}
+                                  </span>
+                                )}
+                                {location.description && (
+                                  <span className="truncate">{location.description}</span>
+                                )}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={location.is_active}
+                                  onCheckedChange={() => handleToggleLocation(location)}
+                                  disabled={togglingLocationId === location.id}
+                                  className="data-[state=checked]:bg-[#F36509]"
+                                />
+                                <span className="text-xs text-stone-500">
+                                  {togglingLocationId === location.id
+                                    ? "Updating..."
+                                    : location.is_active
+                                      ? "Active"
+                                      : "Inactive"}
+                                </span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEditLocationForm(location)}
+                                className="h-7 rounded-full px-2.5 text-xs text-stone-600 hover:bg-stone-100"
+                              >
+                                <Pencil className="mr-1 h-3 w-3" />
+                                Edit
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteLocation(location)}
+                                disabled={removingLocationId === location.id}
+                                className="h-7 rounded-full px-2.5 text-xs text-red-600 hover:bg-red-50"
+                              >
+                                <Trash2 className="mr-1 h-3 w-3" />
+                                {removingLocationId === location.id ? "Removing..." : "Remove"}
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+                ))}
+              </Tabs>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setShowManageLocationsDialog(false);
+                    setEditingLocation(null);
+                    setIsLocationFormOpen(false);
+                  }}
+                >
+                  Done
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 

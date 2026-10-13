@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import {
   Search,
   Plus,
@@ -37,6 +37,8 @@ import {
   type PosProduct,
 } from "@/lib/pos-actions";
 
+export const dynamic = "force-dynamic";
+
 type CartItem = PosProduct & {
   quantity: number;
 };
@@ -59,7 +61,7 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
-export default function MenuPage() {
+function MenuContent() {
   const searchParams = useSearchParams();
   const sessionToken = searchParams.get("session");
 
@@ -82,6 +84,7 @@ export default function MenuPage() {
     expired: boolean;
     table_number?: string | null;
     room_name?: string | null;
+    cubicle_name?: string | null;
   } | null>(null);
   const [isValidatingSession, setIsValidatingSession] = useState(false);
 
@@ -138,6 +141,7 @@ export default function MenuPage() {
           expired: result.data.expired,
           table_number: result.data.table_number,
           room_name: result.data.room_name,
+          cubicle_name: result.data.cubicle_name,
         });
       } else {
         setSession({ valid: false, expired: false });
@@ -311,8 +315,10 @@ export default function MenuPage() {
                         {session.table_number
                           ? `Table ${session.table_number}`
                           : session.room_name
-                          ? `Room ${session.room_name}`
-                          : "Valid session"}
+                            ? session.room_name
+                            : session.cubicle_name
+                              ? session.cubicle_name
+                              : "Valid session"}
                       </p>
                     </div>
                   </div>
@@ -339,7 +345,7 @@ export default function MenuPage() {
                   </h3>
                   <p className="text-sm text-red-600 max-w-sm">
                     {session?.expired
-                      ? "The ordering session for this table/room has expired. Please ask staff to create a new session."
+                      ? "The ordering session for this table, room, or cubicle has expired. Please ask staff to create a new session."
                       : "This QR code is not valid or the session has been deactivated. Please ask staff for assistance."}
                   </p>
                   <Button variant="outline" onClick={() => window.location.href = "/menu"}>
@@ -618,5 +624,24 @@ export default function MenuPage() {
         </DialogContent>
       </Dialog>
     </main>
+  );
+}
+
+export default function MenuPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen flex-col items-center justify-center bg-stone-50 p-6">
+          <div className="flex flex-col items-center gap-4">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-[#F36508] border-t-transparent" />
+            <p className="text-sm font-medium text-stone-600">
+              Loading menu...
+            </p>
+          </div>
+        </main>
+      }
+    >
+      <MenuContent />
+    </Suspense>
   );
 }
