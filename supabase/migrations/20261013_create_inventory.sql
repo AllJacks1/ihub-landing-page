@@ -1,0 +1,40 @@
+-- Documentation only — DO NOT APPLY.
+--
+-- The iHub POS inventory feature is backed by tables that already
+-- exist in the database with a different (per-branch) schema than
+-- the one originally drafted for this migration:
+--
+--   public.pos_inventory
+--     id            uuid PK
+--     branch_id     uuid FK -> pos_branches(id)
+--     product_id    uuid FK -> pos_products(id)
+--     stock_quantity numeric (default 0)
+--     reorder_level  numeric (default 0)
+--     updated_at    timestamptz (default now())
+--
+--   public.pos_inventory_movements
+--     id            uuid PK
+--     branch_id     uuid FK -> pos_branches(id)
+--     product_id    uuid FK -> pos_products(id)
+--     movement_type text          ('stock_in' | 'stock_out' |
+--                                  'adjust_increase' | 'adjust_decrease')
+--     quantity      numeric       (signed delta)
+--     reference_id  uuid          (nullable)
+--     notes         text          (nullable)
+--     created_at    timestamptz (default now())
+--
+-- Related tables: public.pos_products (id, category_id ->
+-- pos_categories(id), sku, name, price, cost_price, is_active,
+-- item_type, ...), public.pos_categories (id, name, ...),
+-- public.pos_branches (id, name, code, location, is_active, ...).
+--
+-- The server actions in src/lib/inventory-actions.ts read and
+-- write these tables through the service-role client after staff
+-- authorization (requireInventoryStaff). There is no
+-- record_inventory_stock_movement RPC; stock balance updates and
+-- movement audit inserts are performed by the recordStockMovement
+-- server action.
+--
+-- There is no equipment table. Equipment tracking is reported as
+-- unavailable until a dedicated table is provisioned; no public or
+-- authenticated RLS policies are created by the inventory code.
