@@ -4,20 +4,18 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { randomBytes } from "crypto";
-import { z } from "zod";
-
+import z from "zod/v3";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import {
   getLocationNameColumn,
   getLocationTableName,
   LOCATION_TYPE_LABELS,
+  LocationType,
   mapRowToLocation,
-  type LocationType,
-  type PosLocation,
-  type RawRoomRow,
-  type RawTableRow,
+  PosLocation,
+  RawRoomRow,
+  RawTableRow,
 } from "./pos-locations";
-
-export type { LocationType, PosLocation } from "./pos-locations";
 
 type PosCategory = {
   id: string;
@@ -52,6 +50,21 @@ export type PosSession = {
   cubicle_name?: string | null;
 };
 
+export interface Table {
+  id: string;
+  table_number: string;
+  zone: string;
+  seats: number;
+  is_active: boolean;
+}
+
+export interface Room {
+  id: string;
+  name: string;
+  seats: number;
+  is_active: boolean;
+}
+
 type PosSessionRow = {
   id: string;
   table_id: string | null;
@@ -66,25 +79,6 @@ type PosSessionRow = {
   rooms: { name: string } | null;
   cubicles: { name: string } | null;
 };
-
-function mapSessionRow(row: PosSessionRow): PosSession {
-  return {
-    id: row.id,
-    table_id: row.table_id,
-    room_id: row.room_id,
-    cubicle_id: row.cubicle_id,
-    qr_token: row.qr_token,
-    expires_at: row.expires_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    is_active: row.is_active,
-    table_number: row.tables?.table_number ?? null,
-    room_name: row.rooms?.name ?? null,
-    cubicle_name: row.cubicles?.name ?? null,
-  };
-}
-
-// ==================== LOCATION MANAGEMENT ====================
 
 const createLocationSchema = z.object({
   type: z.enum(["table", "room", "cubicle"]),
@@ -103,11 +97,22 @@ const updateLocationSchema = z.object({
   description: z.string().max(500).optional().nullable(),
 });
 
-const createSessionInputSchema = z.object({
-  table_id: z.string().uuid().optional(),
-  room_id: z.string().uuid().optional(),
-  cubicle_id: z.string().uuid().optional(),
-});
+function mapSessionRow(row: PosSessionRow): PosSession {
+  return {
+    id: row.id,
+    table_id: row.table_id,
+    room_id: row.room_id,
+    cubicle_id: row.cubicle_id,
+    qr_token: row.qr_token,
+    expires_at: row.expires_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    is_active: row.is_active,
+    table_number: row.tables?.table_number ?? null,
+    room_name: row.rooms?.name ?? null,
+    cubicle_name: row.cubicles?.name ?? null,
+  };
+}
 
 function generateQrToken(): string {
   return randomBytes(16).toString("hex");
@@ -254,11 +259,86 @@ export async function getPosCategories(): Promise<{
       success: false,
       data: [],
       error:
-        error instanceof Error
-          ? error.message
-          : "Failed to load categories",
+        error instanceof Error ? error.message : "Failed to load categories",
     };
   }
+}
+
+const createSessionInputSchema = z.object({
+  table_id: z.string().uuid().optional(),
+  room_id: z.string().uuid().optional(),
+  cubicle_id: z.string().uuid().optional(),
+});
+
+let posAdminClient: SupabaseClient | null = null;
+
+function createPosAdminClient(): SupabaseClient {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL is not configured");
+  }
+
+  if (!serviceRoleKey || serviceRoleKey.trim() === "") {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is not configured; staff-side POS operations are disabled",
+    );
+  }
+
+  if (!posAdminClient) {
+    posAdminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+  }
+
+  return posAdminClient;
+}
+
+type PosStaffUser = {
+  id: string;
+  email: string | null;
+};
+
+async function requirePosStaff(): Promise<
+  | { authorized: true; user: PosStaffUser }
+  | { authorized: false; error: string }
+> {
+  const authClient = await createPosSupabaseClient();
+
+  const {
+    data: { user },
+    error: authError,
+  } = await authClient.auth.getUser();
+
+  if (authError || !user) {
+    return { authorized: false, error: "Unauthorized" };
+  }
+
+  const adminClient = createPosAdminClient();
+
+  const { data: profile, error: profileError } = await adminClient
+    .from("profiles")
+    .select("id")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    return { authorized: false, error: "Staff verification failed" };
+  }
+
+  if (!profile) {
+    return { authorized: false, error: "Unauthorized: staff account required" };
+  }
+
+  return {
+    authorized: true,
+    user: { id: user.id, email: user.email ?? null },
+  };
 }
 
 export async function getPosProducts(): Promise<{
@@ -285,11 +365,40 @@ export async function getPosProducts(): Promise<{
       ]);
 
     if (productsError) {
+      console.log("DEBUG getPosProducts: productsError =", productsError);
+      console.log(
+        "DEBUG getPosProducts: env SUPABASE_SERVICE_ROLE_KEY =",
+        process.env.SUPABASE_SERVICE_ROLE_KEY ? "SET" : "NOT SET",
+      );
+      console.log(
+        "DEBUG getPosProducts: env keys =",
+        Object.keys(process.env)
+          .filter((k) => k.includes("SUPABASE") || k.includes("DATABASE"))
+          .join(", "),
+      );
       return {
         success: false,
         data: [],
         error: productsError.message,
       };
+    }
+
+    console.log("DEBUG getPosProducts: products =", products?.length, "items");
+    console.log(
+      "DEBUG getPosProducts: categories =",
+      categories?.length,
+      "items",
+    );
+    if (products && products.length > 0) {
+      console.log(
+        "DEBUG getPosProducts: first product =",
+        JSON.stringify(products[0]),
+      );
+    } else {
+      console.log(
+        "DEBUG getPosProducts: products is null/empty, checking count...",
+      );
+      console.log("DEBUG getPosProducts: products raw =", products);
     }
 
     const categoryMap = new Map(
@@ -300,7 +409,7 @@ export async function getPosProducts(): Promise<{
       ...product,
       price: Number(product.price),
       category_name: product.category_id
-        ? categoryMap.get(product.category_id) ?? "Uncategorized"
+        ? (categoryMap.get(product.category_id) ?? "Uncategorized")
         : "Uncategorized",
     }));
 
@@ -312,8 +421,7 @@ export async function getPosProducts(): Promise<{
     return {
       success: false,
       data: [],
-      error:
-        error instanceof Error ? error.message : "Failed to load products",
+      error: error instanceof Error ? error.message : "Failed to load products",
     };
   }
 }
@@ -324,9 +432,6 @@ export async function getPosSessions(): Promise<{
   error?: string;
 }> {
   try {
-    // Staff-only: session rows embed QR tokens, so listing is
-    // restricted to authorized staff and runs through the
-    // service-role client (see requirePosStaff).
     const staff = await requirePosStaff();
     if (!staff.authorized) {
       return {
@@ -340,7 +445,8 @@ export async function getPosSessions(): Promise<{
 
     const { data, error } = await supabase
       .from("pos_sessions")
-      .select(`
+      .select(
+        `
         id,
         table_id,
         room_id,
@@ -353,7 +459,8 @@ export async function getPosSessions(): Promise<{
         tables:table_id (table_number),
         rooms:room_id (name),
         cubicles:cubicle_id (name)
-      `)
+      `,
+      )
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -364,9 +471,9 @@ export async function getPosSessions(): Promise<{
       };
     }
 
-    const mappedSessions: PosSession[] = ((data ?? []) as unknown as PosSessionRow[]).map(
-      mapSessionRow,
-    );
+    const mappedSessions: PosSession[] = (
+      (data ?? []) as unknown as PosSessionRow[]
+    ).map(mapSessionRow);
 
     return {
       success: true,
@@ -376,8 +483,7 @@ export async function getPosSessions(): Promise<{
     return {
       success: false,
       data: [],
-      error:
-        error instanceof Error ? error.message : "Failed to load sessions",
+      error: error instanceof Error ? error.message : "Failed to load sessions",
     };
   }
 }
@@ -394,7 +500,6 @@ export async function createPosSession(input: {
   try {
     const validated = createSessionInputSchema.parse(input);
 
-    // A QR session must reference exactly one location.
     const provided: Array<[LocationType, string]> = [
       ["table", validated.table_id],
       ["room", validated.room_id],
@@ -415,7 +520,6 @@ export async function createPosSession(input: {
       };
     }
 
-    // Staff authorization (see requirePosStaff).
     const staff = await requirePosStaff();
     if (!staff.authorized) {
       return { success: false, error: staff.error };
@@ -463,7 +567,8 @@ export async function createPosSession(input: {
         expires_at,
         is_active: true,
       })
-      .select(`
+      .select(
+        `
         id,
         table_id,
         room_id,
@@ -476,7 +581,8 @@ export async function createPosSession(input: {
         tables:table_id (table_number),
         rooms:room_id (name),
         cubicles:cubicle_id (name)
-      `)
+      `,
+      )
       .single();
 
     if (error) {
@@ -563,16 +669,14 @@ export async function getPosSessionByToken(qr_token: string): Promise<{
       };
     }
 
-    const payload = data as
-      | {
-          found?: boolean;
-          valid?: boolean;
-          expired?: boolean;
-          table_number?: string | null;
-          room_name?: string | null;
-          cubicle_name?: string | null;
-        }
-      | null;
+    const payload = data as {
+      found?: boolean;
+      valid?: boolean;
+      expired?: boolean;
+      table_number?: string | null;
+      room_name?: string | null;
+      cubicle_name?: string | null;
+    } | null;
 
     const mappedSession: PosSession & { valid: boolean; expired: boolean } = {
       id: "",
@@ -605,8 +709,6 @@ export async function getPosSessionByToken(qr_token: string): Promise<{
   }
 }
 
-// ==================== LOCATION MANAGEMENT ====================
-
 export async function getLocations(type: LocationType): Promise<{
   success: boolean;
   data: PosLocation[];
@@ -628,9 +730,9 @@ export async function getLocations(type: LocationType): Promise<{
       };
     }
 
-    const mappedLocations: PosLocation[] = ((data ?? []) as Array<
-      RawTableRow | RawRoomRow
-    >).map((row) => mapRowToLocation(type, row));
+    const mappedLocations: PosLocation[] = (
+      (data ?? []) as Array<RawTableRow | RawRoomRow>
+    ).map((row) => mapRowToLocation(type, row));
 
     return {
       success: true,
@@ -641,9 +743,7 @@ export async function getLocations(type: LocationType): Promise<{
       success: false,
       data: [],
       error:
-        error instanceof Error
-          ? error.message
-          : "Failed to load locations",
+        error instanceof Error ? error.message : "Failed to load locations",
     };
   }
 }
@@ -678,7 +778,9 @@ export async function createLocation(input: {
 
     const { data: existing } =
       validated.type === "table"
-        ? await duplicateQuery.eq("zone", validated.zone ?? "bistro").maybeSingle()
+        ? await duplicateQuery
+            .eq("zone", validated.zone ?? "bistro")
+            .maybeSingle()
         : await duplicateQuery.maybeSingle();
 
     if (existing) {
@@ -716,10 +818,7 @@ export async function createLocation(input: {
 
     return {
       success: true,
-      data: mapRowToLocation(
-        validated.type,
-        data as RawTableRow | RawRoomRow,
-      ),
+      data: mapRowToLocation(validated.type, data as RawTableRow | RawRoomRow),
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -750,7 +849,6 @@ export async function updateLocation(input: {
 }> {
   try {
     const validated = updateLocationSchema.parse(input);
-
     const staff = await requirePosStaff();
     if (!staff.authorized) {
       return { success: false, error: staff.error };

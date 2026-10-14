@@ -12,11 +12,12 @@ import {
   Users,
   ShoppingCart,
   RefreshCw,
+  Plus,
 } from "lucide-react";
+import Link from "next/link";
 import { formatInTimeZone } from "date-fns-tz";
 import { parseISO } from "date-fns";
 import { toast } from "sonner";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -102,8 +103,7 @@ export default function ReservationTerminalPage() {
     return reservations
       .filter(
         (reservation) =>
-          reservation.status === "confirmed" ||
-          reservation.status === "seated",
+          reservation.status === "confirmed" || reservation.status === "seated",
       )
       .filter((reservation) => {
         if (!query) return true;
@@ -116,8 +116,7 @@ export default function ReservationTerminalPage() {
       })
       .sort(
         (a, b) =>
-          new Date(a.start_at).getTime() -
-          new Date(b.start_at).getTime(),
+          new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
       );
   }, [reservations, searchQuery]);
 
@@ -140,18 +139,30 @@ export default function ReservationTerminalPage() {
             </p>
           </div>
 
-          <Button
-            type="button"
-            variant="outline"
-            onClick={fetchReservations}
-            disabled={isLoading}
-            className="border-stone-200"
-          >
-            <RefreshCw
-              className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-            />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={fetchReservations}
+              disabled={isLoading}
+              className="border-stone-200"
+            >
+              <RefreshCw
+                className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
+              />
+              Refresh
+            </Button>
+
+            <Link href={"/admin/pos/terminal/reservation/new"}>
+              <Button
+                type="button"
+                className="bg-[#F36509] text-white hover:bg-[#d95a08]"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Reservation
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -215,8 +226,7 @@ export default function ReservationTerminalPage() {
                 </Card>
               ) : (
                 availableReservations.map((reservation) => {
-                  const selected =
-                    selectedReservation?.id === reservation.id;
+                  const selected = selectedReservation?.id === reservation.id;
 
                   return (
                     <button
@@ -237,9 +247,7 @@ export default function ReservationTerminalPage() {
                             <div className="flex min-w-0 items-start gap-4">
                               <div
                                 className={`rounded-xl p-3 ${
-                                  selected
-                                    ? "bg-[#F36509]/10"
-                                    : "bg-stone-100"
+                                  selected ? "bg-[#F36509]/10" : "bg-stone-100"
                                 }`}
                               >
                                 <User
@@ -260,14 +268,10 @@ export default function ReservationTerminalPage() {
                                   <Badge
                                     variant="outline"
                                     className={
-                                      statusStyles[reservation.status]
-                                        .className
+                                      statusStyles[reservation.status].className
                                     }
                                   >
-                                    {
-                                      statusStyles[reservation.status]
-                                        .label
-                                    }
+                                    {statusStyles[reservation.status].label}
                                   </Badge>
                                 </div>
 
@@ -433,9 +437,7 @@ export default function ReservationTerminalPage() {
                   type="button"
                   className="h-12 w-full bg-[#F36509] text-white hover:bg-[#d95a08]"
                   onClick={() =>
-                    toast.info(
-                      "POS order creation will be connected next.",
-                    )
+                    toast.info("POS order creation will be connected next.")
                   }
                 >
                   <ShoppingCart className="mr-2 h-4 w-4" />
@@ -448,7 +450,7 @@ export default function ReservationTerminalPage() {
               </div>
             </div>
           ) : (
-            <div className="flex h-full min-h-[400px] flex-col items-center justify-center px-8 text-center">
+            <div className="flex h-full min-h-100 flex-col items-center justify-center px-8 text-center">
               <div className="rounded-full bg-stone-100 p-4">
                 <ShoppingCart className="h-6 w-6 text-stone-400" />
               </div>
@@ -458,8 +460,8 @@ export default function ReservationTerminalPage() {
               </h3>
 
               <p className="mt-1 max-w-xs text-sm leading-5 text-stone-500">
-                Select a confirmed or seated reservation to continue with a
-                POS order.
+                Select a confirmed or seated reservation to continue with a POS
+                order.
               </p>
             </div>
           )}

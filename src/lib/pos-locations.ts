@@ -1,7 +1,3 @@
-// Shared types and helpers for POS location management (tables, rooms,
-// cubicles). This is NOT a "use server" module, so sync helpers and
-// constants here can be safely imported by client components.
-
 export type LocationType = "table" | "room" | "cubicle";
 
 export type PosLocation = {
