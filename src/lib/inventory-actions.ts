@@ -225,9 +225,7 @@ function mapItemRow(row: Record<string, unknown>): InventoryItem {
   };
 }
 
-function mapMovementRow(
-  row: Record<string, unknown>,
-): InventoryStockMovement {
+function mapMovementRow(row: Record<string, unknown>): InventoryStockMovement {
   return {
     id: String(row.id),
     branch_id: String(row.branch_id ?? ""),
@@ -284,7 +282,8 @@ export async function getInventoryItems(): Promise<{
     return {
       success: false,
       data: [],
-      error: error instanceof Error ? error.message : "Failed to load inventory",
+      error:
+        error instanceof Error ? error.message : "Failed to load inventory",
     };
   }
 }
@@ -361,8 +360,7 @@ export async function getInventoryBranches(): Promise<{
     return {
       success: false,
       data: [],
-      error:
-        error instanceof Error ? error.message : "Failed to load branches",
+      error: error instanceof Error ? error.message : "Failed to load branches",
     };
   }
 }
@@ -528,7 +526,12 @@ export async function updateInventoryItem(input: {
 
 const movementSchema = z.object({
   itemId: z.string().uuid(),
-  action: z.enum(["stock_in", "stock_out", "adjust_increase", "adjust_decrease"]),
+  action: z.enum([
+    "stock_in",
+    "stock_out",
+    "adjust_increase",
+    "adjust_decrease",
+  ]),
   quantity: z.coerce
     .number({ error: "Quantity must be a number" })
     .int("Quantity must be a whole number")
@@ -697,7 +700,9 @@ export async function getStockHistory(itemId: string): Promise<{
 
     const { data, error } = await adminClient
       .from("pos_inventory_movements")
-      .select("id, branch_id, product_id, movement_type, quantity, notes, created_at")
+      .select(
+        "id, branch_id, product_id, movement_type, quantity, notes, created_at",
+      )
       .eq("product_id", stockRow.product_id)
       .eq("branch_id", stockRow.branch_id)
       .order("created_at", { ascending: false })
@@ -723,68 +728,469 @@ export async function getStockHistory(itemId: string): Promise<{
 
 // ==================== Equipment (reusable) ====================
 
-// The database has no equipment table (pos_inventory tracks
-// consumable stock per branch/product only). Equipment actions
-// stay authorized but report that tracking is unavailable until
-// a dedicated table is provisioned.
-const EQUIPMENT_UNAVAILABLE_ERROR =
-  "Equipment tracking is unavailable: the database has no equipment table. Contact your database administrator to provision one.";
+const EQUIPMENT_SELECT =
+  "id, name, category, department, total_quantity, available_quantity, condition, notes, created_at, updated_at";
+
+function mapEquipmentRow(row: Record<string, unknown>): InventoryEquipment {
+  return {
+    id: String(row.id),
+    name: String(row.name ?? ""),
+    category: String(row.category ?? ""),
+    department: String(row.department) as Department,
+    total_quantity: toNumber(row.total_quantity),
+    available_quantity: toNumber(row.available_quantity),
+    condition: String(row.condition) as EquipmentCondition,
+    notes: row.notes ? String(row.notes) : null,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  };
+}
+
+function mapEquipmentHistoryRow(
+  row: Record<string, unknown>,
+): InventoryEquipmentHistory {
+  return {
+    id: String(row.id),
+    equipment_id: String(row.equipment_id),
+    event: String(row.event ?? ""),
+    details: row.details ? String(row.details) : null,
+    staff_user_id: row.staff_user_id ? String(row.staff_user_id) : null,
+    staff_name: row.staff_name ? String(row.staff_name) : null,
+    created_at: String(row.created_at),
+  };
+}
+
+const createEquipmentSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(100),
+  category: z.string().trim().min(1, "Category is required").max(80),
+  department: z.enum(["bar", "kitchen"]),
+  total_quantity: z.coerce
+    .number({ error: "Total quantity must be a number" })
+    .int("Total quantity must be a whole number")
+    .min(0, "Total quantity cannot be negative")
+    .max(1_000_000, "Total quantity is too large"),
+  available_quantity: z.coerce
+    .number({ error: "Available quantity must be a number" })
+    .int("Available quantity must be a whole number")
+    .min(0, "Available quantity cannot be negative")
+    .max(1_000_000, "Available quantity is too large"),
+  condition: z.enum(["good", "damaged", "under_maintenance"]).default("good"),
+  notes: z
+    .string()
+    .trim()
+    .max(500, "Notes are too long")
+    .optional()
+    .or(z.literal("")),
+});
+
+const updateEquipmentSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1, "Name is required").max(100),
+  category: z.string().trim().min(1, "Category is required").max(80),
+  department: z.enum(["bar", "kitchen"]),
+  total_quantity: z.coerce
+    .number({ error: "Total quantity must be a number" })
+    .int("Total quantity must be a whole number")
+    .min(0, "Total quantity cannot be negative")
+    .max(1_000_000, "Total quantity is too large"),
+  available_quantity: z.coerce
+    .number({ error: "Available quantity must be a number" })
+    .int("Available quantity must be a whole number")
+    .min(0, "Available quantity cannot be negative")
+    .max(1_000_000, "Available quantity is too large"),
+  condition: z.enum(["good", "damaged", "under_maintenance"]),
+  notes: z
+    .string()
+    .trim()
+    .max(500, "Notes are too long")
+    .optional()
+    .or(z.literal("")),
+});
 
 export async function getInventoryEquipment(): Promise<{
   success: boolean;
   data: InventoryEquipment[];
   error?: string;
 }> {
-  const staff = await requireInventoryStaff();
-  if (!staff.authorized) {
-    return { success: false, data: [], error: staff.error };
-  }
+  try {
+    const staff = await requireInventoryStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
 
-  return { success: false, data: [], error: EQUIPMENT_UNAVAILABLE_ERROR };
+    const supabase = createInventoryAdminClient();
+
+    const { data, error } = await supabase
+      .from("pos_equipment")
+      .select(EQUIPMENT_SELECT)
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      return { success: false, data: [], error: error.message };
+    }
+
+    return {
+      success: true,
+      data: (data ?? []).map((row) =>
+        mapEquipmentRow(row as Record<string, unknown>),
+      ),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      data: [],
+      error:
+        error instanceof Error ? error.message : "Failed to load equipment",
+    };
+  }
 }
 
-export async function createInventoryEquipment(_input?: Record<
-  string,
-  unknown
->): Promise<{
+export async function createInventoryEquipment(input: {
+  name: string;
+  category: string;
+  department: Department;
+  total_quantity: number | string;
+  available_quantity: number | string;
+  condition?: EquipmentCondition;
+  notes?: string | null;
+}): Promise<{
   success: boolean;
+  data?: InventoryEquipment;
   error?: string;
 }> {
-  void _input;
-  const staff = await requireInventoryStaff();
-  if (!staff.authorized) {
-    return { success: false, error: staff.error };
-  }
+  try {
+    const validated = createEquipmentSchema.parse(input);
 
-  return { success: false, error: EQUIPMENT_UNAVAILABLE_ERROR };
+    // available cannot exceed total
+    if (validated.available_quantity > validated.total_quantity) {
+      return {
+        success: false,
+        error: "Available quantity cannot exceed total quantity",
+      };
+    }
+
+    const staff = await requireInventoryStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createInventoryAdminClient();
+
+    const { data, error } = await supabase
+      .from("pos_equipment")
+      .insert({
+        name: validated.name,
+        category: validated.category,
+        department: validated.department,
+        total_quantity: validated.total_quantity,
+        available_quantity: validated.available_quantity,
+        condition: validated.condition,
+        notes: validated.notes || null,
+      })
+      .select(EQUIPMENT_SELECT)
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Audit entry
+    await supabase.from("pos_equipment_history").insert({
+      equipment_id: data.id,
+      event: "created",
+      details: `Created with total=${validated.total_quantity}, available=${validated.available_quantity}, condition=${validated.condition}`,
+      staff_user_id: staff.user.id,
+      staff_name: staff.user.email,
+    });
+
+    return {
+      success: true,
+      data: mapEquipmentRow(data as Record<string, unknown>),
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to create equipment",
+    };
+  }
 }
 
-export async function updateInventoryEquipment(_input?: Record<
-  string,
-  unknown
->): Promise<{
+export async function updateInventoryEquipment(input: {
+  id: string;
+  name: string;
+  category: string;
+  department: Department;
+  total_quantity: number | string;
+  available_quantity: number | string;
+  condition: EquipmentCondition;
+  notes?: string | null;
+}): Promise<{
   success: boolean;
+  data?: InventoryEquipment;
   error?: string;
 }> {
-  void _input;
-  const staff = await requireInventoryStaff();
-  if (!staff.authorized) {
-    return { success: false, error: staff.error };
-  }
+  try {
+    const validated = updateEquipmentSchema.parse(input);
 
-  return { success: false, error: EQUIPMENT_UNAVAILABLE_ERROR };
+    if (validated.available_quantity > validated.total_quantity) {
+      return {
+        success: false,
+        error: "Available quantity cannot exceed total quantity",
+      };
+    }
+
+    const staff = await requireInventoryStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createInventoryAdminClient();
+
+    // Fetch current row for history diff
+    const { data: current, error: currentError } = await supabase
+      .from("pos_equipment")
+      .select(EQUIPMENT_SELECT)
+      .eq("id", validated.id)
+      .single();
+
+    if (currentError || !current) {
+      return {
+        success: false,
+        error: currentError?.message ?? "Equipment not found",
+      };
+    }
+
+    const { data, error } = await supabase
+      .from("pos_equipment")
+      .update({
+        name: validated.name,
+        category: validated.category,
+        department: validated.department,
+        total_quantity: validated.total_quantity,
+        available_quantity: validated.available_quantity,
+        condition: validated.condition,
+        notes: validated.notes || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", validated.id)
+      .select(EQUIPMENT_SELECT)
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Build a short human-readable change summary
+    const changes: string[] = [];
+    if (current.name !== validated.name)
+      changes.push(`name → ${validated.name}`);
+    if (current.category !== validated.category)
+      changes.push(`category → ${validated.category}`);
+    if (current.department !== validated.department)
+      changes.push(`department → ${validated.department}`);
+    if (Number(current.total_quantity) !== validated.total_quantity)
+      changes.push(`total → ${validated.total_quantity}`);
+    if (Number(current.available_quantity) !== validated.available_quantity)
+      changes.push(`available → ${validated.available_quantity}`);
+    if (current.condition !== validated.condition)
+      changes.push(`condition → ${validated.condition}`);
+
+    await supabase.from("pos_equipment_history").insert({
+      equipment_id: validated.id,
+      event: "updated",
+      details: changes.length > 0 ? changes.join("; ") : "No material changes",
+      staff_user_id: staff.user.id,
+      staff_name: staff.user.email,
+    });
+
+    return {
+      success: true,
+      data: mapEquipmentRow(data as Record<string, unknown>),
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to update equipment",
+    };
+  }
 }
 
-export async function getEquipmentHistory(_itemId?: string): Promise<{
+export async function getEquipmentHistory(equipmentId: string): Promise<{
   success: boolean;
   data: InventoryEquipmentHistory[];
   error?: string;
 }> {
-  void _itemId;
-  const staff = await requireInventoryStaff();
-  if (!staff.authorized) {
-    return { success: false, data: [], error: staff.error };
-  }
+  try {
+    const staff = await requireInventoryStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
 
-  return { success: false, data: [], error: EQUIPMENT_UNAVAILABLE_ERROR };
+    if (!z.string().uuid().safeParse(equipmentId).success) {
+      return { success: false, data: [], error: "Invalid equipment id" };
+    }
+
+    const supabase = createInventoryAdminClient();
+
+    const { data, error } = await supabase
+      .from("pos_equipment_history")
+      .select(
+        "id, equipment_id, event, details, staff_user_id, staff_name, created_at",
+      )
+      .eq("equipment_id", equipmentId)
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (error) {
+      return { success: false, data: [], error: error.message };
+    }
+
+    return {
+      success: true,
+      data: (data ?? []).map((row) =>
+        mapEquipmentHistoryRow(row as Record<string, unknown>),
+      ),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      data: [],
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load equipment history",
+    };
+  }
+}
+
+/**
+ * Optional helper for check-out / check-in / damage events.
+ * You can call this from a UI action that only changes available qty
+ * or condition without rewriting the whole equipment record.
+ */
+export async function recordEquipmentEvent(input: {
+  equipmentId: string;
+  event:
+    | "checked_out"
+    | "checked_in"
+    | "damaged"
+    | "repaired"
+    | "maintenance_start"
+    | "maintenance_end"
+    | "note";
+  quantity?: number; // how many units affected (for check-out/in)
+  details?: string | null;
+}): Promise<{
+  success: boolean;
+  data?: InventoryEquipment;
+  error?: string;
+}> {
+  try {
+    const staff = await requireInventoryStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createInventoryAdminClient();
+
+    const { data: current, error: currentError } = await supabase
+      .from("pos_equipment")
+      .select(EQUIPMENT_SELECT)
+      .eq("id", input.equipmentId)
+      .single();
+
+    if (currentError || !current) {
+      return {
+        success: false,
+        error: currentError?.message ?? "Equipment not found",
+      };
+    }
+
+    let newAvailable = Number(current.available_quantity);
+    let newCondition = current.condition as EquipmentCondition;
+    const qty = Math.max(0, Math.floor(Number(input.quantity ?? 1)));
+
+    switch (input.event) {
+      case "checked_out":
+        if (newAvailable < qty) {
+          return {
+            success: false,
+            error: `Only ${newAvailable} available`,
+          };
+        }
+        newAvailable -= qty;
+        break;
+      case "checked_in":
+        newAvailable = Math.min(
+          Number(current.total_quantity),
+          newAvailable + qty,
+        );
+        break;
+      case "damaged":
+        newCondition = "damaged";
+        break;
+      case "repaired":
+      case "maintenance_end":
+        newCondition = "good";
+        break;
+      case "maintenance_start":
+        newCondition = "under_maintenance";
+        break;
+      case "note":
+        // no quantity/condition change
+        break;
+    }
+
+    const { data, error } = await supabase
+      .from("pos_equipment")
+      .update({
+        available_quantity: newAvailable,
+        condition: newCondition,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", input.equipmentId)
+      .select(EQUIPMENT_SELECT)
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    await supabase.from("pos_equipment_history").insert({
+      equipment_id: input.equipmentId,
+      event: input.event,
+      details:
+        input.details ||
+        `qty=${qty}; available now=${newAvailable}; condition=${newCondition}`,
+      staff_user_id: staff.user.id,
+      staff_name: staff.user.email,
+    });
+
+    return {
+      success: true,
+      data: mapEquipmentRow(data as Record<string, unknown>),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to record equipment event",
+    };
+  }
 }

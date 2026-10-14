@@ -5,6 +5,7 @@ import {
   ArrowDownToLine,
   History,
   PackageSearch,
+  PackageX,
   Pencil,
   Plus,
   RefreshCw,
@@ -181,104 +182,87 @@ export default function InventoryProductsSection(
   const noBranches = !isLoading && branches.length === 0;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      {/* Controls — always visible, never pushed down by the list */}
-      <div className="shrink-0 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge
-              variant="outline"
-              className="border-emerald-200 bg-emerald-50 text-emerald-700"
-            >
-              In stock: {stockSummary.inStock}
-            </Badge>
-            <Badge
-              variant="outline"
-              className="border-amber-200 bg-amber-50 text-amber-700"
-            >
-              Low stock: {stockSummary.lowStock}
-            </Badge>
-            <Badge
-              variant="outline"
-              className="border-red-200 bg-red-50 text-red-700"
-            >
-              Out of stock: {stockSummary.outOfStock}
-            </Badge>
-          </div>
+    <div>
+      {/* ── Toolbar ── */}
+      <div className="flex flex-col gap-3 border-b border-stone-100 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <p className="text-sm text-stone-500">
+          Consumable products tracked per branch with stock levels.
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={loadItems}
+            disabled={isLoading}
+            className="h-9 rounded-lg border-stone-200 text-stone-600"
+          >
+            <RefreshCw
+              className={`mr-2 h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={openAddItemDialog}
+            disabled={noBranches}
+            className="h-9 rounded-lg bg-[#F36509] text-white hover:bg-[#d95a08]"
+          >
+            <Plus className="mr-2 h-3.5 w-3.5" />
+            Add Product
+          </Button>
+        </div>
+      </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={loadItems}
-              disabled={isLoading}
-              className="text-stone-500"
-            >
-              <RefreshCw
-                className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-              />
-              Refresh
-            </Button>
-            <Button
-              type="button"
-              onClick={openAddItemDialog}
-              disabled={noBranches}
-              className="rounded-md bg-[#F36509] text-white hover:bg-[#d95a08]"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add Product
-            </Button>
-          </div>
+      {/* ── Filters ── */}
+      <div className="flex flex-col gap-2 border-b border-stone-100 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:px-5">
+        <div className="relative min-w-52 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+          <Input
+            type="search"
+            placeholder="Search products, categories, SKUs..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-10 rounded-xl border-stone-200 bg-white pl-9 text-sm focus:border-[#F36509]/50 focus:ring-2 focus:ring-[#F36509]/20"
+          />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-52 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-            <Input
-              type="search"
-              placeholder="Search products, categories, SKUs..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-11 rounded-xl border-stone-200 bg-white pl-9 text-sm outline-none focus:border-[#F36509]/50 focus:ring-2 focus:ring-[#F36509]/20"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3">
-            <SlidersHorizontal className="h-4 w-4 shrink-0 text-stone-400" />
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="h-11 appearance-none bg-transparent text-sm font-medium text-stone-800 outline-none"
-              aria-label="Filter by category"
-            >
-              <option value="all">All categories</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
+        <div className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3">
+          <SlidersHorizontal className="h-4 w-4 shrink-0 text-stone-400" />
           <select
-            value={branchFilter}
-            onChange={(e) => setBranchFilter(e.target.value)}
-            className={selectClassName}
-            aria-label="Filter by branch"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="h-10 appearance-none bg-transparent text-sm font-medium text-stone-800 outline-none"
+            aria-label="Filter by category"
           >
-            <option value="all">All branches</option>
-            {branches.map((branch) => (
-              <option key={branch.id} value={branch.id}>
-                {branch.name}
+            <option value="all">All categories</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
               </option>
             ))}
           </select>
         </div>
+
+        <select
+          value={branchFilter}
+          onChange={(e) => setBranchFilter(e.target.value)}
+          className={selectClassName}
+          aria-label="Filter by branch"
+        >
+          <option value="all">All branches</option>
+          {branches.map((branch) => (
+            <option key={branch.id} value={branch.id}>
+              {branch.name}
+            </option>
+          ))}
+        </select>
       </div>
 
-      {/* No branches yet — stock cannot be created without one */}
+      {/* ── Alerts (branch warning + load error) ── */}
       {noBranches && (
-        <div className="shrink-0 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <div className="mx-4 mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 sm:mx-5">
           <p className="font-medium">No branches configured</p>
           <p>
             Stock is tracked per branch, but no branches exist yet. Create a
@@ -287,9 +271,8 @@ export default function InventoryProductsSection(
         </div>
       )}
 
-      {/* Error state */}
       {loadError && !isLoading && (
-        <div className="shrink-0 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="mx-4 mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:mx-5">
           <p className="font-medium">Failed to load inventory</p>
           <p>{loadError}</p>
           <Button
@@ -305,19 +288,63 @@ export default function InventoryProductsSection(
         </div>
       )}
 
-      {/* Scrollable table region */}
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-stone-200 bg-white">
-        {isLoading ? (
-          <div className="space-y-3 p-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full rounded-xl" />
-            ))}
-          </div>
-        ) : items.length === 0 ? (
-          <Empty className="border-none py-16">
+      {/* ── Summary strip (replaces the badge row, matches equipment) ── */}
+      {!isLoading && (
+        <div className="grid grid-cols-3 gap-3 border-b border-stone-100 p-4 sm:px-5">
+          {[
+            {
+              label: "In Stock",
+              value: stockSummary.inStock,
+              icon: PackageSearch,
+              iconClass: "bg-emerald-50 text-emerald-600",
+            },
+            {
+              label: "Low Stock",
+              value: stockSummary.lowStock,
+              icon: History,
+              iconClass: "bg-amber-50 text-amber-600",
+            },
+            {
+              label: "Out of Stock",
+              value: stockSummary.outOfStock,
+              icon: PackageX,
+              iconClass: "bg-red-50 text-red-600",
+            },
+          ].map(({ label, value, icon: Icon, iconClass }) => (
+            <div
+              key={label}
+              className="flex items-center gap-3 rounded-xl bg-stone-50 p-3.5"
+            >
+              <div className={`shrink-0 rounded-lg p-2 ${iconClass}`}>
+                <Icon className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-medium uppercase tracking-wider text-stone-400">
+                  {label}
+                </p>
+                <p className="text-xl font-bold tabular-nums text-stone-900">
+                  {value}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Body: loading / empty / table ── */}
+      {isLoading ? (
+        <div className="space-y-3 p-4 sm:px-5">
+          <Skeleton className="h-12 w-full rounded-xl" />
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-14 w-full rounded-xl" />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="p-6 text-center sm:p-10">
+          <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <PackageSearch className="size-6" />
+                <PackageSearch className="h-6 w-6 text-stone-400" />
               </EmptyMedia>
               <EmptyTitle>No products found</EmptyTitle>
               <EmptyDescription>
@@ -329,108 +356,107 @@ export default function InventoryProductsSection(
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table className="min-w-[820px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="sticky top-0 z-10 bg-white">
-                    Product
-                  </TableHead>
-                  <TableHead className="sticky top-0 z-10 bg-white">
-                    Category
-                  </TableHead>
-                  <TableHead className="sticky top-0 z-10 bg-white">
-                    Branch
-                  </TableHead>
-                  <TableHead className="sticky top-0 z-10 bg-white text-right">
-                    Quantity
-                  </TableHead>
-                  <TableHead className="sticky top-0 z-10 bg-white text-right">
-                    Min. level
-                  </TableHead>
-                  <TableHead className="sticky top-0 z-10 bg-white">
-                    Status
-                  </TableHead>
-                  <TableHead className="sticky top-0 z-10 bg-white text-right">
-                    Actions
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-medium text-stone-900">
-                      {item.name}
-                      {item.sku && (
-                        <span className="ml-2 text-xs font-normal text-stone-400">
-                          {item.sku}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-stone-600">
-                      {item.category}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className="border-stone-200 bg-stone-50 text-stone-600"
+          {!noBranches && (
+            <Button
+              type="button"
+              onClick={openAddItemDialog}
+              className="mt-4 rounded-lg bg-[#F36509] text-white hover:bg-[#d95a08]"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add Product
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <Table className="min-w-[820px]">
+            <TableHeader>
+              <TableRow className="border-b border-stone-100 bg-stone-50/80 hover:bg-stone-50/80">
+                <TableHead>Product</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Branch</TableHead>
+                <TableHead className="text-right">Quantity</TableHead>
+                <TableHead className="text-right">Min. level</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((item) => (
+                <TableRow
+                  key={item.id}
+                  className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
+                >
+                  <TableCell className="font-medium text-stone-900">
+                    {item.name}
+                    {item.sku && (
+                      <span className="ml-2 text-xs font-normal text-stone-400">
+                        {item.sku}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-stone-600">
+                    {item.category}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant="outline"
+                      className="border-stone-200 bg-stone-50 text-stone-600"
+                    >
+                      {item.branch_name ?? "—"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right font-medium tabular-nums text-stone-900">
+                    {item.quantity}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-stone-600">
+                    {item.min_stock}
+                  </TableCell>
+                  <TableCell>
+                    <StockStatusBadge item={item} />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openMovementDialog(item)}
+                        className="h-8 text-stone-600 hover:bg-stone-100"
+                        title="Record stock in / out / adjustment"
                       >
-                        {item.branch_name ?? "—"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums text-stone-900">
-                      {item.quantity}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-stone-600">
-                      {item.min_stock}
-                    </TableCell>
-                    <TableCell>
-                      <StockStatusBadge item={item} />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openMovementDialog(item)}
-                          className="h-8 text-stone-600 hover:bg-stone-100"
-                          title="Record stock in / out / adjustment"
-                        >
-                          <ArrowDownToLine className="mr-1 h-3.5 w-3.5" />
-                          Stock
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openHistoryDialog(item)}
-                          className="h-8 text-stone-600 hover:bg-stone-100"
-                          title="Stock movement history"
-                        >
-                          <History className="mr-1 h-3.5 w-3.5" />
-                          History
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditItemDialog(item)}
-                          className="h-8 text-stone-600 hover:bg-stone-100"
-                          title="Edit product"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </div>
+                        <ArrowDownToLine className="mr-1 h-3.5 w-3.5" />
+                        Stock
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openHistoryDialog(item)}
+                        className="h-8 text-stone-600 hover:bg-stone-100"
+                        title="Stock movement history"
+                      >
+                        <History className="mr-1 h-3.5 w-3.5" />
+                        History
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openEditItemDialog(item)}
+                        className="h-8 text-stone-600 hover:bg-stone-100"
+                        title="Edit product"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       {/* ── Add / edit product dialog ─────────────────────── */}
       <Dialog open={showItemDialog} onOpenChange={setShowItemDialog}>
@@ -498,9 +524,7 @@ export default function InventoryProductsSection(
 
             {!editingItem && (
               <div className="space-y-2">
-                <Label htmlFor="item-quantity">
-                  Current quantity
-                </Label>
+                <Label htmlFor="item-quantity">Current quantity</Label>
                 <Input
                   id="item-quantity"
                   type="number"
@@ -510,8 +534,8 @@ export default function InventoryProductsSection(
                   onChange={(e) => setFormQuantity(e.target.value)}
                 />
                 <p className="text-xs text-stone-400">
-                  After creation, quantities change through stock
-                  in / out / adjustments only.
+                  After creation, quantities change through stock in / out /
+                  adjustments only.
                 </p>
               </div>
             )}
@@ -559,10 +583,7 @@ export default function InventoryProductsSection(
       </Dialog>
 
       {/* ── Stock movement dialog ─────────────────────────── */}
-      <Dialog
-        open={showMovementDialog}
-        onOpenChange={setShowMovementDialog}
-      >
+      <Dialog open={showMovementDialog} onOpenChange={setShowMovementDialog}>
         <DialogContent className="w-[calc(100vw-2rem)] rounded-2xl sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="font-serif text-xl">
@@ -608,17 +629,15 @@ export default function InventoryProductsSection(
               />
               {movementAction === "stock_out" && movementItem && (
                 <p className="text-xs text-stone-400">
-                  Stock on hand: {movementItem.quantity}.
-                  Stock cannot go below zero.
+                  Stock on hand: {movementItem.quantity}. Stock cannot go below
+                  zero.
                 </p>
               )}
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="movement-reason">
-                Reason {isAdjustment && (
-                  <span className="text-red-600">*</span>
-                )}
+                Reason {isAdjustment && <span className="text-red-600">*</span>}
               </Label>
               <textarea
                 id="movement-reason"
@@ -733,9 +752,7 @@ export default function InventoryProductsSection(
                           </Badge>
                           <span
                             className={`text-sm font-semibold tabular-nums ${
-                              isPositive
-                                ? "text-emerald-700"
-                                : "text-red-700"
+                              isPositive ? "text-emerald-700" : "text-red-700"
                             }`}
                           >
                             {isPositive ? "+" : ""}
