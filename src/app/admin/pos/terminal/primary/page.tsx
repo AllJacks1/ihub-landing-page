@@ -18,9 +18,24 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   getPosCategories,
   getPosProducts,
@@ -66,6 +81,21 @@ export default function PrimaryTerminalPage() {
     loadProducts();
     loadActiveSessions();
   }, []);
+
+  // Location management
+  const [showManageLocationsDialog, setShowManageLocationsDialog] = useState(false);
+  const [activeLocationTab, setActiveLocationTab] = useState<LocationType>("table");
+  const [locationForm, setLocationForm] = useState({
+    name: "",
+    seats: 4,
+    zone: "bistro" as "bistro" | "coworking",
+    description: "",
+  });
+  const [editingLocation, setEditingLocation] = useState<PosLocation | null>(null);
+  const [isLocationFormOpen, setIsLocationFormOpen] = useState(false);
+  const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const [togglingLocationId, setTogglingLocationId] = useState<string | null>(null);
+  const [removingLocationId, setRemovingLocationId] = useState<string | null>(null);
 
   async function loadProducts() {
     setIsLoading(true);

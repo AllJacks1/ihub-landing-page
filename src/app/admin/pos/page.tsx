@@ -10,7 +10,9 @@ import {
 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import Link from "next/link";
 
 const stats = [
   {
@@ -83,15 +85,16 @@ export default function PosDashboardPage() {
           </p>
         </div>
 
-        <Button
-          className="bg-[#F36509] text-white hover:bg-[#d95a08]"
-          asChild
+        <Link
+          href="/admin/pos/terminal/primary"
+          className={cn(
+            buttonVariants(),
+            "bg-[#F36509] text-white hover:bg-[#d95a08]",
+          )}
         >
-          <a href="/admin/pos/terminal/primary">
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            Open Terminal
-          </a>
-        </Button>
+          <ShoppingCart className="mr-2 h-4 w-4" />
+          Open Terminal
+        </Link>
       </div>
 
       {/* Stats */}
@@ -199,13 +202,15 @@ export default function PosDashboardPage() {
                 Open a cashier shift before processing POS transactions.
               </p>
 
-              <Button
-                variant="outline"
-                className="mt-4 border-stone-200"
-                asChild
+              <Link
+                href="/admin/pos/end-shift"
+                className={cn(
+                  buttonVariants({ variant: "outline" }),
+                  "mt-4 border-stone-200",
+                )}
               >
-                <a href="/admin/pos/end-shift">Manage Shift</a>
-              </Button>
+                Manage Shift
+              </Link>
             </div>
           </CardContent>
         </Card>

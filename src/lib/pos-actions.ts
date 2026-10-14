@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerClient } from "@supabase/ssr";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { randomBytes } from "crypto";
 import z from "zod/v3";
@@ -134,6 +135,98 @@ async function createPosSupabaseClient() {
       },
     },
   );
+}
+
+// Server-only privileged client for staff-side operations (session +
+// location management). Every query runs as the service role, which
+// bypasses RLS, so this client must never run in the browser and must
+// only be used after the requester has passed staff authorization
+// (see requirePosStaff). Auth persistence and refresh are disabled so
+// no user session or JWT is ever attached — queries execute with the
+// service key itself, not with the signed-in user's JWT (a user JWT
+// would be blocked by RLS on pos_sessions). The service-role key is
+// a server-side secret and is never sent to the browser.
+let posAdminClient: SupabaseClient | null = null;
+
+function createPosAdminClient(): SupabaseClient {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL is not configured");
+  }
+
+  if (!serviceRoleKey || serviceRoleKey.trim() === "") {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is not configured; staff-side POS operations are disabled",
+    );
+  }
+
+  if (!posAdminClient) {
+    posAdminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+  }
+
+  return posAdminClient;
+}
+
+// Staff authorization for privileged POS operations. Mirrors the
+// project's existing trusted admin mechanism (createPost() and
+// getCurrentUser() in src/lib/actions.ts):
+//   1. identify the requester from their Supabase Auth session, and
+//   2. verify the account exists in the profiles staff directory.
+//
+// auth.getUser() alone is NOT treated as sufficient — any
+// authenticated Supabase account passes it — so the profiles
+// directory check is what restricts these operations to known
+// staff accounts. The adminId cookie gate in src/app/admin/layout.tsx
+// is a route convenience, not a security boundary, and is not
+// relied on here.
+type PosStaffUser = {
+  id: string;
+  email: string | null;
+};
+
+async function requirePosStaff(): Promise<
+  | { authorized: true; user: PosStaffUser }
+  | { authorized: false; error: string }
+> {
+  const authClient = await createPosSupabaseClient();
+
+  const {
+    data: { user },
+    error: authError,
+  } = await authClient.auth.getUser();
+
+  if (authError || !user) {
+    return { authorized: false, error: "Unauthorized" };
+  }
+
+  const adminClient = createPosAdminClient();
+
+  const { data: profile, error: profileError } = await adminClient
+    .from("profiles")
+    .select("id")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    return { authorized: false, error: "Staff verification failed" };
+  }
+
+  if (!profile) {
+    return { authorized: false, error: "Unauthorized: staff account required" };
+  }
+
+  return {
+    authorized: true,
+    user: { id: user.id, email: user.email ?? null },
+  };
 }
 
 export async function getPosCategories(): Promise<{
@@ -839,7 +932,10 @@ export async function updateLocation(input: {
 
     return {
       success: true,
-      data: mapRowToLocation(validated.type, data as RawTableRow | RawRoomRow),
+      data: mapRowToLocation(
+        validated.type,
+        data as RawTableRow | RawRoomRow,
+      ),
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -872,6 +968,7 @@ export async function setLocationActive(input: {
         is_active: z.boolean(),
       })
       .parse(input);
+
     const staff = await requirePosStaff();
     if (!staff.authorized) {
       return { success: false, error: staff.error };
@@ -924,6 +1021,7 @@ export async function deleteLocation(input: {
         id: z.string().min(1),
       })
       .parse(input);
+
     const staff = await requirePosStaff();
     if (!staff.authorized) {
       return { success: false, error: staff.error };
