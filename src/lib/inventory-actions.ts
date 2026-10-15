@@ -565,37 +565,30 @@ export async function recordStockMovement(input: {
 
     // The client never supplies a signed delta: the action
     // determines the sign stored in pos_inventory_movements.
-    let movementType: StockAction;
+    let movementType: "purchase" | "sale" | "adjustment";
+
     let signedQuantity: number;
 
     switch (validated.action) {
       case "stock_in":
-        movementType = "stock_in";
+        movementType = "purchase";
         signedQuantity = validated.quantity;
         break;
-      case "stock_out":
-        movementType = "stock_out";
-        signedQuantity = -validated.quantity;
-        break;
-      case "adjust_increase":
-        movementType = "adjust_increase";
-        signedQuantity = validated.quantity;
-        break;
-      default:
-        movementType = "adjust_decrease";
-        signedQuantity = -validated.quantity;
-        break;
-    }
 
-    if (
-      (movementType === "adjust_increase" ||
-        movementType === "adjust_decrease") &&
-      !validated.reason
-    ) {
-      return {
-        success: false,
-        error: "A reason is required for stock adjustments",
-      };
+      case "stock_out":
+        movementType = "sale";
+        signedQuantity = -validated.quantity;
+        break;
+
+      case "adjust_increase":
+        movementType = "adjustment";
+        signedQuantity = validated.quantity;
+        break;
+
+      case "adjust_decrease":
+        movementType = "adjustment";
+        signedQuantity = -validated.quantity;
+        break;
     }
 
     const supabase = createInventoryAdminClient();
