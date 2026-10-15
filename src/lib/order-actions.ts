@@ -688,20 +688,73 @@ export async function createQrOrder(
   success: boolean;
   data?: PosOrder;
   error?: string;
+  /** true when items were added to an existing open order */
+  updatedExisting?: boolean;
 }> {
   try {
     const validated = createQrOrderSchema.parse(input);
 
-    // 1. Validate session token
     const sessionCheck = await requireValidQrSession(validated.session_token);
     if (!sessionCheck.valid) {
       return { success: false, error: sessionCheck.error };
     }
 
     const supabase = createOrderAdminClient();
+    const sessionId = sessionCheck.session.id;
 
-    // 2. Resolve branch (pos_orders.branch_id is NOT NULL)
-    // Prefer the branch stored on the QR session; fall back to default branch.
+    // ── Reuse open order for this seating (one tab per session) ───────────
+    const { data: existingOrder, error: existingError } = await supabase
+      .from("pos_orders")
+      .select("*")
+      .eq("session_id", sessionId)
+      .in("status", ["open", "in_progress", "ready"]) // still unpaid / not closed
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingError) {
+      return { success: false, error: existingError.message };
+    }
+
+    if (existingOrder) {
+      const addResult = await addOrderItemsInternal(
+        supabase,
+        existingOrder.id,
+        validated.items,
+      );
+
+      if (!addResult.success) {
+        return { success: false, error: addResult.error };
+      }
+
+      // Optional: append notes
+      if (validated.notes?.trim()) {
+        const prev = existingOrder.notes?.trim() ?? "";
+        const next = validated.notes.trim();
+        const merged = prev ? `${prev}\n${next}` : next;
+        await supabase
+          .from("pos_orders")
+          .update({
+            notes: merged,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingOrder.id);
+      }
+
+      const { data: fresh } = await supabase
+        .from("pos_orders")
+        .select("*")
+        .eq("id", existingOrder.id)
+        .single();
+
+      return {
+        success: true,
+        data: mapPosOrder(fresh ?? existingOrder),
+        updatedExisting: true,
+      };
+    }
+
+    // ── No open order → create one ────────────────────────────────────────
     const { branchId, error: branchError } = await resolveBranchId(
       supabase,
       sessionCheck.session.branch_id,
@@ -715,13 +768,12 @@ export async function createQrOrder(
 
     const orderNumber = generateOrderNumber();
 
-    // 3. Create order linked to the QR session
     const { data: order, error: orderError } = await supabase
       .from("pos_orders")
       .insert({
         order_number: orderNumber,
         branch_id: branchId,
-        session_id: sessionCheck.session.id,
+        session_id: sessionId,
         cashier_user_id: null,
         order_type: validated.order_type,
         order_source: "qr",
@@ -743,7 +795,6 @@ export async function createQrOrder(
       };
     }
 
-    // 3. Add items (shared logic with area snapshot)
     const addResult = await addOrderItemsInternal(
       supabase,
       order.id,
@@ -751,12 +802,10 @@ export async function createQrOrder(
     );
 
     if (!addResult.success) {
-      // Best-effort cleanup so we don't leave empty open orders
       await supabase.from("pos_orders").delete().eq("id", order.id);
       return { success: false, error: addResult.error };
     }
 
-    // 4. Re-fetch so totals are accurate
     const { data: fresh } = await supabase
       .from("pos_orders")
       .select("*")
@@ -766,6 +815,7 @@ export async function createQrOrder(
     return {
       success: true,
       data: mapPosOrder(fresh ?? order),
+      updatedExisting: false,
     };
   } catch (error) {
     return { success: false, error: zodErrorMessage(error) };

@@ -82,6 +82,7 @@ export default function MenuPage() {
   const [orderPlaced, setOrderPlaced] = useState<{
     orderNumber?: string;
     total: number;
+    updatedExisting?: boolean;
   } | null>(null);
 
   // Session validation
@@ -285,10 +286,10 @@ export default function MenuPage() {
         return;
       }
 
-      const total = result.data.total_amount;
       setOrderPlaced({
         orderNumber: result.data.order_number,
-        total,
+        total: result.data.total_amount,
+        updatedExisting: result.updatedExisting ?? false,
       });
       setCart([]);
       setIsCartOpen(false);
@@ -349,7 +350,9 @@ export default function MenuPage() {
             Order placed!
           </h2>
           <p className="mt-2 text-sm text-stone-500">
-            Your order has been sent to the kitchen.
+            {orderPlaced.updatedExisting
+              ? "Items added to your current order."
+              : "Your order has been sent to the kitchen."}
           </p>
           {orderPlaced.orderNumber && (
             <p className="mt-3 font-mono text-sm text-stone-600">
@@ -360,8 +363,8 @@ export default function MenuPage() {
             {formatCurrency(orderPlaced.total)}
           </p>
           <p className="mt-4 text-xs text-stone-400">
-            Please wait for staff to confirm. You can order again from this
-            session.
+            Please wait for staff to confirm. You can keep adding items on this
+            table. Staff will charge once when you pay.
           </p>
           <Button
             className="mt-6 w-full rounded-xl bg-[#F36508] text-white hover:bg-[#d95a08]"
