@@ -14,6 +14,7 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useSearchParams } from "next/navigation";
@@ -36,6 +37,7 @@ import {
   getPosSessionByToken,
   type PosProduct,
 } from "@/lib/pos-actions";
+import { createQrOrder } from "@/lib/order-actions";
 
 type CartItem = PosProduct & {
   quantity: number;
@@ -68,13 +70,19 @@ export default function MenuPage() {
     "All",
   ]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] =
-    useState<Category | "All">("All");
+  const [selectedCategory, setSelectedCategory] = useState<Category | "All">(
+    "All",
+  );
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [orderPlaced, setOrderPlaced] = useState<{
+    orderNumber?: string;
+    total: number;
+  } | null>(null);
 
   // Session validation
   const [session, setSession] = useState<{
@@ -82,8 +90,11 @@ export default function MenuPage() {
     expired: boolean;
     table_number?: string | null;
     room_name?: string | null;
+    cubicle_name?: string | null;
   } | null>(null);
   const [isValidatingSession, setIsValidatingSession] = useState(false);
+
+  const canOrder = Boolean(sessionToken && session?.valid && !session?.expired);
 
   async function loadData() {
     setIsLoading(true);
@@ -114,9 +125,7 @@ export default function MenuPage() {
       }
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "An unexpected error occurred",
+        err instanceof Error ? err.message : "An unexpected error occurred",
       );
     } finally {
       setIsLoading(false);
@@ -138,11 +147,12 @@ export default function MenuPage() {
           expired: result.data.expired,
           table_number: result.data.table_number,
           room_name: result.data.room_name,
+          cubicle_name: (result.data as any).cubicle_name ?? null,
         });
       } else {
         setSession({ valid: false, expired: false });
       }
-    } catch (err) {
+    } catch {
       setSession({ valid: false, expired: false });
     } finally {
       setIsValidatingSession(false);
@@ -152,16 +162,16 @@ export default function MenuPage() {
   useEffect(() => {
     loadData();
     validateSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Also validate when session token changes (for client-side navigation)
   useEffect(() => {
     validateSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionToken]);
 
   const searchFilteredProducts = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-
     if (!query) return products;
 
     return products.filter((product) => {
@@ -188,9 +198,12 @@ export default function MenuPage() {
   }, [cart]);
 
   function addToCart(product: PosProduct) {
+    if (!canOrder) {
+      toast.error("A valid QR session is required to order");
+      return;
+    }
     setCart((currentCart) => {
       const existing = currentCart.find((item) => item.id === product.id);
-
       if (existing) {
         return currentCart.map((item) =>
           item.id === product.id
@@ -198,7 +211,6 @@ export default function MenuPage() {
             : item,
         );
       }
-
       return [...currentCart, { ...product, quantity: 1 }];
     });
   }
@@ -215,40 +227,84 @@ export default function MenuPage() {
     setCart((currentCart) => {
       const item = currentCart.find((i) => i.id === id);
       if (!item || item.quantity <= 1) return currentCart;
-
-      return currentCart.map((item) =>
-        item.id === id ? { ...item, quantity: item.quantity - 1 } : item,
+      return currentCart.map((i) =>
+        i.id === id ? { ...i, quantity: i.quantity - 1 } : i,
       );
     });
   }
 
   function removeFromCart(id: string) {
-    setCart((currentCart) =>
-      currentCart.filter((item) => item.id !== id),
-    );
+    setCart((currentCart) => currentCart.filter((item) => item.id !== id));
   }
 
   function clearCart() {
     setCart([]);
   }
 
-  function handleSubmitOrder() {
-    toast.info("Order submission will be connected next.");
+  async function handleSubmitOrder() {
+    if (!canOrder || !sessionToken) {
+      toast.error("A valid QR session is required to place an order");
+      return;
+    }
+    if (cart.length === 0) {
+      toast.error("Your cart is empty");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const result = await createQrOrder({
+        session_token: sessionToken,
+        order_type: "dine_in",
+        items: cart.map((item) => ({
+          product_id: item.id,
+          quantity: item.quantity,
+          discount_amount: 0,
+        })),
+      });
+
+      if (!result.success || !result.data) {
+        toast.error(result.error ?? "Failed to place order");
+        return;
+      }
+
+      const total = result.data.total_amount;
+      setOrderPlaced({
+        orderNumber: result.data.order_number,
+        total,
+      });
+      setCart([]);
+      setIsCartOpen(false);
+      toast.success("Order placed successfully!");
+    } catch (err) {
+      console.error("Submit order error:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to place order");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
+  function getSessionLabel() {
+    if (!session) return "Valid session";
+    if (session.table_number) return `Table ${session.table_number}`;
+    if (session.room_name) return `Room ${session.room_name}`;
+    if (session.cubicle_name) return `Cubicle ${session.cubicle_name}`;
+    return "Valid session";
+  }
+
+  // ── Loading ──────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-stone-50 p-6">
         <div className="flex flex-col items-center gap-4">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-[#F36508] border-t-transparent" />
-          <p className="text-sm font-medium text-stone-600">
-            Loading menu...
-          </p>
+          <p className="text-sm font-medium text-stone-600">Loading menu...</p>
         </div>
       </main>
     );
   }
 
+  // ── Error ────────────────────────────────────────────────────────────────
   if (error) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-stone-50 p-6">
@@ -264,9 +320,48 @@ export default function MenuPage() {
     );
   }
 
+  // ── Order success ────────────────────────────────────────────────────────
+  if (orderPlaced) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-stone-50 p-6">
+        <div className="w-full max-w-sm rounded-2xl border border-emerald-200 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100">
+            <CheckCircle className="h-7 w-7 text-emerald-600" />
+          </div>
+          <h2 className="font-serif text-xl font-semibold text-stone-900">
+            Order placed!
+          </h2>
+          <p className="mt-2 text-sm text-stone-500">
+            Your order has been sent to the kitchen.
+          </p>
+          {orderPlaced.orderNumber && (
+            <p className="mt-3 font-mono text-sm text-stone-600">
+              {orderPlaced.orderNumber}
+            </p>
+          )}
+          <p className="mt-1 text-lg font-semibold text-stone-900">
+            {formatCurrency(orderPlaced.total)}
+          </p>
+          <p className="mt-4 text-xs text-stone-400">
+            Please wait for staff to confirm. You can order again from this
+            session.
+          </p>
+          <Button
+            className="mt-6 w-full rounded-xl bg-[#F36508] text-white hover:bg-[#d95a08]"
+            onClick={() => setOrderPlaced(null)}
+          >
+            Order more
+          </Button>
+        </div>
+      </main>
+    );
+  }
+
+  // ── Main menu ────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen bg-stone-50 pb-24">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        {/* Header */}
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="rounded-xl bg-[#F36508] p-3">
@@ -288,14 +383,16 @@ export default function MenuPage() {
           </div>
         </div>
 
-        {/* Session Validation Display */}
+        {/* Session status */}
         {(sessionToken || isValidatingSession) && (
           <div className="mb-6">
             {isValidatingSession ? (
               <Card className="border-stone-200 bg-white">
                 <CardContent className="flex items-center gap-3 p-4">
                   <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#F36508] border-t-transparent" />
-                  <p className="text-sm font-medium text-stone-600">Validating session...</p>
+                  <p className="text-sm font-medium text-stone-600">
+                    Validating session...
+                  </p>
                 </CardContent>
               </Card>
             ) : session?.valid ? (
@@ -306,17 +403,18 @@ export default function MenuPage() {
                       <CheckCircle className="h-5 w-5 text-emerald-700" />
                     </div>
                     <div>
-                      <p className="font-medium text-emerald-800">Session Active</p>
+                      <p className="font-medium text-emerald-800">
+                        Session Active
+                      </p>
                       <p className="text-sm text-emerald-600">
-                        {session.table_number
-                          ? `Table ${session.table_number}`
-                          : session.room_name
-                          ? `Room ${session.room_name}`
-                          : "Valid session"}
+                        {getSessionLabel()}
                       </p>
                     </div>
                   </div>
-                  <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+                  <Badge
+                    variant="outline"
+                    className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                  >
                     <QrCode className="mr-1 h-3 w-3" />
                     QR Order
                   </Badge>
@@ -337,21 +435,42 @@ export default function MenuPage() {
                       ? "This QR session has expired"
                       : "Invalid or inactive QR session"}
                   </h3>
-                  <p className="text-sm text-red-600 max-w-sm">
+                  <p className="max-w-sm text-sm text-red-600">
                     {session?.expired
                       ? "The ordering session for this table/room has expired. Please ask staff to create a new session."
                       : "This QR code is not valid or the session has been deactivated. Please ask staff for assistance."}
                   </p>
-                  <Button variant="outline" onClick={() => window.location.href = "/menu"}>
-                    Continue without session
-                  </Button>
+                  <p className="text-xs text-red-500">
+                    You can still browse the menu, but ordering is disabled.
+                  </p>
                 </CardContent>
               </Card>
             )}
           </div>
         )}
 
-        <div className="mb-4 relative">
+        {/* No session token at all */}
+        {!sessionToken && !isValidatingSession && (
+          <div className="mb-6">
+            <Card className="border-amber-200 bg-amber-50">
+              <CardContent className="flex items-center gap-3 p-4">
+                <AlertCircle className="h-5 w-5 shrink-0 text-amber-600" />
+                <div>
+                  <p className="text-sm font-medium text-amber-800">
+                    No QR session
+                  </p>
+                  <p className="text-xs text-amber-700">
+                    Scan a table/room QR code to place an order. Browsing only
+                    for now.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Search */}
+        <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
           <Input
             value={searchQuery}
@@ -370,6 +489,7 @@ export default function MenuPage() {
           )}
         </div>
 
+        {/* Categories */}
         <div className="mb-6 overflow-x-auto pb-1">
           <div className="flex gap-2">
             {categories.map((category) => {
@@ -396,7 +516,7 @@ export default function MenuPage() {
                       ? active
                         ? "rounded-full bg-[#F36508] text-white hover:bg-[#d95a08]"
                         : "rounded-full border-stone-200 bg-white text-stone-600 hover:bg-stone-100"
-                      : "rounded-full border-stone-200 bg-stone-100 text-stone-400 cursor-not-allowed"
+                      : "cursor-not-allowed rounded-full border-stone-200 bg-stone-100 text-stone-400"
                   }
                 >
                   {category}
@@ -406,6 +526,7 @@ export default function MenuPage() {
           </div>
         </div>
 
+        {/* Product grid */}
         <div className="mb-6">
           {displayedProducts.length === 0 ? (
             <Card className="border-stone-200 bg-white">
@@ -436,6 +557,7 @@ export default function MenuPage() {
                     <div className="flex gap-3">
                       <div className="flex-shrink-0 rounded-xl bg-stone-100 p-3">
                         {product.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={product.image_url}
                             alt={product.name}
@@ -450,7 +572,7 @@ export default function MenuPage() {
 
                       <div className="flex-1 space-y-2">
                         <div className="flex items-start justify-between gap-2">
-                          <h3 className="text-sm font-semibold text-stone-900 truncate">
+                          <h3 className="truncate text-sm font-semibold text-stone-900">
                             {product.name}
                           </h3>
                           <span className="text-sm font-semibold text-[#F36508]">
@@ -459,7 +581,7 @@ export default function MenuPage() {
                         </div>
 
                         {product.description && (
-                          <p className="text-xs text-stone-500 line-clamp-2">
+                          <p className="line-clamp-2 text-xs text-stone-500">
                             {product.description}
                           </p>
                         )}
@@ -477,10 +599,11 @@ export default function MenuPage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => addToCart(product)}
-                      className="mt-3 w-full justify-center rounded-xl bg-[#F36508]/10 text-[#F36508] hover:bg-[#F36508]/20"
+                      disabled={!canOrder}
+                      className="mt-3 w-full justify-center rounded-xl bg-[#F36508]/10 text-[#F36508] hover:bg-[#F36508]/20 disabled:opacity-50"
                     >
-                      <Plus className="h-4 w-4 mr-1" />
-                      Add to Cart
+                      <Plus className="mr-1 h-4 w-4" />
+                      {canOrder ? "Add to Cart" : "Session required"}
                     </Button>
                   </CardContent>
                 </Card>
@@ -490,16 +613,17 @@ export default function MenuPage() {
         </div>
       </div>
 
+      {/* Floating cart button + dialog */}
       <Dialog open={isCartOpen} onOpenChange={setIsCartOpen}>
         <Button
           type="button"
           onClick={() => setIsCartOpen(true)}
-          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-[#F36508] px-4 py-3 font-semibold text-white shadow-lg hover:bg-[#d95a08]"
+          disabled={!canOrder && cart.length === 0}
+          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-[#F36508] px-4 py-3 font-semibold text-white shadow-lg hover:bg-[#d95a08] disabled:opacity-60"
         >
           <ShoppingCart className="h-5 w-5" />
           <span>
-            {totalItems}{" "}
-            item{totalItems !== 1 ? "s" : ""}
+            {totalItems} item{totalItems !== 1 ? "s" : ""}
           </span>
           <Badge
             variant="secondary"
@@ -528,6 +652,7 @@ export default function MenuPage() {
                   <div key={item.id} className="flex items-center gap-3">
                     <div className="flex-shrink-0 rounded-lg bg-stone-100 p-2">
                       {item.image_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={item.image_url}
                           alt={item.name}
@@ -557,6 +682,7 @@ export default function MenuPage() {
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => decreaseQuantity(item.id)}
+                        disabled={isSubmitting}
                       >
                         <Minus className="h-3 w-3" />
                       </Button>
@@ -567,6 +693,7 @@ export default function MenuPage() {
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => increaseQuantity(item.id)}
+                        disabled={isSubmitting}
                       >
                         <Plus className="h-3 w-3" />
                       </Button>
@@ -576,6 +703,7 @@ export default function MenuPage() {
                       variant="ghost"
                       size="icon-sm"
                       onClick={() => removeFromCart(item.id)}
+                      disabled={isSubmitting}
                       className="text-stone-400 hover:text-red-600"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -595,12 +723,19 @@ export default function MenuPage() {
                 {formatCurrency(subtotal)}
               </span>
             </div>
+
+            {!canOrder && (
+              <p className="text-center text-xs text-amber-600">
+                A valid QR session is required to submit an order.
+              </p>
+            )}
+
             <div className="flex gap-2">
               <Button
                 type="button"
                 variant="outline"
                 onClick={clearCart}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || isSubmitting}
                 className="flex-1"
               >
                 Clear Cart
@@ -608,10 +743,17 @@ export default function MenuPage() {
               <Button
                 type="button"
                 onClick={handleSubmitOrder}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || !canOrder || isSubmitting}
                 className="flex-1 rounded-xl bg-[#F36508] text-white hover:bg-[#d95a08]"
               >
-                Submit Order
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Placing...
+                  </>
+                ) : (
+                  "Submit Order"
+                )}
               </Button>
             </div>
           </DialogFooter>

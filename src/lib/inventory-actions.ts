@@ -253,6 +253,7 @@ const createItemSchema = z.object({
     .int("Minimum stock must be a whole number")
     .min(0, "Minimum stock cannot be negative")
     .max(1_000_000, "Minimum stock is too large"),
+  area_id: z.string().uuid("Select an area"),
 });
 
 export async function getInventoryItems(): Promise<{
@@ -394,6 +395,7 @@ export async function createInventoryItem(input: {
       .insert({
         name: validated.name,
         category_id: validated.category_id,
+        area_id: validated.area_id,
         is_active: true,
       })
       .select("id")

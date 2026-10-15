@@ -32,6 +32,10 @@ export type PosProduct = {
   image_url: string | null;
   is_active: boolean;
   category_name: string;
+  // NEW
+  area_id: string | null;
+  area_code: string | null;
+  area_name: string | null;
 };
 
 export type PosSession = {
@@ -39,6 +43,7 @@ export type PosSession = {
   table_id: string | null;
   room_id: string | null;
   cubicle_id: string | null;
+  branch_id: string | null;
   qr_token: string;
   expires_at: string;
   created_at: string;
@@ -69,6 +74,7 @@ type PosSessionRow = {
   table_id: string | null;
   room_id: string | null;
   cubicle_id: string | null;
+  branch_id: string | null;
   qr_token: string;
   expires_at: string;
   created_at: string;
@@ -102,6 +108,7 @@ function mapSessionRow(row: PosSessionRow): PosSession {
     table_id: row.table_id,
     room_id: row.room_id,
     cubicle_id: row.cubicle_id,
+    branch_id: row.branch_id ?? null,
     qr_token: row.qr_token,
     expires_at: row.expires_at,
     created_at: row.created_at,
@@ -175,6 +182,7 @@ const createSessionInputSchema = z.object({
   table_id: z.string().uuid().optional(),
   room_id: z.string().uuid().optional(),
   cubicle_id: z.string().uuid().optional(),
+  branch_id: z.string().uuid(),
 });
 
 let posAdminClient: SupabaseClient | null = null;
@@ -256,20 +264,21 @@ export async function getPosProducts(): Promise<{
   try {
     const supabase = await createPosSupabaseClient();
 
-    const [{ data: products, error: productsError }, { data: categories }] =
-      await Promise.all([
-        supabase
-          .from("pos_products")
-          .select(
-            "id, category_id, name, description, price, image_url, is_active",
-          )
-          .order("name", { ascending: true }),
+    const [
+      { data: products, error: productsError },
+      { data: categories },
+      { data: areas },
+    ] = await Promise.all([
+      supabase
+        .from("pos_products")
+        .select(
+          "id, category_id, name, description, price, image_url, is_active, area_id, area_code",
+        )
+        .order("name", { ascending: true }),
 
-        supabase
-          .from("pos_categories")
-          .select("id, name")
-          .order("name", { ascending: true }),
-      ]);
+      supabase.from("pos_categories").select("id, name"),
+      supabase.from("pos_areas").select("id, code, name").eq("is_active", true),
+    ]);
 
     if (productsError) {
       console.log("DEBUG getPosProducts: productsError =", productsError);
@@ -312,13 +321,23 @@ export async function getPosProducts(): Promise<{
       (categories ?? []).map((category) => [category.id, category.name]),
     );
 
-    const mappedProducts: PosProduct[] = (products ?? []).map((product) => ({
-      ...product,
-      price: Number(product.price),
-      category_name: product.category_id
-        ? (categoryMap.get(product.category_id) ?? "Uncategorized")
-        : "Uncategorized",
-    }));
+    const areaMap = new Map(
+      (areas ?? []).map((a) => [a.id, { code: a.code, name: a.name }]),
+    );
+
+    const mappedProducts: PosProduct[] = (products ?? []).map((product) => {
+      const area = product.area_id ? areaMap.get(product.area_id) : null;
+      return {
+        ...product,
+        price: Number(product.price),
+        category_name: product.category_id
+          ? (categoryMap.get(product.category_id) ?? "Uncategorized")
+          : "Uncategorized",
+        area_id: product.area_id ?? null,
+        area_code: product.area_code ?? area?.code ?? null,
+        area_name: area?.name ?? null,
+      };
+    });
 
     return {
       success: true,
@@ -399,6 +418,7 @@ export async function createPosSession(input: {
   table_id?: string;
   room_id?: string;
   cubicle_id?: string;
+  branch_id: string;
 }): Promise<{
   success: boolean;
   data?: PosSession;
@@ -470,25 +490,19 @@ export async function createPosSession(input: {
         table_id: locationType === "table" ? locationId : null,
         room_id: locationType === "room" ? locationId : null,
         cubicle_id: locationType === "cubicle" ? locationId : null,
+        branch_id: validated.branch_id, // ← add
         qr_token,
         expires_at,
         is_active: true,
       })
       .select(
         `
-        id,
-        table_id,
-        room_id,
-        cubicle_id,
-        qr_token,
-        expires_at,
-        created_at,
-        updated_at,
-        is_active,
-        tables:table_id (table_number),
-        rooms:room_id (name),
-        cubicles:cubicle_id (name)
-      `,
+      id, table_id, room_id, cubicle_id, branch_id,
+      qr_token, expires_at, created_at, updated_at, is_active,
+      tables:table_id (table_number),
+      rooms:room_id (name),
+      cubicles:cubicle_id (name)
+    `,
       )
       .single();
 

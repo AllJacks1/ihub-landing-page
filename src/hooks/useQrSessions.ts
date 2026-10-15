@@ -19,6 +19,14 @@ import {
   LocationType,
   PosLocation,
 } from "@/lib/pos-locations";
+import { getOrdersBySessionId } from "@/lib/order-actions";
+
+/** Minimal branch shape for the create-session picker */
+export type PosBranchOption = {
+  id: string;
+  name: string;
+  is_active?: boolean;
+};
 
 type LocationFormState = {
   name: string;
@@ -34,6 +42,24 @@ const DEFAULT_LOCATION_FORM: LocationFormState = {
   description: "",
 };
 
+/** Shape returned by getOrdersBySessionId – keep in sync with the page */
+export type SessionOrder = {
+  id: string;
+  status: string;
+  total_amount: number;
+  created_at: string;
+  item_count?: number;
+  items?: {
+    id: string;
+    product_name: string;
+    quantity: number;
+    unit_price: number;
+    line_total: number;
+    area_code?: string | null;
+  }[];
+  payment_method?: string | null;
+};
+
 export function useQrSessions() {
   // ── Sessions ──────────────────────────────────────────────────────────────
   const [sessions, setSessions] = useState<PosSession[]>([]);
@@ -43,13 +69,24 @@ export function useQrSessions() {
   const [createSessionForm, setCreateSessionForm] = useState<{
     type: LocationType;
     id: string;
-  }>({ type: "table", id: "" });
+    branch_id: string;
+  }>({ type: "table", id: "", branch_id: "" });
   const [createdSessionUrl, setCreatedSessionUrl] = useState<string | null>(
     null,
   );
   const [createdSessionToken, setCreatedSessionToken] = useState<string | null>(
     null,
   );
+
+  // ── Branches (for create-session picker) ──────────────────────────────────
+  const [branches, setBranches] = useState<PosBranchOption[]>([]);
+  const [isLoadingBranches, setIsLoadingBranches] = useState(false);
+
+  // ── Session Orders (for the Orders modal) ─────────────────────────────────
+  const [sessionOrders, setSessionOrders] = useState<
+    Record<string, SessionOrder[]>
+  >({});
+  const [isLoadingSessionOrders, setIsLoadingSessionOrders] = useState(false);
 
   // ── Locations ─────────────────────────────────────────────────────────────
   const [locations, setLocations] = useState<
@@ -112,7 +149,6 @@ export function useQrSessions() {
         cubicle: cubicles.success ? cubicles.data : [],
       });
 
-      // Surface individual failures without blocking the rest
       if (!tables.success) toast.error(tables.error || "Failed to load tables");
       if (!rooms.success) toast.error(rooms.error || "Failed to load rooms");
       if (!cubicles.success)
@@ -125,22 +161,97 @@ export function useQrSessions() {
     }
   }, []);
 
+  /**
+   * Loads branches for the create-session picker.
+   * Adjust the import/query if your branches helper lives elsewhere.
+   */
+  const loadBranches = useCallback(async () => {
+    setIsLoadingBranches(true);
+    try {
+      // Dynamic import keeps this optional if getPosBranches isn't ready yet
+      const { getPosBranches } = await import("@/lib/pos-actions");
+      if (typeof getPosBranches !== "function") {
+        setBranches([]);
+        return;
+      }
+      const result = await getPosBranches();
+      if (result?.success && Array.isArray(result.data)) {
+        setBranches(
+          result.data
+            .filter((b: PosBranchOption) => b.is_active !== false)
+            .map((b: PosBranchOption) => ({
+              id: b.id,
+              name: b.name,
+              is_active: b.is_active,
+            })),
+        );
+        // Auto-select first branch if form has none
+        setCreateSessionForm((prev) =>
+          prev.branch_id
+            ? prev
+            : {
+                ...prev,
+                branch_id: result.data[0]?.id ?? "",
+              },
+        );
+      } else {
+        setBranches([]);
+      }
+    } catch (error) {
+      console.error("Failed to load branches:", error);
+      setBranches([]);
+    } finally {
+      setIsLoadingBranches(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadSessions();
     loadLocations();
-  }, [loadSessions, loadLocations]);
+    loadBranches();
+  }, [loadSessions, loadLocations, loadBranches]);
+
+  // ── Session Orders loader ─────────────────────────────────────────────────
+  const onLoadSessionOrders = useCallback(async (sessionId: string) => {
+    // Skip if we already have data for this session (optional cache)
+    // Remove the early-return if you always want a fresh fetch.
+    setIsLoadingSessionOrders(true);
+    try {
+      const result = await getOrdersBySessionId(sessionId);
+      if (result.success) {
+        setSessionOrders((prev) => ({
+          ...prev,
+          [sessionId]: result.data,
+        }));
+      } else {
+        toast.error(result.error ?? "Failed to load orders");
+        setSessionOrders((prev) => ({ ...prev, [sessionId]: [] }));
+      }
+    } catch (error) {
+      console.error("Failed to load session orders:", error);
+      toast.error("Failed to load orders");
+      setSessionOrders((prev) => ({ ...prev, [sessionId]: [] }));
+    } finally {
+      setIsLoadingSessionOrders(false);
+    }
+  }, []);
 
   // ── Session handlers ──────────────────────────────────────────────────────
   async function handleCreateSession() {
     if (!createSessionForm.id) return;
+    if (!createSessionForm.branch_id) {
+      toast.error("Please select a branch");
+      return;
+    }
 
     setIsCreatingSession(true);
     try {
-      const { type, id } = createSessionForm;
+      const { type, id, branch_id } = createSessionForm;
       const result = await createPosSession({
         table_id: type === "table" ? id : undefined,
         room_id: type === "room" ? id : undefined,
         cubicle_id: type === "cubicle" ? id : undefined,
+        branch_id,
       });
 
       if (!result.success || !result.data) {
@@ -160,7 +271,11 @@ export function useQrSessions() {
     } finally {
       setIsCreatingSession(false);
       setShowCreateSessionDialog(false);
-      setCreateSessionForm({ type: "table", id: "" });
+      setCreateSessionForm((prev) => ({
+        type: "table",
+        id: "",
+        branch_id: prev.branch_id, // keep last selected branch
+      }));
     }
   }
 
@@ -338,6 +453,16 @@ export function useQrSessions() {
     copySessionUrl,
     getSessionStatus,
     getSessionLocation,
+
+    // Branches
+    branches,
+    isLoadingBranches,
+    loadBranches,
+
+    // Session Orders
+    sessionOrders,
+    isLoadingSessionOrders,
+    onLoadSessionOrders,
 
     // Locations
     locations,

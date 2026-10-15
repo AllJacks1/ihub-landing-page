@@ -23,9 +23,6 @@ export default function Page() {
   const qr = useQrSessions();
 
   return (
-    <QrSessionsPage
-      {...qr}
-      getSessionStatusBadge={getSessionStatusBadge}
-    />
+    <QrSessionsPage {...qr} getSessionStatusBadge={getSessionStatusBadge} />
   );
 }

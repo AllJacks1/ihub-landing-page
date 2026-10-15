@@ -1,6 +1,6 @@
-// components/pages/QrSessionsPage.tsx
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   QrCode,
@@ -12,6 +12,10 @@ import {
   Pencil,
   Trash2,
   Armchair,
+  Clock,
+  Eye,
+  ShoppingBag,
+  Receipt,
 } from "lucide-react";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
@@ -45,13 +49,154 @@ import {
   LocationType,
   PosLocation,
 } from "@/lib/pos-locations";
-import type { useQrSessions } from "@/hooks/useQrSessions"; // for the return type
+import type { useQrSessions } from "@/hooks/useQrSessions";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
 
+/** Minimal order shape expected from the hook for the session orders modal */
+export type SessionOrder = {
+  id: string;
+  status: string;
+  total_amount: number;
+  created_at: string;
+  item_count?: number;
+  items?: {
+    id: string;
+    product_name: string;
+    quantity: number;
+    unit_price: number;
+    line_total: number;
+    area_code?: string | null;
+  }[];
+  payment_method?: string | null;
+};
+
 type QrSessionsPageProps = QrSessionsReturn & {
   getSessionStatusBadge: (status: string) => React.ReactNode;
+  /** Map of session.id → orders for that session. Populate from the hook. */
+  sessionOrders?: Record<string, SessionOrder[]>;
+  /** Loading state while fetching orders for a specific session */
+  isLoadingSessionOrders?: boolean;
+  /** Optional: call this when the user opens the orders modal for a session */
+  onLoadSessionOrders?: (sessionId: string) => void;
 };
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function getTimeRemaining(expiresAt: string): {
+  label: string;
+  urgent: boolean;
+  expired: boolean;
+} {
+  const now = Date.now();
+  const exp = new Date(expiresAt).getTime();
+  const diffMs = exp - now;
+
+  if (diffMs <= 0) {
+    return { label: "Expired", urgent: true, expired: true };
+  }
+
+  const totalMinutes = Math.floor(diffMs / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return {
+      label: `${days}d ${hours % 24}h left`,
+      urgent: false,
+      expired: false,
+    };
+  }
+  if (hours > 0) {
+    return {
+      label: `${hours}h ${minutes}m left`,
+      urgent: hours < 1,
+      expired: false,
+    };
+  }
+  return {
+    label: `${minutes}m left`,
+    urgent: minutes < 30,
+    expired: false,
+  };
+}
+
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    minimumFractionDigits: 2,
+  }).format(amount);
+}
+
+function getOrderStatusBadge(status: string) {
+  const s = status.toLowerCase();
+  if (s === "completed" || s === "paid") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-emerald-200 bg-emerald-50 text-emerald-700"
+      >
+        {status}
+      </Badge>
+    );
+  }
+  if (s === "open" || s === "pending" || s === "in_progress") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-amber-200 bg-amber-50 text-amber-700"
+      >
+        {status}
+      </Badge>
+    );
+  }
+  if (s === "cancelled" || s === "void") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-stone-200 bg-stone-100 text-stone-500"
+      >
+        {status}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="border-stone-200 text-stone-600">
+      {status}
+    </Badge>
+  );
+}
+
+// ── Skeleton ───────────────────────────────────────────────────────────────
+
+function SessionSkeleton() {
+  return (
+    <div className="animate-pulse space-y-2">
+      {[1, 2, 3].map((i) => (
+        <div
+          key={i}
+          className="rounded-xl border border-stone-200 bg-white p-4"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-2">
+              <div className="h-4 w-32 rounded bg-stone-200" />
+              <div className="h-3 w-20 rounded bg-stone-100" />
+              <div className="h-3 w-40 rounded bg-stone-100" />
+            </div>
+            <div className="flex gap-2">
+              <div className="h-8 w-20 rounded-lg bg-stone-100" />
+              <div className="h-8 w-20 rounded-lg bg-stone-100" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
 
 export default function QrSessionsPage({
   // Sessions
@@ -95,7 +240,45 @@ export default function QrSessionsPage({
 
   // Badge helper
   getSessionStatusBadge,
+
+  // Orders (new)
+  sessionOrders = {},
+  isLoadingSessionOrders = false,
+  onLoadSessionOrders,
 }: QrSessionsPageProps) {
+  // Local UI state for QR viewer + Orders modal
+  const [viewQrSession, setViewQrSession] = useState<{
+    token: string;
+    locationLabel: string;
+    expiresAt: string;
+  } | null>(null);
+
+  const [ordersModalSession, setOrdersModalSession] = useState<{
+    id: string;
+    locationLabel: string;
+  } | null>(null);
+
+  const openOrdersModal = (sessionId: string, locationLabel: string) => {
+    setOrdersModalSession({ id: sessionId, locationLabel });
+    onLoadSessionOrders?.(sessionId);
+  };
+
+  const currentOrders = useMemo(() => {
+    if (!ordersModalSession) return [];
+    return sessionOrders[ordersModalSession.id] ?? [];
+  }, [ordersModalSession, sessionOrders]);
+
+  const buildSessionUrl = (token: string) => {
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    return `${baseUrl}/menu?session=${token}`;
+  };
+
+  const handleCopyUrl = (token: string) => {
+    const url = buildSessionUrl(token);
+    navigator.clipboard.writeText(url);
+    toast.success("URL copied");
+  };
+
   return (
     <main className="min-h-[calc(100vh-4rem)] flex-1 bg-stone-50/50">
       {/* ── Header ─────────────────────────────────────────────────────── */}
@@ -127,7 +310,7 @@ export default function QrSessionsPage({
             {/* Active sessions summary */}
             {sessions.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600">
-                <span>Active:</span>
+                <span className="hidden sm:inline">Active:</span>
                 {sessions
                   .filter((s) => getSessionStatus(s) === "active")
                   .map((s) => (
@@ -301,25 +484,45 @@ export default function QrSessionsPage({
       {/* ── Sessions list ──────────────────────────────────────────────── */}
       <div className="px-4 py-4 sm:px-6">
         <div className="mx-auto max-w-6xl">
-          {sessions.length > 0 ? (
+          {isLoadingSessions ? (
+            <SessionSkeleton />
+          ) : sessions.length > 0 ? (
             <div className="space-y-2">
               {sessions.map((session) => {
                 const status = getSessionStatus(session);
+                const time = getTimeRemaining(session.expires_at);
+                const locationLabel = getSessionLocation(session);
+                const orderCount = sessionOrders[session.id]?.length ?? 0;
+
                 return (
                   <div
                     key={session.id}
                     className="rounded-xl border border-stone-200 bg-white p-3 sm:p-4"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="font-medium text-stone-900">
-                            {getSessionLocation(session)}
+                            {locationLabel}
                           </p>
                           {getSessionStatusBadge(status)}
+                          {/* Time remaining */}
+                          <Badge
+                            variant="outline"
+                            className={
+                              time.expired
+                                ? "border-stone-200 bg-stone-100 text-stone-500"
+                                : time.urgent
+                                  ? "border-amber-200 bg-amber-50 text-amber-700"
+                                  : "border-stone-200 bg-stone-50 text-stone-600"
+                            }
+                          >
+                            <Clock className="mr-1 h-3 w-3" />
+                            {time.label}
+                          </Badge>
                         </div>
                         <p className="mt-1 font-mono text-[10px] text-stone-400">
-                          {session.id.slice(0, 8)}...
+                          {session.id.slice(0, 8)}…
                         </p>
                         <p className="mt-0.5 text-xs text-stone-500">
                           Expires{" "}
@@ -327,7 +530,59 @@ export default function QrSessionsPage({
                         </p>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                        {/* View Orders */}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            openOrdersModal(session.id, locationLabel)
+                          }
+                          className="text-stone-600 hover:bg-stone-100"
+                        >
+                          <ShoppingBag className="mr-1 h-3.5 w-3.5" />
+                          Orders
+                          {orderCount > 0 && (
+                            <span className="ml-1 rounded-full bg-stone-100 px-1.5 text-[10px] font-medium text-stone-600">
+                              {orderCount}
+                            </span>
+                          )}
+                        </Button>
+
+                        {/* View QR */}
+                        {status === "active" && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setViewQrSession({
+                                token: session.qr_token,
+                                locationLabel,
+                                expiresAt: session.expires_at,
+                              })
+                            }
+                            className="text-stone-600 hover:bg-stone-100"
+                          >
+                            <Eye className="mr-1 h-3.5 w-3.5" />
+                            View QR
+                          </Button>
+                        )}
+
+                        {/* Copy URL */}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleCopyUrl(session.qr_token)}
+                          className="text-stone-600 hover:bg-stone-100"
+                        >
+                          <Copy className="mr-1 h-3.5 w-3.5" />
+                          Copy URL
+                        </Button>
+
+                        {/* Deactivate */}
                         {status === "active" && (
                           <Button
                             type="button"
@@ -339,96 +594,231 @@ export default function QrSessionsPage({
                             Deactivate
                           </Button>
                         )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const baseUrl =
-                              typeof window !== "undefined"
-                                ? window.location.origin
-                                : "";
-                            navigator.clipboard.writeText(
-                              `${baseUrl}/menu?session=${session.qr_token}`,
-                            );
-                            toast.success("URL copied");
-                          }}
-                          className="text-stone-600 hover:bg-stone-100"
-                        >
-                          <Copy className="mr-1 h-3.5 w-3.5" />
-                          Copy URL
-                        </Button>
-
-                        {/* Success QR dialog (shown right after creation) */}
-                        {createdSessionToken === session.qr_token &&
-                          createdSessionUrl && (
-                            <Dialog
-                              open={true}
-                              onOpenChange={() => setCreatedSessionUrl(null)}
-                            >
-                              <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl sm:max-w-md">
-                                <DialogHeader>
-                                  <DialogTitle className="font-serif text-xl">
-                                    QR Session Created
-                                  </DialogTitle>
-                                </DialogHeader>
-                                <div className="space-y-4 py-4">
-                                  <div className="flex justify-center">
-                                    <QRCodeSVG
-                                      value={createdSessionUrl}
-                                      size={180}
-                                      level="M"
-                                    />
-                                  </div>
-                                  <div className="space-y-2 text-center">
-                                    <p className="font-medium text-stone-900">
-                                      {getSessionLocation(session)}
-                                    </p>
-                                    <p className="break-all text-sm text-stone-500">
-                                      {createdSessionUrl}
-                                    </p>
-                                    <p className="text-xs text-stone-400">
-                                      Expires:{" "}
-                                      {new Date(
-                                        session.expires_at,
-                                      ).toLocaleString()}
-                                    </p>
-                                  </div>
-                                  <div className="flex flex-col gap-2 sm:flex-row">
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      onClick={copySessionUrl}
-                                      className="flex-1"
-                                    >
-                                      Copy URL
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      onClick={() => setCreatedSessionUrl(null)}
-                                      className="flex-1 bg-[#F36509] text-white hover:bg-[#d95a08]"
-                                    >
-                                      Done
-                                    </Button>
-                                  </div>
-                                </div>
-                              </DialogContent>
-                            </Dialog>
-                          )}
                       </div>
                     </div>
                   </div>
                 );
               })}
             </div>
-          ) : !isLoadingSessions ? (
-            <div className="rounded-xl border border-stone-200 bg-white py-16 text-center text-stone-500">
-              <QrCode className="mx-auto mb-2 h-8 w-8 text-stone-300" />
-              <p>No QR sessions yet. Create one to get started.</p>
+          ) : (
+            <div className="rounded-xl border border-dashed border-stone-300 bg-white py-16 text-center">
+              <QrCode className="mx-auto mb-3 h-10 w-10 text-stone-300" />
+              <p className="font-medium text-stone-600">No QR sessions yet</p>
+              <p className="mt-1 text-sm text-stone-500">
+                Create one for a table, room, or cubicle to get started.
+              </p>
             </div>
-          ) : null}
+          )}
         </div>
       </div>
+
+      {/* ── View QR dialog (reusable for any session) ──────────────────── */}
+      <Dialog
+        open={!!viewQrSession}
+        onOpenChange={(open) => {
+          if (!open) setViewQrSession(null);
+        }}
+      >
+        <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">QR Code</DialogTitle>
+            <DialogDescription>
+              {viewQrSession?.locationLabel}
+            </DialogDescription>
+          </DialogHeader>
+          {viewQrSession && (
+            <div className="space-y-4 py-2">
+              <div className="flex justify-center rounded-xl bg-white p-4">
+                <QRCodeSVG
+                  value={buildSessionUrl(viewQrSession.token)}
+                  size={200}
+                  level="M"
+                />
+              </div>
+              <div className="space-y-1.5 text-center">
+                <p className="break-all text-sm text-stone-500">
+                  {buildSessionUrl(viewQrSession.token)}
+                </p>
+                <p className="text-xs text-stone-400">
+                  Expires: {new Date(viewQrSession.expiresAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleCopyUrl(viewQrSession.token)}
+                  className="flex-1"
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  Copy URL
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setViewQrSession(null)}
+                  className="flex-1 bg-[#F36509] text-white hover:bg-[#d95a08]"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Post-create success QR (keeps existing behaviour) ──────────── */}
+      {createdSessionToken && createdSessionUrl && (
+        <Dialog open={true} onOpenChange={() => setCreatedSessionUrl(null)}>
+          <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="font-serif text-xl">
+                QR Session Created
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="flex justify-center">
+                <QRCodeSVG value={createdSessionUrl} size={180} level="M" />
+              </div>
+              <div className="space-y-2 text-center">
+                <p className="break-all text-sm text-stone-500">
+                  {createdSessionUrl}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={copySessionUrl}
+                  className="flex-1"
+                >
+                  Copy URL
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setCreatedSessionUrl(null)}
+                  className="flex-1 bg-[#F36509] text-white hover:bg-[#d95a08]"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* ── Session Orders modal ───────────────────────────────────────── */}
+      <Dialog
+        open={!!ordersModalSession}
+        onOpenChange={(open) => {
+          if (!open) setOrdersModalSession(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] overflow-hidden rounded-2xl sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 font-serif text-xl">
+              <Receipt className="h-5 w-5 text-[#F36509]" />
+              Orders
+            </DialogTitle>
+            <DialogDescription>
+              {ordersModalSession?.locationLabel}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[60vh] overflow-y-auto py-2">
+            {isLoadingSessionOrders ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-stone-500">
+                <RefreshCw className="h-4 w-4 animate-spin text-[#F36509]" />
+                Loading orders…
+              </div>
+            ) : currentOrders.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-stone-300 py-12 text-center">
+                <ShoppingBag className="mx-auto mb-2 h-8 w-8 text-stone-300" />
+                <p className="text-sm font-medium text-stone-600">
+                  No orders yet
+                </p>
+                <p className="mt-1 text-xs text-stone-500">
+                  Orders placed via this QR session will appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {currentOrders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="rounded-xl border border-stone-200 bg-stone-50/50 p-3"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-mono text-xs text-stone-500">
+                            #{order.id.slice(0, 8)}
+                          </p>
+                          {getOrderStatusBadge(order.status)}
+                        </div>
+                        <p className="mt-1 text-xs text-stone-500">
+                          {new Date(order.created_at).toLocaleString()}
+                          {order.payment_method && (
+                            <span className="ml-2 capitalize">
+                              · {order.payment_method}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <p className="text-sm font-semibold text-stone-900">
+                        {formatCurrency(order.total_amount)}
+                      </p>
+                    </div>
+
+                    {/* Line items */}
+                    {order.items && order.items.length > 0 && (
+                      <ul className="mt-2 space-y-1 border-t border-stone-200 pt-2">
+                        {order.items.map((item) => (
+                          <li
+                            key={item.id}
+                            className="flex items-baseline justify-between gap-2 text-xs text-stone-600"
+                          >
+                            <span className="min-w-0 truncate">
+                              <span className="font-medium text-stone-800">
+                                {item.quantity}×
+                              </span>{" "}
+                              {item.product_name}
+                              {item.area_code && (
+                                <span className="ml-1.5 rounded bg-stone-200/70 px-1 py-0.5 text-[10px] text-stone-500">
+                                  {item.area_code}
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 tabular-nums">
+                              {formatCurrency(item.line_total)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {!order.items && order.item_count != null && (
+                      <p className="mt-1.5 text-xs text-stone-500">
+                        {order.item_count} item
+                        {order.item_count !== 1 ? "s" : ""}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOrdersModalSession(null)}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Manage Locations dialog ────────────────────────────────────── */}
       <Dialog
