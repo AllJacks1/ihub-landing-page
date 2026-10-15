@@ -1260,3 +1260,20 @@ export async function recordPayment(
     return { success: false, error: zodErrorMessage(error) };
   }
 }
+
+export async function payAndCompleteOrder(
+  input: z.infer<typeof paymentSchema>,
+): Promise<{ success: boolean; data?: PosPayment; error?: string }> {
+  const pay = await recordPayment(input);
+  if (!pay.success) return pay;
+
+  const done = await completeOrder(input.order_id);
+  if (!done.success) {
+    return {
+      success: false,
+      error: done.error ?? "Payment recorded but failed to complete order",
+    };
+  }
+
+  return pay;
+}

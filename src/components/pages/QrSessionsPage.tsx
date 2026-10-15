@@ -47,9 +47,10 @@ import {
   LOCATION_TYPES,
   getLocationLabel,
   LocationType,
-  PosLocation,
 } from "@/lib/pos-locations";
 import type { useQrSessions } from "@/hooks/useQrSessions";
+import { Banknote, CreditCard } from "lucide-react";
+import { recordPayment, completeOrder } from "@/lib/order-actions";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
 
@@ -217,6 +218,10 @@ export default function QrSessionsPage({
   getSessionStatus,
   getSessionLocation,
 
+  // Branches
+  branches = [],
+  isLoadingBranches = false,
+
   // Locations
   locations,
   isLoadingLocations,
@@ -278,6 +283,81 @@ export default function QrSessionsPage({
     navigator.clipboard.writeText(url);
     toast.success("URL copied");
   };
+
+  type PaymentMethod = "cash" | "card" | "gcash" | "maya";
+
+  const [payOrder, setPayOrder] = useState<SessionOrder | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [amountTendered, setAmountTendered] = useState("");
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+
+  const changeDue = useMemo(() => {
+    if (!payOrder || paymentMethod !== "cash") return 0;
+    const tendered = parseFloat(amountTendered) || 0;
+    return Math.max(0, tendered - payOrder.total_amount);
+  }, [payOrder, paymentMethod, amountTendered]);
+
+  const canConfirmPayment = useMemo(() => {
+    if (!payOrder || isProcessingPayment) return false;
+    if (paymentMethod === "cash") {
+      return (parseFloat(amountTendered) || 0) >= payOrder.total_amount;
+    }
+    return true;
+  }, [payOrder, isProcessingPayment, paymentMethod, amountTendered]);
+
+  function openPayDialog(order: SessionOrder) {
+    setPayOrder(order);
+    setPaymentMethod("cash");
+    setAmountTendered("");
+  }
+
+  function isOrderPayable(status: string) {
+    const s = status.toLowerCase();
+    return s !== "completed" && s !== "cancelled" && s !== "void";
+  }
+
+  async function handleConfirmPayment() {
+    if (!payOrder || !canConfirmPayment || !ordersModalSession) return;
+
+    setIsProcessingPayment(true);
+    try {
+      const received =
+        paymentMethod === "cash"
+          ? parseFloat(amountTendered) || payOrder.total_amount
+          : payOrder.total_amount;
+
+      const payResult = await recordPayment({
+        order_id: payOrder.id,
+        payment_method: paymentMethod,
+        amount: payOrder.total_amount,
+        received_amount: received,
+      });
+
+      if (!payResult.success) {
+        toast.error(payResult.error ?? "Payment failed");
+        return;
+      }
+
+      const completeResult = await completeOrder(payOrder.id);
+      if (!completeResult.success) {
+        toast.error(
+          completeResult.error ??
+            "Payment saved but order could not be completed",
+        );
+        // still refresh so payment_method shows
+      } else {
+        toast.success("Payment recorded");
+      }
+
+      setPayOrder(null);
+      setAmountTendered("");
+      onLoadSessionOrders?.(ordersModalSession.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Payment failed");
+    } finally {
+      setIsProcessingPayment(false);
+    }
+  }
 
   return (
     <main className="min-h-[calc(100vh-4rem)] flex-1 bg-stone-50/50">
@@ -359,6 +439,50 @@ export default function QrSessionsPage({
                 </DialogHeader>
 
                 <div className="space-y-4 py-4">
+                  {/* Branch */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-stone-700">
+                      Branch
+                    </label>
+                    <Select
+                      value={createSessionForm.branch_id || undefined}
+                      onValueChange={(v) => {
+                        if (v) {
+                          setCreateSessionForm({
+                            ...createSessionForm,
+                            branch_id: v,
+                          });
+                        }
+                      }}
+                      disabled={isLoadingBranches || branches.length === 0}
+                    >
+                      <SelectTrigger className="w-full rounded-xl border-stone-200 bg-white focus:ring-[#F36509]/30">
+                        <SelectValue
+                          placeholder={
+                            isLoadingBranches
+                              ? "Loading branches..."
+                              : branches.length === 0
+                                ? "No branches found"
+                                : "Select branch"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl">
+                        {branches.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {branches.length === 0 && !isLoadingBranches && (
+                      <p className="text-xs text-amber-600">
+                        No branches available. Add a branch before creating QR
+                        sessions.
+                      </p>
+                    )}
+                  </div>
+
                   {/* Location type radios */}
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-stone-700">
@@ -376,7 +500,11 @@ export default function QrSessionsPage({
                             value={type}
                             checked={createSessionForm.type === type}
                             onChange={() =>
-                              setCreateSessionForm({ type, id: "" })
+                              setCreateSessionForm({
+                                ...createSessionForm,
+                                type,
+                                id: "",
+                              })
                             }
                             className="h-4 w-4 border-stone-300 text-[#F36509] focus:ring-[#F36509]"
                           />
@@ -440,7 +568,11 @@ export default function QrSessionsPage({
                   <Button
                     type="button"
                     onClick={handleCreateSession}
-                    disabled={isCreatingSession || !createSessionForm.id}
+                    disabled={
+                      isCreatingSession ||
+                      !createSessionForm.id ||
+                      !createSessionForm.branch_id
+                    }
                     className="rounded-xl bg-[#F36509] text-white hover:bg-[#d95a08]"
                   >
                     {isCreatingSession ? "Creating..." : "Create Session"}
@@ -796,6 +928,20 @@ export default function QrSessionsPage({
                       </ul>
                     )}
 
+                    {isOrderPayable(order.status) && (
+                      <div className="mt-3 flex justify-end border-t border-stone-200 pt-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => openPayDialog(order)}
+                          className="rounded-full bg-[#F36509] text-white hover:bg-[#d95a08]"
+                        >
+                          <CreditCard className="mr-1.5 h-3.5 w-3.5" />
+                          Pay {formatCurrency(order.total_amount)}
+                        </Button>
+                      </div>
+                    )}
+
                     {!order.items && order.item_count != null && (
                       <p className="mt-1.5 text-xs text-stone-500">
                         {order.item_count} item
@@ -1116,6 +1262,143 @@ export default function QrSessionsPage({
               }}
             >
               Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Pay order dialog ─────────────────────────────────────────────── */}
+      <Dialog
+        open={!!payOrder}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPayOrder(null);
+            setAmountTendered("");
+          }
+        }}
+      >
+        <DialogContent className="w-[calc(100vw-2rem)] rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">
+              Take Payment
+            </DialogTitle>
+            <DialogDescription>
+              {payOrder && (
+                <>
+                  Order #{payOrder.id.slice(0, 8)} ·{" "}
+                  <span className="font-semibold text-stone-900">
+                    {formatCurrency(payOrder.total_amount)}
+                  </span>
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {payOrder && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-stone-700">
+                  Payment method
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      { id: "cash" as const, label: "Cash", icon: Banknote },
+                      { id: "card" as const, label: "Card", icon: CreditCard },
+                      {
+                        id: "gcash" as const,
+                        label: "GCash",
+                        icon: CreditCard,
+                      },
+                      { id: "maya" as const, label: "Maya", icon: CreditCard },
+                    ] as const
+                  ).map(({ id, label, icon: Icon }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => {
+                        setPaymentMethod(id);
+                        if (id !== "cash") setAmountTendered("");
+                      }}
+                      className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors ${
+                        paymentMethod === id
+                          ? "border-[#F36509] bg-[#F36509]/10 text-[#F36509]"
+                          : "border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {paymentMethod === "cash" && (
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="tendered"
+                    className="text-sm font-medium text-stone-700"
+                  >
+                    Amount tendered
+                  </Label>
+                  <Input
+                    id="tendered"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    inputMode="decimal"
+                    value={amountTendered}
+                    onChange={(e) => setAmountTendered(e.target.value)}
+                    placeholder="0.00"
+                    className="h-11 rounded-xl border-stone-200"
+                    autoFocus
+                  />
+                  <div className="flex items-center justify-between rounded-xl bg-stone-50 px-3 py-2 text-sm">
+                    <span className="text-stone-500">Change</span>
+                    <span className="font-semibold text-stone-900">
+                      {formatCurrency(changeDue)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {payOrder.items && payOrder.items.length > 0 && (
+                <div className="max-h-28 space-y-1 overflow-y-auto rounded-xl border border-stone-200 bg-stone-50/50 p-3 text-xs text-stone-600">
+                  {payOrder.items.map((item) => (
+                    <div key={item.id} className="flex justify-between gap-2">
+                      <span className="truncate">
+                        {item.quantity}× {item.product_name}
+                      </span>
+                      <span className="shrink-0 tabular-nums">
+                        {formatCurrency(item.line_total)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPayOrder(null)}
+              disabled={isProcessingPayment}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!canConfirmPayment}
+              onClick={handleConfirmPayment}
+              className="bg-[#F36509] text-white hover:bg-[#d95a08]"
+            >
+              {isProcessingPayment
+                ? "Processing…"
+                : payOrder
+                  ? `Confirm ${formatCurrency(payOrder.total_amount)}`
+                  : "Confirm"}
             </Button>
           </DialogFooter>
         </DialogContent>
