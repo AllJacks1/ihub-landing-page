@@ -15,6 +15,8 @@ import {
   CheckCircle,
   Clock,
   Loader2,
+  Receipt,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useSearchParams } from "next/navigation";
@@ -37,7 +39,11 @@ import {
   getPosSessionByToken,
   type PosProduct,
 } from "@/lib/pos-actions";
-import { createQrOrder } from "@/lib/order-actions";
+import {
+  createQrOrder,
+  getOrdersBySessionToken,
+  type SessionOrder,
+} from "@/lib/order-actions";
 
 type CartItem = PosProduct & {
   quantity: number;
@@ -59,6 +65,21 @@ function formatCurrency(value: number): string {
     style: "currency",
     currency: "PHP",
   }).format(value);
+}
+
+function statusBadgeClass(status: string): string {
+  switch (status) {
+    case "completed":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "cancelled":
+      return "border-red-200 bg-red-50 text-red-700";
+    case "ready":
+      return "border-blue-200 bg-blue-50 text-blue-700";
+    case "in_progress":
+      return "border-amber-200 bg-amber-50 text-amber-800";
+    default: // open
+      return "border-stone-200 bg-stone-50 text-stone-700";
+  }
 }
 
 export default function MenuPage() {
@@ -97,6 +118,10 @@ export default function MenuPage() {
 
   const canOrder = Boolean(sessionToken && session?.valid && !session?.expired);
 
+  const [orders, setOrders] = useState<SessionOrder[]>([]);
+  const [isOrdersOpen, setIsOrdersOpen] = useState(false);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
+
   async function loadData() {
     setIsLoading(true);
     setError(null);
@@ -132,6 +157,35 @@ export default function MenuPage() {
       setIsLoading(false);
     }
   }
+
+  async function loadOrders() {
+    if (!sessionToken) {
+      setOrders([]);
+      return;
+    }
+    setIsLoadingOrders(true);
+    try {
+      const result = await getOrdersBySessionToken(sessionToken);
+      if (result.success) {
+        setOrders(result.data);
+      } else {
+        setOrders([]);
+      }
+    } catch {
+      setOrders([]);
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  }
+
+  useEffect(() => {
+    if (canOrder) {
+      loadOrders();
+    } else {
+      setOrders([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canOrder, sessionToken]);
 
   async function validateSession() {
     if (!sessionToken) {
@@ -294,6 +348,7 @@ export default function MenuPage() {
       setCart([]);
       setIsCartOpen(false);
       toast.success("Order placed successfully!");
+      await loadOrders();
     } catch (err) {
       console.error("Submit order error:", err);
       toast.error(err instanceof Error ? err.message : "Failed to place order");
@@ -371,6 +426,17 @@ export default function MenuPage() {
             onClick={() => setOrderPlaced(null)}
           >
             Order more
+          </Button>
+          <Button
+            variant="outline"
+            className="mt-3 w-full rounded-xl"
+            onClick={() => {
+              setOrderPlaced(null);
+              setIsOrdersOpen(true);
+              loadOrders();
+            }}
+          >
+            View my orders
           </Button>
         </div>
       </main>
@@ -633,6 +699,29 @@ export default function MenuPage() {
         </div>
       </div>
 
+      {canOrder && (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            setIsOrdersOpen(true);
+            loadOrders();
+          }}
+          className="fixed bottom-6 right-28 z-40 flex items-center gap-2 rounded-full border-stone-200 bg-white px-4 py-3 font-semibold text-stone-800 shadow-lg hover:bg-stone-50"
+        >
+          <Receipt className="h-5 w-5" />
+          <span>Orders</span>
+          {orders.length > 0 && (
+            <Badge
+              variant="secondary"
+              className="ml-1 rounded-full bg-stone-200 text-stone-800"
+            >
+              {orders.length}
+            </Badge>
+          )}
+        </Button>
+      )}
+
       {/* Floating cart button + dialog */}
       <Dialog open={isCartOpen} onOpenChange={setIsCartOpen}>
         <Button
@@ -777,6 +866,109 @@ export default function MenuPage() {
               </Button>
             </div>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isOrdersOpen} onOpenChange={setIsOrdersOpen}>
+        <DialogContent className="flex max-h-[85vh] max-w-md flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between gap-2 pr-8">
+              <span>Your orders</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => loadOrders()}
+                disabled={isLoadingOrders}
+                className="h-8 w-8"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${isLoadingOrders ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto py-2">
+            {isLoadingOrders ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-[#F36508]" />
+                <p className="mt-3 text-sm text-stone-500">Loading orders...</p>
+              </div>
+            ) : orders.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Receipt className="h-10 w-10 text-stone-300" />
+                <p className="mt-3 text-sm text-stone-500">
+                  No orders yet for this table.
+                </p>
+                <p className="mt-1 text-xs text-stone-400">
+                  Place an order from the menu and it will show up here.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {orders.map((order) => (
+                  <Card key={order.id} className="border-stone-200">
+                    <CardContent className="space-y-3 p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="font-mono text-sm font-semibold text-stone-900">
+                            {order.order_number ?? order.id.slice(0, 8)}
+                          </p>
+                          <p className="text-xs text-stone-500">
+                            {new Date(order.created_at).toLocaleString(
+                              "en-PH",
+                              {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                              },
+                            )}
+                          </p>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={statusBadgeClass(order.status)}
+                        >
+                          {order.status.replace(/_/g, " ")}
+                        </Badge>
+                      </div>
+
+                      {order.items && order.items.length > 0 && (
+                        <ul className="space-y-1.5 text-sm">
+                          {order.items.map((item) => (
+                            <li
+                              key={item.id}
+                              className="flex justify-between gap-2 text-stone-700"
+                            >
+                              <span>
+                                {item.quantity}× {item.product_name}
+                              </span>
+                              <span className="shrink-0 font-medium">
+                                {formatCurrency(item.line_total)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      <Separator />
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-stone-500">Total</span>
+                        <span className="font-semibold text-stone-900">
+                          {formatCurrency(order.total_amount)}
+                        </span>
+                      </div>
+                      {order.payment_method && (
+                        <p className="text-xs text-stone-400">
+                          Paid via {order.payment_method}
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </main>

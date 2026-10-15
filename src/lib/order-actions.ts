@@ -28,6 +28,7 @@ export type OrderType =
 
 export type SessionOrder = {
   id: string;
+  order_number?: string;
   status: string;
   total_amount: number;
   created_at: string;
@@ -1326,4 +1327,93 @@ export async function payAndCompleteOrder(
   }
 
   return pay;
+}
+
+export async function getOrdersBySessionToken(sessionToken: string): Promise<{
+  success: boolean;
+  data: SessionOrder[];
+  error?: string;
+}> {
+  try {
+    if (!sessionToken?.trim()) {
+      return { success: false, data: [], error: "Missing session token" };
+    }
+
+    const sessionCheck = await requireValidQrSession(sessionToken.trim());
+    if (!sessionCheck.valid) {
+      return { success: false, data: [], error: sessionCheck.error };
+    }
+
+    const supabase = createOrderAdminClient();
+    const sessionId = sessionCheck.session.id;
+
+    const { data: orders, error } = await supabase
+      .from("pos_orders")
+      .select(
+        `
+        id,
+        order_number,
+        status,
+        total_amount,
+        created_at,
+        pos_order_items (
+          id,
+          product_name,
+          quantity,
+          unit_price,
+          line_total,
+          area_code
+        ),
+        pos_payments (
+          payment_method,
+          amount,
+          paid_at
+        )
+      `,
+      )
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return { success: false, data: [], error: error.message };
+    }
+
+    const mapped: SessionOrder[] = (orders ?? []).map((o: any) => {
+      const payments = o.pos_payments ?? [];
+      const primaryPayment =
+        payments.length > 0
+          ? [...payments].sort(
+              (a: any, b: any) =>
+                new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime(),
+            )[0]
+          : null;
+
+      return {
+        id: o.id,
+        status: o.status,
+        total_amount: toNumber(o.total_amount),
+        created_at: o.created_at,
+        payment_method: primaryPayment?.payment_method ?? null,
+        item_count: o.pos_order_items?.length ?? 0,
+        items: (o.pos_order_items ?? []).map((item: any) => ({
+          id: item.id,
+          product_name: item.product_name,
+          quantity: toNumber(item.quantity),
+          unit_price: toNumber(item.unit_price),
+          line_total: toNumber(item.line_total),
+          area_code: item.area_code ?? null,
+        })),
+        order_number: o.order_number,
+      };
+    });
+
+    return { success: true, data: mapped };
+  } catch (err) {
+    console.error("getOrdersBySessionToken error:", err);
+    return {
+      success: false,
+      data: [],
+      error: err instanceof Error ? err.message : "Failed to load orders",
+    };
+  }
 }
