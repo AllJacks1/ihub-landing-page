@@ -32,12 +32,14 @@ export type PosProduct = {
   image_url: string | null;
   is_active: boolean;
   category_name: string;
-  // NEW
   area_id: string | null;
   area_code: string | null;
   area_name: string | null;
+  stock_quantity: number;
+  reorder_level: number;
+  inventory_id: string | null;
+  branch_id: string | null;
 };
-
 export type PosSession = {
   id: string;
   table_id: string | null;
@@ -256,7 +258,7 @@ async function requirePosStaff(): Promise<
   };
 }
 
-export async function getPosProducts(): Promise<{
+export async function getPosProducts(branchId?: string): Promise<{
   success: boolean;
   data: PosProduct[];
   error?: string;
@@ -264,80 +266,121 @@ export async function getPosProducts(): Promise<{
   try {
     const supabase = await createPosSupabaseClient();
 
+    let inventoryQuery = supabase
+      .from("pos_inventory")
+      .select(
+        `
+        id,
+        branch_id,
+        product_id,
+        stock_quantity,
+        reorder_level,
+        product:product_id (
+          id,
+          category_id,
+          name,
+          description,
+          price,
+          image_url,
+          is_active,
+          area_id,
+          area_code
+        )
+      `,
+      )
+      .order("updated_at", { ascending: false });
+
+    if (branchId) {
+      inventoryQuery = inventoryQuery.eq("branch_id", branchId);
+    }
+
     const [
-      { data: products, error: productsError },
+      { data: inventoryRows, error: inventoryError },
       { data: categories },
       { data: areas },
     ] = await Promise.all([
-      supabase
-        .from("pos_products")
-        .select(
-          "id, category_id, name, description, price, image_url, is_active, area_id, area_code",
-        )
-        .order("name", { ascending: true }),
-
+      inventoryQuery,
       supabase.from("pos_categories").select("id, name"),
       supabase.from("pos_areas").select("id, code, name").eq("is_active", true),
     ]);
 
-    if (productsError) {
-      console.log("DEBUG getPosProducts: productsError =", productsError);
-      console.log(
-        "DEBUG getPosProducts: env SUPABASE_SERVICE_ROLE_KEY =",
-        process.env.SUPABASE_SERVICE_ROLE_KEY ? "SET" : "NOT SET",
-      );
-      console.log(
-        "DEBUG getPosProducts: env keys =",
-        Object.keys(process.env)
-          .filter((k) => k.includes("SUPABASE") || k.includes("DATABASE"))
-          .join(", "),
-      );
+    if (inventoryError) {
       return {
         success: false,
         data: [],
-        error: productsError.message,
+        error: inventoryError.message,
       };
     }
 
-    console.log("DEBUG getPosProducts: products =", products?.length, "items");
-    console.log(
-      "DEBUG getPosProducts: categories =",
-      categories?.length,
-      "items",
-    );
-    if (products && products.length > 0) {
-      console.log(
-        "DEBUG getPosProducts: first product =",
-        JSON.stringify(products[0]),
-      );
-    } else {
-      console.log(
-        "DEBUG getPosProducts: products is null/empty, checking count...",
-      );
-      console.log("DEBUG getPosProducts: products raw =", products);
-    }
-
-    const categoryMap = new Map(
-      (categories ?? []).map((category) => [category.id, category.name]),
-    );
+    const categoryMap = new Map((categories ?? []).map((c) => [c.id, c.name]));
 
     const areaMap = new Map(
       (areas ?? []).map((a) => [a.id, { code: a.code, name: a.name }]),
     );
 
-    const mappedProducts: PosProduct[] = (products ?? []).map((product) => {
-      const area = product.area_id ? areaMap.get(product.area_id) : null;
-      return {
-        ...product,
-        price: Number(product.price),
-        category_name: product.category_id
-          ? (categoryMap.get(product.category_id) ?? "Uncategorized")
-          : "Uncategorized",
-        area_id: product.area_id ?? null,
-        area_code: product.area_code ?? area?.code ?? null,
-        area_name: area?.name ?? null,
-      };
-    });
+    type InventoryJoinRow = {
+      id: string;
+      branch_id: string | null;
+      product_id: string;
+      stock_quantity: number | string | null;
+      reorder_level: number | string | null;
+      product:
+        | {
+            id: string;
+            category_id: string | null;
+            name: string;
+            description: string | null;
+            price: number | string;
+            image_url: string | null;
+            is_active: boolean;
+            area_id: string | null;
+            area_code: string | null;
+          }
+        | null
+        | Array<{
+            id: string;
+            category_id: string | null;
+            name: string;
+            description: string | null;
+            price: number | string;
+            image_url: string | null;
+            is_active: boolean;
+            area_id: string | null;
+            area_code: string | null;
+          }>;
+    };
+
+    const mappedProducts: PosProduct[] = (inventoryRows ?? [])
+      .flatMap((row) => {
+        const r = row as InventoryJoinRow;
+        const product = Array.isArray(r.product) ? r.product[0] : r.product;
+        if (!product || !product.is_active) return [];
+
+        const area = product.area_id ? areaMap.get(product.area_id) : null;
+
+        const item: PosProduct = {
+          id: product.id,
+          category_id: product.category_id,
+          name: product.name,
+          description: product.description,
+          price: Number(product.price),
+          image_url: product.image_url,
+          is_active: product.is_active,
+          category_name: product.category_id
+            ? (categoryMap.get(product.category_id) ?? "Uncategorized")
+            : "Uncategorized",
+          area_id: product.area_id ?? null,
+          area_code: product.area_code ?? area?.code ?? null,
+          area_name: area?.name ?? null,
+          stock_quantity: Number(r.stock_quantity ?? 0),
+          reorder_level: Number(r.reorder_level ?? 0),
+          inventory_id: r.id,
+          branch_id: r.branch_id ?? null,
+        };
+
+        return [item];
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
 
     return {
       success: true,
@@ -604,6 +647,7 @@ export async function getPosSessionByToken(qr_token: string): Promise<{
       table_id: null,
       room_id: null,
       cubicle_id: null,
+      branch_id: null,
       qr_token: "",
       expires_at: "",
       created_at: "",

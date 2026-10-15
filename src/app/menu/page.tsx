@@ -182,12 +182,29 @@ export default function MenuPage() {
     });
   }, [products, searchQuery]);
 
+  // After products load
+  const areas = useMemo(() => {
+    const map = new Map<string, string>();
+    products.forEach((p) => {
+      if (p.area_id && p.area_name) map.set(p.area_id, p.area_name);
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [products]);
+
+  const [selectedArea, setSelectedArea] = useState<string | "All">("All");
+
   const displayedProducts = useMemo(() => {
-    if (selectedCategory === "All") return searchFilteredProducts;
-    return searchFilteredProducts.filter(
-      (p) => p.category_name === selectedCategory,
-    );
-  }, [searchFilteredProducts, selectedCategory]);
+    let list = searchFilteredProducts;
+    if (selectedCategory !== "All") {
+      list = list.filter((p) => p.category_name === selectedCategory);
+    }
+    if (selectedArea !== "All") {
+      list = list.filter((p) => p.area_id === selectedArea);
+    }
+    // inventory sync (from previous step)
+    // list = list.filter((p) => p.in_stock !== false);
+    return list;
+  }, [searchFilteredProducts, selectedCategory, selectedArea]);
 
   const subtotal = useMemo(() => {
     return cart.reduce((total, item) => total + item.price * item.quantity, 0);
@@ -362,7 +379,7 @@ export default function MenuPage() {
     <main className="min-h-screen bg-stone-50 pb-24">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-24 mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="rounded-xl bg-[#F36508] p-3">
               <Package className="h-6 w-6 text-white" />
@@ -375,11 +392,6 @@ export default function MenuPage() {
                 Scan to order. Pick up at the counter.
               </p>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2 text-sm text-stone-500">
-            <Smartphone className="h-4 w-4" />
-            <span>Mobile-friendly</span>
           </div>
         </div>
 
@@ -590,6 +602,11 @@ export default function MenuPage() {
                           <Badge variant="outline" className="text-xs">
                             {product.category_name}
                           </Badge>
+                          {product.area_name && (
+                            <Badge variant="outline" className="text-xs">
+                              {product.area_name}
+                            </Badge>
+                          )}
                         </div>
                       </div>
                     </div>
