@@ -361,41 +361,252 @@ function mapPosPayment(row: Record<string, unknown>): PosPayment {
 async function recalculateOrderTotals(
   supabase: SupabaseClient,
   orderId: string,
-): Promise<{ subtotal: number; total: number }> {
+): Promise<{
+  success: boolean;
+  subtotal: number;
+  total: number;
+  error?: string;
+}> {
+  // 1. Fetch order and branch
+  const { data: order, error: orderErr } = await supabase
+    .from("pos_orders")
+    .select("branch_id")
+    .eq("id", orderId)
+    .single();
+
+  if (orderErr || !order) {
+    return { success: false, subtotal: 0, total: 0, error: "Order not found" };
+  }
+
+  // 2. Fetch billing settings
+  let vatEnabled = true;
+  let vatRate = 12;
+  let scEnabled = true;
+  let scRate = 5;
+  let priceMode = "exclusive";
+
+  if (order.branch_id) {
+    const { data: settings } = await supabase
+      .from("pos_billing_settings")
+      .select("*")
+      .eq("branch_id", order.branch_id)
+      .maybeSingle();
+
+    if (settings) {
+      vatEnabled = Boolean(settings.vat_enabled);
+      vatRate = Number(settings.vat_rate ?? 12);
+      scEnabled = Boolean(settings.service_charge_enabled);
+      scRate = Number(settings.service_charge_rate ?? 5);
+      priceMode =
+        settings.price_mode === "inclusive" ? "inclusive" : "exclusive";
+    }
+  }
+
+  // 3. Fetch order items with product/area details
   const { data: items } = await supabase
     .from("pos_order_items")
-    .select("line_total, discount_amount")
+    .select(
+      "id, quantity, unit_price, discount_amount, area_id, area_code, is_vat_exempt",
+    )
     .eq("order_id", orderId);
 
-  const subtotal = (items ?? []).reduce(
-    (sum, row) => sum + toNumber(row.line_total),
-    0,
-  );
-  const itemDiscounts = (items ?? []).reduce(
-    (sum, row) => sum + toNumber(row.discount_amount),
-    0,
+  const orderItems = items ?? [];
+  let orderSubtotal = 0;
+  let orderDiscount = 0;
+  let orderTax = 0;
+  let orderServiceCharge = 0;
+
+  // Group items by area for area-level service charges
+  const areaMap = new Map<
+    string,
+    {
+      area_id: string | null;
+      area_code: string | null;
+      items: typeof orderItems;
+      subtotal: number;
+    }
+  >();
+
+  for (const item of orderItems) {
+    const qty = toNumber(item.quantity);
+    const unitPrice = toNumber(item.unit_price);
+    const discount = toNumber(item.discount_amount);
+    const lineGross = qty * unitPrice;
+    const lineNet = Math.max(0, lineGross - discount);
+
+    orderSubtotal += lineGross;
+    orderDiscount += discount;
+
+    // VAT calculation
+    let itemVat = 0;
+    if (vatEnabled && !item.is_vat_exempt) {
+      if (priceMode === "inclusive") {
+        itemVat = (lineNet * vatRate) / (100 + vatRate);
+      } else {
+        itemVat = lineNet * (vatRate / 100);
+      }
+    }
+    orderTax += itemVat;
+
+    const areaKey = item.area_id ?? item.area_code ?? "general";
+    if (!areaMap.has(areaKey)) {
+      areaMap.set(areaKey, {
+        area_id: item.area_id ?? null,
+        area_code: item.area_code ?? null,
+        items: [],
+        subtotal: 0,
+      });
+    }
+    const areaGroup = areaMap.get(areaKey)!;
+    areaGroup.items.push(item);
+    areaGroup.subtotal += lineNet;
+  }
+
+  // 4. Calculate Area Service Charges & Proportional Item Allocation
+  const areaChargesRows = [];
+  for (const [areaKey, group] of areaMap.entries()) {
+    let areaSc = 0;
+    if (scEnabled) {
+      const rawSc = group.subtotal * (scRate / 100);
+      areaSc = Math.round(rawSc); // Half-up whole peso rounding
+    }
+
+    orderServiceCharge += areaSc;
+
+    // Proportional item service charge allocation with deterministic remainder distribution
+    const totalGroupSubtotal = group.subtotal;
+    let allocatedSum = 0;
+    const itemAllocations: {
+      id: string;
+      allocated: number;
+      remainder: number;
+    }[] = [];
+
+    if (totalGroupSubtotal > 0 && areaSc > 0) {
+      for (const item of group.items) {
+        const itemNet = Math.max(
+          0,
+          toNumber(item.quantity) * toNumber(item.unit_price) -
+            toNumber(item.discount_amount),
+        );
+        const exactShare = (itemNet / totalGroupSubtotal) * areaSc;
+        const baseAllocated = Math.floor(exactShare);
+        allocatedSum += baseAllocated;
+        itemAllocations.push({
+          id: item.id,
+          allocated: baseAllocated,
+          remainder: exactShare - baseAllocated,
+        });
+      }
+
+      // Distribute remaining pesos by descending remainder, then item ID tie-breaker
+      const remainderPesos = areaSc - allocatedSum;
+      itemAllocations.sort((a, b) => {
+        if (b.remainder !== a.remainder) return b.remainder - a.remainder;
+        return a.id.localeCompare(b.id);
+      });
+
+      for (let i = 0; i < remainderPesos; i++) {
+        itemAllocations[i % itemAllocations.length].allocated += 1;
+      }
+    }
+
+    const mapAlloc = new Map(
+      itemAllocations.map((ia) => [ia.id, ia.allocated]),
+    );
+
+    // Update individual item service charges in DB
+    for (const item of group.items) {
+      const itemSc = mapAlloc.get(item.id) ?? 0;
+      await supabase
+        .from("pos_order_items")
+        .update({
+          service_charge: itemSc,
+          vat_amount: Number(
+            (
+              Math.max(
+                0,
+                toNumber(item.quantity) * toNumber(item.unit_price) -
+                  toNumber(item.discount_amount),
+              ) *
+              (vatEnabled && !item.is_vat_exempt
+                ? priceMode === "inclusive"
+                  ? vatRate / (100 + vatRate)
+                  : vatRate / 100
+                : 0)
+            ).toFixed(2),
+          ),
+          vat_rate: vatEnabled && !item.is_vat_exempt ? vatRate : 0,
+        })
+        .eq("id", item.id);
+    }
+
+    const areaTaxable = group.subtotal;
+    const areaVat = group.items.reduce((sum, item) => {
+      const itemNet = Math.max(
+        0,
+        toNumber(item.quantity) * toNumber(item.unit_price) -
+          toNumber(item.discount_amount),
+      );
+      return (
+        sum +
+        (vatEnabled && !item.is_vat_exempt
+          ? priceMode === "inclusive"
+            ? (itemNet * vatRate) / (100 + vatRate)
+            : itemNet * (vatRate / 100)
+          : 0)
+      );
+    }, 0);
+    const areaTotal = group.subtotal + areaVat + areaSc;
+
+    areaChargesRows.push({
+      order_id: orderId,
+      area_id: group.area_id,
+      area_code: group.area_code,
+      subtotal: group.subtotal,
+      discount_amount: 0,
+      taxable_amount: areaTaxable,
+      tax_amount: Number(areaVat.toFixed(2)),
+      service_charge_rate: scRate,
+      service_charge_amount: areaSc,
+      total_amount: Number(areaTotal.toFixed(2)),
+    });
+  }
+
+  // Upsert area charges summary
+  if (areaChargesRows.length > 0) {
+    await supabase.from("pos_order_area_charges").upsert(areaChargesRows, {
+      onConflict: "order_id,area_id",
+    });
+  }
+
+  // Net selling amounts + VAT + service charges
+  const netSelling =
+    priceMode === "inclusive"
+      ? orderSubtotal - orderDiscount
+      : orderSubtotal - orderDiscount;
+  const totalAmount = Number(
+    (
+      netSelling +
+      (priceMode === "exclusive" ? orderTax : 0) +
+      orderServiceCharge
+    ).toFixed(2),
   );
 
-  // Order-level discount / tax / service charge can be added here later
-  const discount_amount = itemDiscounts;
-  const tax_amount = 0;
-  const service_charge_amount = 0;
-  const total_amount =
-    subtotal - discount_amount + tax_amount + service_charge_amount;
-
+  // 5. Update order summary totals
   await supabase
     .from("pos_orders")
     .update({
-      subtotal,
-      discount_amount,
-      tax_amount,
-      total_amount,
-      service_charge_amount,
+      subtotal: orderSubtotal,
+      discount_amount: orderDiscount,
+      tax_amount: Number(orderTax.toFixed(2)),
+      service_charge_amount: orderServiceCharge,
+      total_amount: totalAmount,
       updated_at: new Date().toISOString(),
     })
     .eq("id", orderId);
 
-  return { subtotal, total: total_amount };
+  return { success: true, subtotal: orderSubtotal, total: totalAmount };
 }
 
 async function deductInventory(

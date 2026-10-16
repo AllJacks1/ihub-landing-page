@@ -23,6 +23,16 @@ type PosCategory = {
   is_active: boolean;
 };
 
+export type PosBillingSettings = {
+  branch_id: string;
+  vat_enabled: boolean;
+  vat_rate: number;
+  service_charge_enabled: boolean;
+  service_charge_rate: number;
+  service_charge_rounding: string;
+  price_mode: "exclusive" | "inclusive";
+};
+
 export type PosProduct = {
   id: string;
   category_id: string | null;
@@ -85,6 +95,39 @@ type PosSessionRow = {
   tables: { table_number: string } | null;
   rooms: { name: string } | null;
   cubicles: { name: string } | null;
+};
+
+export type PosBranch = {
+  id: string;
+  name: string;
+  code: string | null;
+  location: string | null;
+  is_active: boolean;
+};
+
+export type PosTerminal = {
+  id: string;
+  branch_id: string;
+  name: string;
+  code: string | null;
+  terminal_type: string;
+  is_active: boolean;
+};
+
+export type PosShift = {
+  id: string;
+  branch_id: string;
+  terminal_id: string;
+  cashier_user_id: string;
+  shift_number: string | null;
+  status: string;
+  opened_at: string;
+  starting_cash: number;
+  expected_cash: number;
+  actual_cash: number | null;
+  variance: number | null;
+  notes: string | null;
+  closed_at: string | null;
 };
 
 const createLocationSchema = z.object({
@@ -1041,6 +1084,305 @@ export async function deleteLocation(input: {
       success: false,
       error:
         error instanceof Error ? error.message : "Failed to remove location",
+    };
+  }
+}
+
+export async function getPosBranches(): Promise<{
+  success: boolean;
+  data: PosBranch[];
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+    const { data, error } = await supabase
+      .from("pos_branches")
+      .select("id, name, code, location, is_active")
+      .eq("is_active", true)
+      .order("name", { ascending: true });
+
+    if (error) return { success: false, data: [], error: error.message };
+    return { success: true, data: (data ?? []) as PosBranch[] };
+  } catch (error) {
+    return {
+      success: false,
+      data: [],
+      error: error instanceof Error ? error.message : "Failed to load branches",
+    };
+  }
+}
+
+export async function getPrimaryTerminal(branchId: string): Promise<{
+  success: boolean;
+  data?: PosTerminal;
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+    const { data, error } = await supabase
+      .from("pos_terminals")
+      .select("id, branch_id, name, code, terminal_type, is_active")
+      .eq("branch_id", branchId)
+      .eq("terminal_type", "primary")
+      .eq("is_active", true)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return { success: false, error: error.message };
+    if (!data) {
+      return {
+        success: false,
+        error: "No active primary terminal for this branch",
+      };
+    }
+    return { success: true, data: data as PosTerminal };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to load terminal",
+    };
+  }
+}
+
+export async function getOpenShift(params: {
+  branch_id: string;
+  terminal_id: string;
+  cashier_user_id: string;
+}): Promise<{
+  success: boolean;
+  data?: PosShift;
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+    const { data, error } = await supabase
+      .from("pos_shifts")
+      .select("*")
+      .eq("branch_id", params.branch_id)
+      .eq("terminal_id", params.terminal_id)
+      .eq("cashier_user_id", params.cashier_user_id)
+      .eq("status", "open")
+      .order("opened_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return { success: false, error: error.message };
+    return { success: true, data: (data as PosShift) ?? undefined };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to load shift",
+    };
+  }
+}
+
+export async function openPosShift(params: {
+  branch_id: string;
+  terminal_id: string;
+  cashier_user_id: string;
+  starting_cash?: number;
+}): Promise<{
+  success: boolean;
+  data?: PosShift;
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    // Only the current user may open a shift for themselves
+    if (staff.user.id !== params.cashier_user_id) {
+      return { success: false, error: "Cannot open a shift for another user" };
+    }
+
+    const supabase = createPosAdminClient();
+
+    // Guard: one open shift per (terminal + cashier)
+    const existing = await getOpenShift(params);
+    if (existing.success && existing.data) {
+      return { success: true, data: existing.data };
+    }
+
+    const shiftNumber = `SH-${new Date()
+      .toISOString()
+      .slice(0, 10)
+      .replace(/-/g, "")}-${randomBytes(2).toString("hex").toUpperCase()}`;
+
+    const { data, error } = await supabase
+      .from("pos_shifts")
+      .insert({
+        branch_id: params.branch_id,
+        terminal_id: params.terminal_id,
+        cashier_user_id: params.cashier_user_id,
+        shift_number: shiftNumber,
+        status: "open",
+        starting_cash: params.starting_cash ?? 0,
+        expected_cash: params.starting_cash ?? 0,
+      })
+      .select("*")
+      .single();
+
+    if (error) return { success: false, error: error.message };
+    return { success: true, data: data as PosShift };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to open shift",
+    };
+  }
+}
+
+/**
+ * One-shot helper for the primary terminal page.
+ * Returns branch + primary terminal + open shift (creates the shift if needed).
+ */
+export async function ensureTerminalContext(
+  preferredBranchId?: string | null,
+): Promise<{
+  success: boolean;
+  data?: {
+    branch: PosBranch;
+    terminal: PosTerminal;
+    shift: PosShift;
+    cashier_user_id: string;
+  };
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const branchesResult = await getPosBranches();
+    if (!branchesResult.success || branchesResult.data.length === 0) {
+      return {
+        success: false,
+        error: "No active branches configured. Add a branch first.",
+      };
+    }
+
+    const branch =
+      (preferredBranchId
+        ? branchesResult.data.find((b) => b.id === preferredBranchId)
+        : null) ?? branchesResult.data[0];
+
+    const terminalResult = await getPrimaryTerminal(branch.id);
+    if (!terminalResult.success || !terminalResult.data) {
+      return {
+        success: false,
+        error:
+          terminalResult.error ??
+          "No active primary terminal for the selected branch",
+      };
+    }
+
+    let shiftResult = await getOpenShift({
+      branch_id: branch.id,
+      terminal_id: terminalResult.data.id,
+      cashier_user_id: staff.user.id,
+    });
+
+    if (!shiftResult.success || !shiftResult.data) {
+      shiftResult = await openPosShift({
+        branch_id: branch.id,
+        terminal_id: terminalResult.data.id,
+        cashier_user_id: staff.user.id,
+        starting_cash: 0,
+      });
+    }
+
+    if (!shiftResult.success || !shiftResult.data) {
+      return {
+        success: false,
+        error: shiftResult.error ?? "Could not open a shift",
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        branch,
+        terminal: terminalResult.data,
+        shift: shiftResult.data,
+        cashier_user_id: staff.user.id,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to initialise terminal context",
+    };
+  }
+}
+
+export async function getBranchBillingSettings(branchId: string): Promise<{
+  success: boolean;
+  data?: PosBillingSettings;
+  error?: string;
+}> {
+  try {
+    const supabase = createPosAdminClient();
+    const { data, error } = await supabase
+      .from("pos_billing_settings")
+      .select("*")
+      .eq("branch_id", branchId)
+      .maybeSingle();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    const settings: PosBillingSettings = data
+      ? {
+          branch_id: data.branch_id,
+          vat_enabled: Boolean(data.vat_enabled),
+          vat_rate: Number(data.vat_rate ?? 12),
+          service_charge_enabled: Boolean(data.service_charge_enabled),
+          service_charge_rate: Number(data.service_charge_rate ?? 5),
+          service_charge_rounding: data.service_charge_rounding ?? "half_up",
+          price_mode:
+            data.price_mode === "inclusive" ? "inclusive" : "exclusive",
+        }
+      : {
+          branch_id: branchId,
+          vat_enabled: true,
+          vat_rate: 12,
+          service_charge_enabled: true,
+          service_charge_rate: 5,
+          service_charge_rounding: "half_up",
+          price_mode: "exclusive",
+        };
+
+    return { success: true, data: settings };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load billing settings",
     };
   }
 }

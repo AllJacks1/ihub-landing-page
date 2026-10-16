@@ -15,13 +15,13 @@ import {
   Target,
   BarChart3,
   Layers,
+  MapPin,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,6 +60,14 @@ type ProductSale = {
 };
 
 type BranchSale = {
+  id: string;
+  name: string;
+  sales: number;
+  transactions: number;
+  percentage: number;
+};
+
+type AreaSale = {
   id: string;
   name: string;
   sales: number;
@@ -229,6 +237,44 @@ const MOCK_BRANCHES: BranchSale[] = [
   },
 ];
 
+const MOCK_AREAS: AreaSale[] = [
+  {
+    id: "1",
+    name: "iDrink",
+    sales: 89400,
+    transactions: 72,
+    percentage: 35.9,
+  },
+  {
+    id: "2",
+    name: "iEat",
+    sales: 116000,
+    transactions: 68,
+    percentage: 46.6,
+  },
+  {
+    id: "3",
+    name: "iWork/iStudy",
+    sales: 28900,
+    transactions: 28,
+    percentage: 11.6,
+  },
+  {
+    id: "4",
+    name: "iPlay",
+    sales: 14450,
+    transactions: 18,
+    percentage: 5.9,
+  },
+  {
+    id: "5",
+    name: "OneHub",
+    sales: 23450,
+    transactions: 18,
+    percentage: 5.9,
+  },
+];
+
 const MOCK_QUOTAS: QuotaItem[] = [
   {
     id: "1",
@@ -282,7 +328,7 @@ const MOCK_QUOTAS: QuotaItem[] = [
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-type Tab = "employee" | "category" | "product" | "branch" | "quota";
+type Tab = "employee" | "category" | "product" | "branch" | "area" | "quota";
 
 export default function SalesPage() {
   const [activeTab, setActiveTab] = useState<Tab>("employee");
@@ -313,6 +359,7 @@ export default function SalesPage() {
       icon: <Package className="h-4 w-4" />,
     },
     { id: "branch", label: "By Branch", icon: <Store className="h-4 w-4" /> },
+    { id: "area", label: "By Area", icon: <MapPin className="h-4 w-4" /> },
     { id: "quota", label: "Sales Quota", icon: <Target className="h-4 w-4" /> },
   ];
 
@@ -366,7 +413,8 @@ export default function SalesPage() {
               Sales Report
             </h1>
             <p className="mt-1 text-sm text-stone-500">
-              Track performance across employees, products, branches & quotas
+              Track performance across employees, products, branches, areas &
+              quotas
             </p>
           </div>
 
@@ -785,6 +833,61 @@ export default function SalesPage() {
                                 </div>
                                 <span className="w-12 text-right text-xs text-stone-500">
                                   {branch.percentage}%
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* ── By Area ── */}
+                {activeTab === "area" && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-stone-100 bg-stone-50/80">
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            Area
+                          </th>
+                          <th className="px-5 py-3.5 text-right font-medium text-stone-500">
+                            Sales
+                          </th>
+                          <th className="px-5 py-3.5 text-right font-medium text-stone-500">
+                            Transactions
+                          </th>
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            Share
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {MOCK_AREAS.map((area) => (
+                          <tr
+                            key={area.id}
+                            className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
+                          >
+                            <td className="px-5 py-4 font-medium text-stone-900">
+                              {area.name}
+                            </td>
+                            <td className="px-5 py-4 text-right font-semibold text-stone-900">
+                              {formatCurrency(area.sales)}
+                            </td>
+                            <td className="px-5 py-4 text-right text-stone-600">
+                              {area.transactions}
+                            </td>
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
+                                  <div
+                                    className="h-full rounded-full bg-[#F36509]"
+                                    style={{ width: `${area.percentage}%` }}
+                                  />
+                                </div>
+                                <span className="w-12 text-right text-xs text-stone-500">
+                                  {area.percentage}%
                                 </span>
                               </div>
                             </td>
