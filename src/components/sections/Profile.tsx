@@ -17,16 +17,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { logoutUser } from "@/lib/actions";
 
+type UserRole = "cashier" | "management" | "partner" | "crew";
+
 export function UserMenu({
   name = "Juan Dela Cruz",
   email = "juan@ihubdavao.com",
   avatarUrl,
   initials = "JD",
+  role = "crew",
 }: {
   name?: string;
   email?: string;
   avatarUrl?: string | null;
   initials?: string;
+  role?: UserRole;
 }) {
   const [isPending, startTransition] = useTransition();
 
@@ -71,6 +75,25 @@ export function UserMenu({
         </DropdownMenuGroup>
 
         <DropdownMenuSeparator />
+
+        <DropdownMenuItem className="cursor-pointer">
+          <span className="text-xs font-medium text-stone-600">Role</span>
+          <span className="ml-auto font-semibold text-stone-900">
+            <span
+              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase ${
+                role === "management"
+                  ? "bg-[#F36509]/10 text-[#F36509]"
+                  : role === "cashier"
+                    ? "bg-blue-50 text-blue-700"
+                    : role === "partner"
+                      ? "bg-purple-50 text-purple-700"
+                      : "bg-stone-100 text-stone-600"
+              }`}
+            >
+              {role}
+            </span>
+          </span>
+        </DropdownMenuItem>
 
         <DropdownMenuItem
           variant="destructive"

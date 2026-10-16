@@ -1874,12 +1874,25 @@ export async function logoutUser() {
   return { success: true as const };
 }
 
-export type CurrentUser = {
+export type UserRole = "cashier" | "management" | "partner" | "crew";
+
+export interface CurrentUser {
   full_name: string;
   email: string;
   initials: string;
   avatarUrl?: string | null;
-};
+}
+
+export interface UserWithRole {
+  full_name: string;
+  email: string;
+  initials: string;
+  avatarUrl?: string | null;
+  role: UserRole;
+}
+
+// Allowed role values used by requireRole().
+const USER_ROLES = ["cashier", "management", "partner", "crew"] as const;
 
 function getInitials(name: string | null | undefined, email?: string | null) {
   const source = (name || email || "?").trim();
@@ -1892,7 +1905,16 @@ function getInitials(name: string | null | undefined, email?: string | null) {
   return source.slice(0, 2).toUpperCase();
 }
 
-export async function getCurrentUser(): Promise<CurrentUser | null> {
+// Return the effective role for the currently signed-in user.
+// The profiles.role column is added by the platform migration (see the
+// Phase 1 SQL in the plan). If the profiles query fails (missing column,
+// connection error, etc.) the role cannot be verified: the error is
+// logged and we return null so a failed query can never grant access.
+// A missing profile row or an unrecognized role value also denies access:
+// crew is never assigned as a fallback for an unverified role.
+// NEXT_PUBLIC_DEFAULT_ROLE is never consulted; public environment
+// variables must never grant privileges.
+export async function getCurrentUser(): Promise<UserWithRole | null> {
   const supabase = await createSupabaseClient();
 
   const {
@@ -1902,27 +1924,76 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 
   if (authError || !user) return null;
 
-  // Prefer profile row (your table)
-  const { data: profile } = await supabase
-    .from("profiles") // change if your table name differs
-    .select("full_name, email")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
+  // Query the profiles table by auth_user_id (the mapping used throughout
+  // this codebase, e.g. inventory-actions.ts, pos-actions.ts,
+  // order-actions.ts). Query errors fail closed: they are logged and never
+  // silently swallowed, and they never result in a privileged role.
+  let profile: {
+    full_name: string | null;
+    email: string | null;
+    role: unknown;
+  } | null = null;
+  try {
+    const { data, error: profileError } = await supabase
+      .from("profiles")
+      .select("full_name, email, role")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("getCurrentUser: profiles query failed", profileError);
+      return null;
+    }
+    profile = data;
+  } catch (error) {
+    console.error("getCurrentUser: profiles query threw", error);
+    return null;
+  }
+
+  // No matching profile row: the authenticated user has no staff record.
+  // Deny access rather than fabricating a role.
+  if (!profile) return null;
 
   const full_name =
-    profile?.full_name ||
+    profile.full_name ||
     (user.user_metadata?.full_name as string | undefined) ||
     user.email?.split("@")[0] ||
     "User";
 
-  const email = profile?.email || user.email || "";
+  const email = profile.email || user.email || "";
+
+  // Only trust a role that is one of the four supported values. Any other
+  // value (null, typo, future role) denies access — crew is not a fallback.
+  if (!USER_ROLES.includes(profile.role as UserRole)) {
+    return null;
+  }
+
+  const role: UserRole = profile.role as UserRole;
 
   return {
     full_name,
     email,
     initials: getInitials(full_name, email),
     avatarUrl: null,
+    role,
   };
+}
+
+// Server-action authorization guard. Returns the user record when the
+// caller's role is in allowedRoles; otherwise returns null. This is the
+// single source of truth for role checks on protected pages and server
+// actions.
+export async function requireRole(
+  allowedRoles: UserRole[],
+): Promise<UserWithRole | null> {
+  const user = await getCurrentUser();
+  if (!user) return null;
+
+  if (!USER_ROLES.includes(user.role) || !allowedRoles.includes(user.role)) {
+    return null;
+  }
+
+  return user;
 }
 
 // 1. Base object schema (no refinements)

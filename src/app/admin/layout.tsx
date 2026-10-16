@@ -8,21 +8,23 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import AdminSidebar from "@/components/sections/AdminSidebar";
 import { UserMenu } from "@/components/sections/Profile";
-import { getCurrentUser } from "@/lib/actions";
+import { getCurrentUser, requireRole, UserRole } from "@/lib/actions";
 
 export default async function AdminLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  const cookieStore = await cookies();
-  const adminId = cookieStore.get("adminId")?.value;
+  // The layout is the public route boundary for /admin. Auth is verified
+  // here (auth cookie + server-side getUser()). Role enforcement moves to
+  // per-module guards (e.g. /admin/pos/terminal, /admin/iaccess/users/manage)
+  // so that Cashier, Partner, and Crew can reach only their permitted
+  // modules. The cookie alone is never treated as a role signal.
+  const user = await getCurrentUser();
 
-  if (!adminId) {
+  if (!user) {
     redirect("/");
   }
-
-  const user = await getCurrentUser();
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -36,7 +38,15 @@ export default async function AdminLayout({
               <h1 className="font-serif text-xl font-semibold tracking-tight text-stone-900">
                 iHub Admin
               </h1>
-              <p className="text-xs text-stone-500">Blog Management</p>
+              <p className="text-xs text-stone-500">
+                {user.role === "management"
+                  ? "Management"
+                  : user.role === "cashier"
+                    ? "Cashier"
+                    : user.role === "partner"
+                      ? "Partner"
+                      : "Crew / Barista"}
+              </p>
             </div>
           </div>
 
@@ -55,29 +65,22 @@ export default async function AdminLayout({
 
             <Separator orientation="vertical" className="h-8 bg-stone-200" />
 
-            {/* Notifications */}
-            {/* <Button
-              variant="ghost"
-              size="icon"
-              className="relative h-10 w-10 rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-900"
-            >
-              <Bell className="h-5 w-5" />
-              <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-[#F36509] ring-2 ring-white" />
-            </Button> */}
-
             {/* Profile */}
             <UserMenu
-              name={user?.full_name ?? "Admin"}
-              email={user?.email ?? ""}
-              initials={user?.initials ?? "AD"}
-              avatarUrl={user?.avatarUrl}
+              name={user.full_name}
+              email={user.email}
+              initials={user.initials}
+              avatarUrl={user.avatarUrl}
+              role={user.role}
             />
           </div>
         </div>
       </header>
       <div className="flex">
         <AdminSidebar />
-        {children}
+        <div className="flex-1">
+          {children}
+        </div>
       </div>
     </div>
   );

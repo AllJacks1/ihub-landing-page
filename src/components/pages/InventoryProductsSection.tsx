@@ -485,19 +485,31 @@ export default function InventoryProductsSection(
 
             <div className="space-y-2">
               <Label htmlFor="item-category">Category</Label>
-              <select
-                id="item-category"
-                value={formCategoryId}
-                onChange={(e) => setFormCategoryId(e.target.value)}
-                className={selectClassName}
-              >
-                <option value="">Select a category</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
+              {isLoading ? (
+                <div className="h-11 rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-500">
+                  <Skeleton className="h-4 w-24" />
+                </div>
+              ) : categories.length === 0 ? (
+                <p className="text-xs text-stone-400">
+                  No categories yet. Create categories in the Categories admin section.
+                </p>
+              ) : loadError ? (
+                <p className="text-xs text-red-600">Failed to load categories.</p>
+              ) : (
+                <select
+                  id="item-category"
+                  value={formCategoryId}
+                  onChange={(e) => setFormCategoryId(e.target.value)}
+                  className={selectClassName}
+                >
+                  <option value="">Select a category</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {!editingItem && (

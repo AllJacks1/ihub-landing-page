@@ -303,11 +303,17 @@ export async function getInventoryCategories(): Promise<{
     const supabase = createInventoryAdminClient();
 
     const { data, error } = await supabase
-      .from("pos_categories")
+      .from("public.pos_categories")
       .select("id, name")
       .order("name", { ascending: true });
 
     if (error) {
+      // Safe diagnostic: log the table name and error code only.
+      // The service-role key and Supabase credentials are never logged.
+      console.error(
+        "[iHUB-POS] getInventoryCategories failed: table=public.pos_categories, error=",
+        error.message,
+      );
       return { success: false, data: [], error: error.message };
     }
 

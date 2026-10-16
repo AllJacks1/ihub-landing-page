@@ -69,6 +69,9 @@ export function useInventoryItems() {
 
       if (categoriesResult.success) {
         setCategories(categoriesResult.data);
+      } else {
+        setLoadError(categoriesResult.error ?? "Failed to load categories");
+        toast.error(categoriesResult.error ?? "Failed to load categories");
       }
 
       if (branchesResult.success) {
