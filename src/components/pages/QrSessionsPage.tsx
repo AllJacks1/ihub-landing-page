@@ -48,29 +48,11 @@ import {
   getLocationLabel,
   LocationType,
 } from "@/lib/pos-locations";
-import type { useQrSessions } from "@/hooks/useQrSessions";
+import type { SessionOrder, useQrSessions } from "@/hooks/useQrSessions";
 import { Banknote, CreditCard } from "lucide-react";
 import { recordPayment, completeOrder } from "@/lib/order-actions";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
-
-/** Minimal order shape expected from the hook for the session orders modal */
-export type SessionOrder = {
-  id: string;
-  status: string;
-  total_amount: number;
-  created_at: string;
-  item_count?: number;
-  items?: {
-    id: string;
-    product_name: string;
-    quantity: number;
-    unit_price: number;
-    line_total: number;
-    area_code?: string | null;
-  }[];
-  payment_method?: string | null;
-};
 
 type QrSessionsPageProps = QrSessionsReturn & {
   getSessionStatusBadge: (status: string) => React.ReactNode;
@@ -346,7 +328,11 @@ export default function QrSessionsPage({
         );
         // still refresh so payment_method shows
       } else {
-        toast.success("Payment recorded");
+        toast.success(
+          paymentMethod === "cash" && changeDue > 0
+            ? `Paid · Change ${formatCurrency(changeDue)}`
+            : "Payment successful",
+        );
       }
 
       setPayOrder(null);
@@ -928,6 +914,56 @@ export default function QrSessionsPage({
                       </ul>
                     )}
 
+                    {/* VAT / service charge breakdown when present */}
+                    {(order.subtotal != null ||
+                      (order.tax_amount != null && order.tax_amount > 0) ||
+                      (order.service_charge_amount != null &&
+                        order.service_charge_amount > 0)) && (
+                      <div className="mt-2 space-y-0.5 border-t border-stone-200 pt-2 text-xs text-stone-500">
+                        {order.subtotal != null && (
+                          <div className="flex justify-between gap-2">
+                            <span>Subtotal</span>
+                            <span className="tabular-nums">
+                              {formatCurrency(order.subtotal)}
+                            </span>
+                          </div>
+                        )}
+                        {order.tax_amount != null && order.tax_amount > 0 && (
+                          <div className="flex justify-between gap-2">
+                            <span>
+                              VAT
+                              {order.vat_rate != null
+                                ? ` (${order.vat_rate}%)`
+                                : ""}
+                            </span>
+                            <span className="tabular-nums">
+                              {formatCurrency(order.tax_amount)}
+                            </span>
+                          </div>
+                        )}
+                        {order.service_charge_amount != null &&
+                          order.service_charge_amount > 0 && (
+                            <div className="flex justify-between gap-2">
+                              <span>
+                                Service charge
+                                {order.service_charge_rate != null
+                                  ? ` (${order.service_charge_rate}%)`
+                                  : ""}
+                              </span>
+                              <span className="tabular-nums">
+                                {formatCurrency(order.service_charge_amount)}
+                              </span>
+                            </div>
+                          )}
+                        <div className="flex justify-between gap-2 font-medium text-stone-800">
+                          <span>Total</span>
+                          <span className="tabular-nums">
+                            {formatCurrency(order.total_amount)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     {isOrderPayable(order.status) && (
                       <div className="mt-3 flex justify-end border-t border-stone-200 pt-2">
                         <Button
@@ -1376,6 +1412,51 @@ export default function QrSessionsPage({
                   ))}
                 </div>
               )}
+
+              {/* Totals breakdown (VAT / service charge) */}
+              <div className="space-y-1 rounded-xl border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm">
+                {payOrder.subtotal != null && (
+                  <div className="flex justify-between text-stone-500">
+                    <span>Subtotal</span>
+                    <span className="tabular-nums">
+                      {formatCurrency(payOrder.subtotal)}
+                    </span>
+                  </div>
+                )}
+                {payOrder.tax_amount != null && payOrder.tax_amount > 0 && (
+                  <div className="flex justify-between text-stone-500">
+                    <span>
+                      VAT
+                      {payOrder.vat_rate != null
+                        ? ` (${payOrder.vat_rate}%)`
+                        : ""}
+                    </span>
+                    <span className="tabular-nums">
+                      {formatCurrency(payOrder.tax_amount)}
+                    </span>
+                  </div>
+                )}
+                {payOrder.service_charge_amount != null &&
+                  payOrder.service_charge_amount > 0 && (
+                    <div className="flex justify-between text-stone-500">
+                      <span>
+                        Service charge
+                        {payOrder.service_charge_rate != null
+                          ? ` (${payOrder.service_charge_rate}%)`
+                          : ""}
+                      </span>
+                      <span className="tabular-nums">
+                        {formatCurrency(payOrder.service_charge_amount)}
+                      </span>
+                    </div>
+                  )}
+                <div className="flex justify-between font-semibold text-stone-900">
+                  <span>Total due</span>
+                  <span className="tabular-nums">
+                    {formatCurrency(payOrder.total_amount)}
+                  </span>
+                </div>
+              </div>
             </div>
           )}
 

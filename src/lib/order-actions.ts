@@ -1291,24 +1291,31 @@ export async function getOrdersBySessionId(sessionId: string): Promise<{
       .from("pos_orders")
       .select(
         `
-        id,
-        status,
-        total_amount,
-        created_at,
-        pos_order_items (
-          id,
-          product_name,
-          quantity,
-          unit_price,
-          line_total,
-          area_code
-        ),
-        pos_payments (
-          payment_method,
-          amount,
-          paid_at
-        )
-      `,
+    id,
+    order_number,
+    status,
+    subtotal,
+    discount_amount,
+    tax_amount,
+    service_charge_amount,
+    total_amount,
+    created_at,
+    pos_order_items (
+      id,
+      product_name,
+      quantity,
+      unit_price,
+      line_total,
+      area_code,
+      service_charge,
+      vat_amount
+    ),
+    pos_payments (
+      payment_method,
+      amount,
+      paid_at
+    )
+  `,
       )
       .eq("session_id", sessionId)
       .order("created_at", { ascending: false });
@@ -1329,7 +1336,12 @@ export async function getOrdersBySessionId(sessionId: string): Promise<{
 
       return {
         id: o.id,
+        order_number: o.order_number,
         status: o.status,
+        subtotal: toNumber(o.subtotal),
+        discount_amount: toNumber(o.discount_amount),
+        tax_amount: toNumber(o.tax_amount),
+        service_charge_amount: toNumber(o.service_charge_amount),
         total_amount: toNumber(o.total_amount),
         created_at: o.created_at,
         payment_method: primaryPayment?.payment_method ?? null,
@@ -1341,6 +1353,8 @@ export async function getOrdersBySessionId(sessionId: string): Promise<{
           unit_price: toNumber(item.unit_price),
           line_total: toNumber(item.line_total),
           area_code: item.area_code ?? null,
+          service_charge: toNumber(item.service_charge ?? 0),
+          vat_amount: toNumber(item.vat_amount ?? 0),
         })),
       };
     });

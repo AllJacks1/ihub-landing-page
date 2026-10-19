@@ -58,6 +58,12 @@ export type SessionOrder = {
     area_code?: string | null;
   }[];
   payment_method?: string | null;
+  /** Optional billing breakdown (from order when VAT / service charge applied) */
+  subtotal?: number | null;
+  tax_amount?: number | null;
+  service_charge_amount?: number | null;
+  vat_rate?: number | null;
+  service_charge_rate?: number | null;
 };
 
 export function useQrSessions() {
