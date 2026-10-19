@@ -48,11 +48,35 @@ import {
   getLocationLabel,
   LocationType,
 } from "@/lib/pos-locations";
-import type { SessionOrder, useQrSessions } from "@/hooks/useQrSessions";
+import type { useQrSessions } from "@/hooks/useQrSessions";
 import { Banknote, CreditCard } from "lucide-react";
 import { recordPayment, completeOrder } from "@/lib/order-actions";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
+
+/** Minimal order shape expected from the hook for the session orders modal */
+export type SessionOrder = {
+  id: string;
+  status: string;
+  total_amount: number;
+  created_at: string;
+  item_count?: number;
+  items?: {
+    id: string;
+    product_name: string;
+    quantity: number;
+    unit_price: number;
+    line_total: number;
+    area_code?: string | null;
+  }[];
+  payment_method?: string | null;
+  /** Optional billing breakdown (from order when VAT / service charge applied) */
+  subtotal?: number | null;
+  tax_amount?: number | null;
+  service_charge_amount?: number | null;
+  vat_rate?: number | null;
+  service_charge_rate?: number | null;
+};
 
 type QrSessionsPageProps = QrSessionsReturn & {
   getSessionStatusBadge: (status: string) => React.ReactNode;
@@ -111,6 +135,54 @@ function formatCurrency(amount: number) {
     currency: "PHP",
     minimumFractionDigits: 2,
   }).format(amount);
+}
+
+/** Senior Citizen & PWD discount (equal-share estimate).
+ *  20% discount on each eligible guest's share; if VAT is included in the bill,
+ *  VAT is stripped from that share before applying the 20%.
+ */
+function computeScPwdDiscount(params: {
+  totalBill: number;
+  seniors: number;
+  pwds: number;
+  otherGuests: number;
+  vatIncluded: boolean;
+}) {
+  const { totalBill, seniors, pwds, otherGuests, vatIncluded } = params;
+  const totalGuests = seniors + pwds + otherGuests;
+  const eligibleGuests = seniors + pwds;
+
+  if (
+    !Number.isFinite(totalBill) ||
+    totalBill < 0 ||
+    totalGuests <= 0 ||
+    ![seniors, pwds, otherGuests].every((n) => Number.isInteger(n) && n >= 0)
+  ) {
+    return {
+      valid: false,
+      totalGuests: 0,
+      eligibleGuests: 0,
+      sharePerGuest: 0,
+      totalSavings: 0,
+      amountDue: totalBill,
+    };
+  }
+
+  const sharePerGuest = totalBill / totalGuests;
+  const discountedShare = vatIncluded
+    ? (sharePerGuest / 1.12) * 0.8
+    : sharePerGuest * 0.8;
+  const totalSavings = eligibleGuests * (sharePerGuest - discountedShare);
+  const amountDue = Math.max(0, Math.round(totalBill - totalSavings));
+
+  return {
+    valid: true,
+    totalGuests,
+    eligibleGuests,
+    sharePerGuest: Math.round(sharePerGuest),
+    totalSavings: Math.round(totalSavings),
+    amountDue,
+  };
 }
 
 function getOrderStatusBadge(status: string) {
@@ -273,24 +345,65 @@ export default function QrSessionsPage({
   const [amountTendered, setAmountTendered] = useState("");
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
+  // Senior Citizen / PWD discount (payment dialog)
+  const [seniorCount, setSeniorCount] = useState(0);
+  const [pwdCount, setPwdCount] = useState(0);
+  const [otherGuestCount, setOtherGuestCount] = useState(1);
+  const [discountVatIncluded, setDiscountVatIncluded] = useState(true);
+
+  const discountResult = useMemo(
+    () =>
+      computeScPwdDiscount({
+        totalBill: payOrder?.total_amount ?? 0,
+        seniors: seniorCount,
+        pwds: pwdCount,
+        otherGuests: otherGuestCount,
+        vatIncluded: discountVatIncluded,
+      }),
+    [
+      payOrder?.total_amount,
+      seniorCount,
+      pwdCount,
+      otherGuestCount,
+      discountVatIncluded,
+    ],
+  );
+
+  const amountDue = discountResult.amountDue;
+
   const changeDue = useMemo(() => {
     if (!payOrder || paymentMethod !== "cash") return 0;
     const tendered = parseFloat(amountTendered) || 0;
-    return Math.max(0, tendered - payOrder.total_amount);
-  }, [payOrder, paymentMethod, amountTendered]);
+    return Math.max(0, tendered - amountDue);
+  }, [payOrder, paymentMethod, amountTendered, amountDue]);
 
   const canConfirmPayment = useMemo(() => {
     if (!payOrder || isProcessingPayment) return false;
+    if (!discountResult.valid && (seniorCount > 0 || pwdCount > 0))
+      return false;
     if (paymentMethod === "cash") {
-      return (parseFloat(amountTendered) || 0) >= payOrder.total_amount;
+      return (parseFloat(amountTendered) || 0) >= amountDue;
     }
     return true;
-  }, [payOrder, isProcessingPayment, paymentMethod, amountTendered]);
+  }, [
+    payOrder,
+    isProcessingPayment,
+    paymentMethod,
+    amountTendered,
+    amountDue,
+    discountResult.valid,
+    seniorCount,
+    pwdCount,
+  ]);
 
   function openPayDialog(order: SessionOrder) {
     setPayOrder(order);
     setPaymentMethod("cash");
     setAmountTendered("");
+    setSeniorCount(0);
+    setPwdCount(0);
+    setOtherGuestCount(1);
+    setDiscountVatIncluded(true);
   }
 
   function isOrderPayable(status: string) {
@@ -305,13 +418,13 @@ export default function QrSessionsPage({
     try {
       const received =
         paymentMethod === "cash"
-          ? parseFloat(amountTendered) || payOrder.total_amount
-          : payOrder.total_amount;
+          ? parseFloat(amountTendered) || amountDue
+          : amountDue;
 
       const payResult = await recordPayment({
         order_id: payOrder.id,
         payment_method: paymentMethod,
-        amount: payOrder.total_amount,
+        amount: amountDue,
         received_amount: received,
       });
 
@@ -1323,8 +1436,13 @@ export default function QrSessionsPage({
                 <>
                   Order #{payOrder.id.slice(0, 8)} ·{" "}
                   <span className="font-semibold text-stone-900">
-                    {formatCurrency(payOrder.total_amount)}
+                    {formatCurrency(amountDue)}
                   </span>
+                  {discountResult.totalSavings > 0 && (
+                    <span className="ml-1 text-stone-500">
+                      (was {formatCurrency(payOrder.total_amount)})
+                    </span>
+                  )}
                 </>
               )}
             </DialogDescription>
@@ -1413,6 +1531,91 @@ export default function QrSessionsPage({
                 </div>
               )}
 
+              {/* Senior Citizen / PWD discount */}
+              <div className="space-y-3 rounded-xl border border-stone-200 bg-white p-3">
+                <p className="text-sm font-medium text-stone-700">
+                  Senior Citizen / PWD discount
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-stone-500">Seniors</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={seniorCount}
+                      onChange={(e) =>
+                        setSeniorCount(
+                          Math.max(0, parseInt(e.target.value) || 0),
+                        )
+                      }
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-stone-500">PWDs</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={pwdCount}
+                      onChange={(e) =>
+                        setPwdCount(Math.max(0, parseInt(e.target.value) || 0))
+                      }
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-stone-500">Others</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={otherGuestCount}
+                      onChange={(e) =>
+                        setOtherGuestCount(
+                          Math.max(0, parseInt(e.target.value) || 0),
+                        )
+                      }
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-stone-600">
+                  <input
+                    type="checkbox"
+                    checked={discountVatIncluded}
+                    onChange={(e) => setDiscountVatIncluded(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-stone-300 text-[#F36509] focus:ring-[#F36509]"
+                  />
+                  Bill includes 12% VAT
+                </label>
+                {discountResult.valid && discountResult.eligibleGuests > 0 && (
+                  <div className="space-y-0.5 border-t border-stone-100 pt-2 text-xs text-stone-500">
+                    <div className="flex justify-between">
+                      <span>
+                        Eligible ({discountResult.eligibleGuests} of{" "}
+                        {discountResult.totalGuests})
+                      </span>
+                      <span className="tabular-nums">
+                        share {formatCurrency(discountResult.sharePerGuest)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-emerald-700">
+                      <span>Discount &amp; VAT savings</span>
+                      <span className="tabular-nums font-medium">
+                        −{formatCurrency(discountResult.totalSavings)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                <p className="text-[10px] leading-4 text-stone-400">
+                  Equal-share estimate. Count each person once (even if both
+                  senior &amp; PWD). Actual discount depends on eligible
+                  consumption.
+                </p>
+              </div>
+
               {/* Totals breakdown (VAT / service charge) */}
               <div className="space-y-1 rounded-xl border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm">
                 {payOrder.subtotal != null && (
@@ -1450,10 +1653,18 @@ export default function QrSessionsPage({
                       </span>
                     </div>
                   )}
+                {discountResult.totalSavings > 0 && (
+                  <div className="flex justify-between text-emerald-700">
+                    <span>SC/PWD savings</span>
+                    <span className="tabular-nums">
+                      −{formatCurrency(discountResult.totalSavings)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between font-semibold text-stone-900">
                   <span>Total due</span>
                   <span className="tabular-nums">
-                    {formatCurrency(payOrder.total_amount)}
+                    {formatCurrency(amountDue)}
                   </span>
                 </div>
               </div>
@@ -1478,7 +1689,7 @@ export default function QrSessionsPage({
               {isProcessingPayment
                 ? "Processing…"
                 : payOrder
-                  ? `Confirm ${formatCurrency(payOrder.total_amount)}`
+                  ? `Confirm ${formatCurrency(amountDue)}`
                   : "Confirm"}
             </Button>
           </DialogFooter>

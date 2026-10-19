@@ -326,8 +326,11 @@ export async function getPosProducts(branchId?: string): Promise<{
           price,
           image_url,
           is_active,
-          area_id,
-          area_code
+          area:area_id (
+            id,
+            code,
+            name
+          )
         )
       `,
       )
@@ -340,11 +343,9 @@ export async function getPosProducts(branchId?: string): Promise<{
     const [
       { data: inventoryRows, error: inventoryError },
       { data: categories },
-      { data: areas },
     ] = await Promise.all([
       inventoryQuery,
       supabase.from("pos_categories").select("id, name"),
-      supabase.from("pos_areas").select("id, code, name").eq("is_active", true),
     ]);
 
     if (inventoryError) {
@@ -357,9 +358,28 @@ export async function getPosProducts(branchId?: string): Promise<{
 
     const categoryMap = new Map((categories ?? []).map((c) => [c.id, c.name]));
 
-    const areaMap = new Map(
-      (areas ?? []).map((a) => [a.id, { code: a.code, name: a.name }]),
-    );
+    type ProductJoin = {
+      id: string;
+      category_id: string | null;
+      name: string;
+      description: string | null;
+      price: number | string;
+      image_url: string | null;
+      is_active: boolean;
+      area_id: string | null;
+      area:
+        | {
+            id: string;
+            code: string;
+            name: string;
+          }
+        | null
+        | Array<{
+            id: string;
+            code: string;
+            name: string;
+          }>;
+    };
 
     type InventoryJoinRow = {
       id: string;
@@ -367,30 +387,7 @@ export async function getPosProducts(branchId?: string): Promise<{
       product_id: string;
       stock_quantity: number | string | null;
       reorder_level: number | string | null;
-      product:
-        | {
-            id: string;
-            category_id: string | null;
-            name: string;
-            description: string | null;
-            price: number | string;
-            image_url: string | null;
-            is_active: boolean;
-            area_id: string | null;
-            area_code: string | null;
-          }
-        | null
-        | Array<{
-            id: string;
-            category_id: string | null;
-            name: string;
-            description: string | null;
-            price: number | string;
-            image_url: string | null;
-            is_active: boolean;
-            area_id: string | null;
-            area_code: string | null;
-          }>;
+      product: ProductJoin | ProductJoin[] | null;
     };
 
     const mappedProducts: PosProduct[] = (inventoryRows ?? [])
@@ -399,7 +396,10 @@ export async function getPosProducts(branchId?: string): Promise<{
         const product = Array.isArray(r.product) ? r.product[0] : r.product;
         if (!product || !product.is_active) return [];
 
-        const area = product.area_id ? areaMap.get(product.area_id) : null;
+        // Handle both object and array shapes from PostgREST
+        const area = Array.isArray(product.area)
+          ? product.area[0]
+          : product.area;
 
         const item: PosProduct = {
           id: product.id,
@@ -412,8 +412,8 @@ export async function getPosProducts(branchId?: string): Promise<{
           category_name: product.category_id
             ? (categoryMap.get(product.category_id) ?? "Uncategorized")
             : "Uncategorized",
-          area_id: product.area_id ?? null,
-          area_code: product.area_code ?? area?.code ?? null,
+          area_id: product.area_id ?? area?.id ?? null,
+          area_code: area?.code ?? null, // ← this is the important one
           area_name: area?.name ?? null,
           stock_quantity: Number(r.stock_quantity ?? 0),
           reorder_level: Number(r.reorder_level ?? 0),

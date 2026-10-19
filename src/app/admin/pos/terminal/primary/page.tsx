@@ -47,6 +47,7 @@ import {
   completeOrder,
 } from "@/lib/order-actions";
 import { getCurrentUser } from "@/lib/actions";
+import { computeScPwdDiscount } from "@/lib/utils";
 
 type CartItem = PosProduct & {
   quantity: number;
@@ -85,6 +86,12 @@ export default function PrimaryTerminalPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [amountTendered, setAmountTendered] = useState("");
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+
+  // Senior Citizen / PWD discount (payment dialog)
+  const [seniorCount, setSeniorCount] = useState(0);
+  const [pwdCount, setPwdCount] = useState(0);
+  const [otherGuestCount, setOtherGuestCount] = useState(1);
+  const [discountVatIncluded, setDiscountVatIncluded] = useState(true);
 
   // Optional: set from your branch picker / default branch
   const [branchId, setBranchId] = useState<string | undefined>(undefined);
@@ -163,37 +170,61 @@ export default function PrimaryTerminalPage() {
     });
   }, [products, searchQuery, selectedCategory]);
 
-  const { subtotal, taxAmount, serviceChargeAmount, finalTotal } =
-    useMemo(() => {
-      const sub = cart.reduce(
-        (acc, item) => acc + item.price * item.quantity,
-        0,
-      );
-      const vatRate = billingSettings?.vat_enabled
-        ? billingSettings.vat_rate
-        : 0;
-      const scRate = billingSettings?.service_charge_enabled
-        ? billingSettings.service_charge_rate
-        : 0;
-      const priceMode = billingSettings?.price_mode ?? "exclusive";
+  const {
+    subtotal,
+    eligibleSubtotal,
+    nonEligibleSubtotal,
+    taxAmount,
+    serviceChargeAmount, // SC calculated on full eligible (no discount yet)
+    finalTotal, // before SC/PWD discount
+  } = useMemo(() => {
+    console.log(cart);
 
-      let tax = 0;
-      if (vatRate > 0) {
-        tax =
-          priceMode === "inclusive"
-            ? (sub * vatRate) / (100 + vatRate)
-            : sub * (vatRate / 100);
+    let eligibleSub = 0;
+    let nonEligibleSub = 0;
+
+    for (const item of cart) {
+      const code = (item.area_code ?? "").toLowerCase();
+      const lineTotal = item.price * item.quantity;
+
+      if (code === "ieat" || code === "idrink") {
+        eligibleSub += lineTotal;
+      } else {
+        nonEligibleSub += lineTotal;
       }
-      const sc = scRate > 0 ? Math.round(sub * (scRate / 100)) : 0;
-      const total = priceMode === "inclusive" ? sub + sc : sub + tax + sc;
+    }
 
-      return {
-        subtotal: sub,
-        taxAmount: Number(tax.toFixed(2)),
-        serviceChargeAmount: sc,
-        finalTotal: Number(total.toFixed(2)),
-      };
-    }, [cart, billingSettings]);
+    const sub = eligibleSub + nonEligibleSub;
+
+    const vatRate = billingSettings?.vat_enabled ? billingSettings.vat_rate : 0;
+    const scRate = billingSettings?.service_charge_enabled
+      ? billingSettings.service_charge_rate
+      : 0;
+    const priceMode = billingSettings?.price_mode ?? "exclusive";
+
+    // Tax still calculated on the full subtotal (common practice)
+    let tax = 0;
+    if (vatRate > 0) {
+      tax =
+        priceMode === "inclusive"
+          ? (sub * vatRate) / (100 + vatRate)
+          : sub * (vatRate / 100);
+    }
+
+    // Service charge only on eligible items (before any discount)
+    const sc = scRate > 0 ? Math.round(eligibleSub * (scRate / 100)) : 0;
+
+    const total = priceMode === "inclusive" ? sub + sc : sub + tax + sc;
+
+    return {
+      subtotal: sub,
+      eligibleSubtotal: eligibleSub,
+      nonEligibleSubtotal: nonEligibleSub,
+      taxAmount: Number(tax.toFixed(2)),
+      serviceChargeAmount: sc,
+      finalTotal: Number(total.toFixed(2)),
+    };
+  }, [cart, billingSettings]);
 
   const totalItems = useMemo(() => {
     return cart.reduce((total, item) => total + item.quantity, 0);
@@ -241,17 +272,82 @@ export default function PrimaryTerminalPage() {
     setCart([]);
   }
 
-  // Use finalTotal (includes VAT + service charge) for all payment math
+  // SC/PWD discount applied on top of finalTotal (VAT + service charge included)
+  const discountResult = useMemo(
+    () =>
+      computeScPwdDiscount({
+        totalBill: eligibleSubtotal, // ← only food & drinks
+        seniors: seniorCount,
+        pwds: pwdCount,
+        otherGuests: otherGuestCount,
+        vatIncluded: discountVatIncluded,
+      }),
+    [
+      eligibleSubtotal,
+      seniorCount,
+      pwdCount,
+      otherGuestCount,
+      discountVatIncluded,
+    ],
+  );
+
+  const adjustedServiceCharge = useMemo(() => {
+    const scRate = billingSettings?.service_charge_enabled
+      ? billingSettings.service_charge_rate
+      : 0;
+
+    if (scRate <= 0 || eligibleSubtotal <= 0) return 0;
+
+    // After discount, the remaining eligible base
+    const discountedEligible = Math.max(
+      0,
+      eligibleSubtotal - (discountResult.totalSavings || 0),
+    );
+
+    return Math.round(discountedEligible * (scRate / 100));
+  }, [eligibleSubtotal, discountResult.totalSavings, billingSettings]);
+
+  const amountDue = useMemo(() => {
+    const priceMode = billingSettings?.price_mode ?? "exclusive";
+
+    // non-eligible stays full price
+    // eligible becomes (eligible - discount)
+    // then add the *adjusted* service charge
+    // tax stays as previously calculated (or adjust if you want tax only on non-eligible)
+
+    const afterDiscount =
+      nonEligibleSubtotal +
+      Math.max(0, eligibleSubtotal - (discountResult.totalSavings || 0));
+
+    if (priceMode === "inclusive") {
+      return Number((afterDiscount + adjustedServiceCharge).toFixed(2));
+    }
+
+    // exclusive: add the original tax + new SC
+    return Number(
+      (afterDiscount + taxAmount + adjustedServiceCharge).toFixed(2),
+    );
+  }, [
+    nonEligibleSubtotal,
+    eligibleSubtotal,
+    discountResult.totalSavings,
+    adjustedServiceCharge,
+    taxAmount,
+    billingSettings,
+  ]);
+
   const changeDue = useMemo(() => {
     if (paymentMethod !== "cash") return 0;
     const tendered = parseFloat(amountTendered) || 0;
-    return Math.max(0, tendered - finalTotal);
-  }, [paymentMethod, amountTendered, finalTotal]);
+    return Math.max(0, tendered - amountDue);
+  }, [paymentMethod, amountTendered, amountDue]);
 
   const canConfirmPayment = useMemo(() => {
     if (cart.length === 0 || isProcessingPayment) return false;
+    if (!discountResult.valid && (seniorCount > 0 || pwdCount > 0))
+      return false;
     if (paymentMethod === "cash") {
-      return (parseFloat(amountTendered) || 0) >= finalTotal;
+      return (parseFloat(amountTendered) || 0) >= amountDue;
     }
     return true;
   }, [
@@ -259,12 +355,23 @@ export default function PrimaryTerminalPage() {
     isProcessingPayment,
     paymentMethod,
     amountTendered,
-    finalTotal,
+    amountDue,
+    discountResult.valid,
+    seniorCount,
+    pwdCount,
   ]);
 
   function openPaymentDialog() {
     setPaymentMethod("cash");
     setAmountTendered("");
+    setSeniorCount(0);
+    setPwdCount(0);
+    setOtherGuestCount(1);
+    // Prefer branch billing: VAT-inclusive prices mean the bill already includes VAT
+    setDiscountVatIncluded(
+      billingSettings?.price_mode === "inclusive" ||
+        billingSettings?.vat_enabled === true,
+    );
     setShowPaymentDialog(true);
   }
 
@@ -289,14 +396,26 @@ export default function PrimaryTerminalPage() {
 
       const orderId = orderResult.data.id;
 
+      // Whole-peso SC/PWD savings, split across lines with largest-remainder
+      const totalSavings = Math.round(discountResult?.totalSavings || 0);
+      const n = cart.length;
+      const base = n > 0 ? Math.floor(totalSavings / n) : 0;
+      let remainder = n > 0 ? totalSavings - base * n : 0;
+
+      const items = cart.map((item) => {
+        const extra = remainder > 0 ? 1 : 0;
+        if (remainder > 0) remainder -= 1;
+        return {
+          product_id: item.id,
+          quantity: item.quantity,
+          discount_amount: base + extra, // integer pesos only
+        };
+      });
+
       // 2. Add cart lines
       const itemsResult = await addOrderItems({
         order_id: orderId,
-        items: cart.map((item) => ({
-          product_id: item.id,
-          quantity: item.quantity,
-          discount_amount: 0,
-        })),
+        items,
       });
 
       if (!itemsResult.success) {
@@ -304,16 +423,16 @@ export default function PrimaryTerminalPage() {
         return;
       }
 
-      // 3. Record payment against finalTotal (VAT + service charge included)
+      // 3. Record payment against amount due (after SC/PWD discount if any)
       const received =
         paymentMethod === "cash"
-          ? parseFloat(amountTendered) || finalTotal
-          : finalTotal;
+          ? parseFloat(amountTendered) || amountDue
+          : amountDue;
 
       const payResult = await recordPayment({
         order_id: orderId,
         payment_method: paymentMethod,
-        amount: finalTotal,
+        amount: amountDue,
         received_amount: received,
       });
 
@@ -329,7 +448,6 @@ export default function PrimaryTerminalPage() {
           completeResult.error ??
             "Payment saved but order could not be completed",
         );
-        // still clear cart — payment already recorded
       } else {
         toast.success(
           paymentMethod === "cash" && changeDue > 0
@@ -777,7 +895,8 @@ export default function PrimaryTerminalPage() {
             {billingSettings?.service_charge_enabled && (
               <div className="flex justify-between text-sm">
                 <span className="text-stone-500">
-                  Service Charge ({billingSettings.service_charge_rate}%)
+                  Service Charge ({billingSettings.service_charge_rate}%) · Food
+                  & Drinks
                 </span>
                 <span className="font-medium">
                   {formatCurrency(serviceChargeAmount)}
@@ -828,8 +947,13 @@ export default function PrimaryTerminalPage() {
             <DialogDescription>
               Total due:{" "}
               <span className="font-semibold text-stone-900">
-                {formatCurrency(finalTotal)}
+                {formatCurrency(amountDue)}
               </span>
+              {discountResult.totalSavings > 0 && (
+                <span className="ml-1 text-stone-500">
+                  (was {formatCurrency(finalTotal)})
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
 
@@ -909,6 +1033,89 @@ export default function PrimaryTerminalPage() {
               ))}
             </div>
 
+            {/* Senior Citizen / PWD discount */}
+            <div className="space-y-3 rounded-xl border border-stone-200 bg-white p-3">
+              <p className="text-sm font-medium text-stone-700">
+                Senior Citizen / PWD discount
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs text-stone-500">Seniors</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={seniorCount}
+                    onChange={(e) =>
+                      setSeniorCount(Math.max(0, parseInt(e.target.value) || 0))
+                    }
+                    className="h-9 rounded-lg border-stone-200"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-stone-500">PWDs</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={pwdCount}
+                    onChange={(e) =>
+                      setPwdCount(Math.max(0, parseInt(e.target.value) || 0))
+                    }
+                    className="h-9 rounded-lg border-stone-200"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-stone-500">Others</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={otherGuestCount}
+                    onChange={(e) =>
+                      setOtherGuestCount(
+                        Math.max(0, parseInt(e.target.value) || 0),
+                      )
+                    }
+                    className="h-9 rounded-lg border-stone-200"
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-stone-600">
+                <input
+                  type="checkbox"
+                  checked={discountVatIncluded}
+                  onChange={(e) => setDiscountVatIncluded(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-stone-300 text-[#F36509] focus:ring-[#F36509]"
+                />
+                Bill includes 12% VAT
+              </label>
+              {discountResult.valid && discountResult.eligibleGuests > 0 && (
+                <div className="space-y-0.5 border-t border-stone-100 pt-2 text-xs text-stone-500">
+                  <div className="flex justify-between">
+                    <span>
+                      Eligible ({discountResult.eligibleGuests} of{" "}
+                      {discountResult.totalGuests})
+                    </span>
+                    <span className="tabular-nums">
+                      share {formatCurrency(discountResult.sharePerGuest)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-emerald-700">
+                    <span>Discount &amp; VAT savings</span>
+                    <span className="tabular-nums font-medium">
+                      −{formatCurrency(discountResult.totalSavings)}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <p className="text-[10px] leading-4 text-stone-400">
+                Equal-share estimate. Count each person once (even if both
+                senior &amp; PWD). Actual discount depends on eligible
+                consumption.
+              </p>
+            </div>
+
             {/* Totals breakdown in payment dialog */}
             <div className="space-y-1 rounded-xl border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm">
               <div className="flex justify-between text-stone-500">
@@ -923,23 +1130,45 @@ export default function PrimaryTerminalPage() {
                   </span>
                 </div>
               )}
+              {discountResult.totalSavings > 0 &&
+                serviceChargeAmount !== adjustedServiceCharge && (
+                  <div className="flex justify-between text-xs text-stone-400">
+                    <span>Service charge (before discount)</span>
+                    <span className="line-through">
+                      {formatCurrency(serviceChargeAmount)}
+                    </span>
+                  </div>
+                )}
               {billingSettings?.service_charge_enabled &&
-                serviceChargeAmount > 0 && (
+                adjustedServiceCharge > 0 && (
                   <div className="flex justify-between text-stone-500">
                     <span>
                       Service charge ({billingSettings.service_charge_rate}%)
                     </span>
                     <span className="tabular-nums">
-                      {formatCurrency(serviceChargeAmount)}
+                      {formatCurrency(adjustedServiceCharge)}
                     </span>
                   </div>
                 )}
+              {discountResult.totalSavings > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>SC/PWD savings</span>
+                  <span className="tabular-nums">
+                    −{formatCurrency(discountResult.totalSavings)}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between font-semibold text-stone-900">
                 <span>Total due</span>
                 <span className="tabular-nums">
-                  {formatCurrency(finalTotal)}
+                  {formatCurrency(amountDue)}
                 </span>
               </div>
+              {nonEligibleSubtotal > 0 && (
+                <p className="mt-1 text-[11px] text-stone-400">
+                  Service charge & SC/PWD discount apply only to Food & Drinks
+                </p>
+              )}
             </div>
           </div>
 
@@ -960,7 +1189,7 @@ export default function PrimaryTerminalPage() {
             >
               {isProcessingPayment
                 ? "Processing…"
-                : `Confirm ${formatCurrency(finalTotal)}`}
+                : `Confirm ${formatCurrency(amountDue)}`}
             </Button>
           </DialogFooter>
         </DialogContent>

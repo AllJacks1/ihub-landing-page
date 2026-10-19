@@ -430,7 +430,7 @@ async function recalculateOrderTotals(
   for (const item of orderItems) {
     const qty = toNumber(item.quantity);
     const unitPrice = toNumber(item.unit_price);
-    const discount = toNumber(item.discount_amount);
+    const discount = Math.round(toNumber(item.discount_amount)); // whole pesos
     const lineGross = qty * unitPrice;
     const lineNet = Math.max(0, lineGross - discount);
 
@@ -462,101 +462,107 @@ async function recalculateOrderTotals(
     areaGroup.subtotal += lineNet;
   }
 
-  // 4. Calculate Area Service Charges & Proportional Item Allocation
   const areaChargesRows = [];
-  for (const [areaKey, group] of areaMap.entries()) {
-    let areaSc = 0;
-    if (scEnabled) {
-      const rawSc = group.subtotal * (scRate / 100);
-      areaSc = Math.round(rawSc); // Half-up whole peso rounding
-    }
 
+  for (const [, group] of areaMap.entries()) {
+    let areaSc = 0;
+    if (scEnabled && group.subtotal > 0) {
+      areaSc = Math.round(group.subtotal * (scRate / 100)); // whole pesos
+    }
     orderServiceCharge += areaSc;
 
-    // Proportional item service charge allocation with deterministic remainder distribution
-    const totalGroupSubtotal = group.subtotal;
-    let allocatedSum = 0;
-    const itemAllocations: {
+    // Build per-item nets (same formula as group.subtotal)
+    type Alloc = {
       id: string;
+      net: number;
       allocated: number;
       remainder: number;
-    }[] = [];
+    };
+    const itemAllocations: Alloc[] = [];
+
+    for (const item of group.items) {
+      const itemNet = Math.max(
+        0,
+        toNumber(item.quantity) * toNumber(item.unit_price) -
+          Math.round(toNumber(item.discount_amount)),
+      );
+      itemAllocations.push({
+        id: item.id,
+        net: itemNet,
+        allocated: 0,
+        remainder: 0,
+      });
+    }
+
+    const totalGroupSubtotal = itemAllocations.reduce((s, a) => s + a.net, 0);
 
     if (totalGroupSubtotal > 0 && areaSc > 0) {
-      for (const item of group.items) {
-        const itemNet = Math.max(
-          0,
-          toNumber(item.quantity) * toNumber(item.unit_price) -
-            toNumber(item.discount_amount),
-        );
-        const exactShare = (itemNet / totalGroupSubtotal) * areaSc;
-        const baseAllocated = Math.floor(exactShare);
-        allocatedSum += baseAllocated;
-        itemAllocations.push({
-          id: item.id,
-          allocated: baseAllocated,
-          remainder: exactShare - baseAllocated,
-        });
+      let allocatedSum = 0;
+
+      for (const a of itemAllocations) {
+        if (a.net <= 0) continue; // no SC on fully discounted lines
+        const exactShare = (a.net / totalGroupSubtotal) * areaSc;
+        a.allocated = Math.floor(exactShare);
+        a.remainder = exactShare - a.allocated;
+        allocatedSum += a.allocated;
       }
 
-      // Distribute remaining pesos by descending remainder, then item ID tie-breaker
+      // Hamilton / largest-remainder: give leftover pesos to highest fractional parts
       const remainderPesos = areaSc - allocatedSum;
-      itemAllocations.sort((a, b) => {
-        if (b.remainder !== a.remainder) return b.remainder - a.remainder;
-        return a.id.localeCompare(b.id);
-      });
+      const ranked = itemAllocations
+        .filter((a) => a.net > 0)
+        .sort((a, b) => {
+          if (b.remainder !== a.remainder) return b.remainder - a.remainder;
+          return a.id.localeCompare(b.id); // stable tie-break
+        });
 
-      for (let i = 0; i < remainderPesos; i++) {
-        itemAllocations[i % itemAllocations.length].allocated += 1;
+      for (let i = 0; i < remainderPesos && i < ranked.length; i++) {
+        ranked[i].allocated += 1;
       }
     }
 
-    const mapAlloc = new Map(
-      itemAllocations.map((ia) => [ia.id, ia.allocated]),
-    );
+    const mapAlloc = new Map(itemAllocations.map((a) => [a.id, a.allocated]));
 
-    // Update individual item service charges in DB
+    // Update individual item service charges + VAT in DB
     for (const item of group.items) {
       const itemSc = mapAlloc.get(item.id) ?? 0;
+      const itemNet = Math.max(
+        0,
+        toNumber(item.quantity) * toNumber(item.unit_price) -
+          Math.round(toNumber(item.discount_amount)),
+      );
+      const vatFactor =
+        vatEnabled && !item.is_vat_exempt
+          ? priceMode === "inclusive"
+            ? vatRate / (100 + vatRate)
+            : vatRate / 100
+          : 0;
+
       await supabase
         .from("pos_order_items")
         .update({
           service_charge: itemSc,
-          vat_amount: Number(
-            (
-              Math.max(
-                0,
-                toNumber(item.quantity) * toNumber(item.unit_price) -
-                  toNumber(item.discount_amount),
-              ) *
-              (vatEnabled && !item.is_vat_exempt
-                ? priceMode === "inclusive"
-                  ? vatRate / (100 + vatRate)
-                  : vatRate / 100
-                : 0)
-            ).toFixed(2),
-          ),
+          vat_amount: Number((itemNet * vatFactor).toFixed(2)),
           vat_rate: vatEnabled && !item.is_vat_exempt ? vatRate : 0,
         })
         .eq("id", item.id);
     }
 
-    const areaTaxable = group.subtotal;
     const areaVat = group.items.reduce((sum, item) => {
       const itemNet = Math.max(
         0,
         toNumber(item.quantity) * toNumber(item.unit_price) -
-          toNumber(item.discount_amount),
+          Math.round(toNumber(item.discount_amount)),
       );
+      if (!vatEnabled || item.is_vat_exempt) return sum;
       return (
         sum +
-        (vatEnabled && !item.is_vat_exempt
-          ? priceMode === "inclusive"
-            ? (itemNet * vatRate) / (100 + vatRate)
-            : itemNet * (vatRate / 100)
-          : 0)
+        (priceMode === "inclusive"
+          ? (itemNet * vatRate) / (100 + vatRate)
+          : itemNet * (vatRate / 100))
       );
     }, 0);
+
     const areaTotal = group.subtotal + areaVat + areaSc;
 
     areaChargesRows.push({
@@ -565,7 +571,7 @@ async function recalculateOrderTotals(
       area_code: group.area_code,
       subtotal: group.subtotal,
       discount_amount: 0,
-      taxable_amount: areaTaxable,
+      taxable_amount: group.subtotal,
       tax_amount: Number(areaVat.toFixed(2)),
       service_charge_rate: scRate,
       service_charge_amount: areaSc,
@@ -598,7 +604,7 @@ async function recalculateOrderTotals(
     .from("pos_orders")
     .update({
       subtotal: orderSubtotal,
-      discount_amount: orderDiscount,
+      discount_amount: Math.round(orderDiscount),
       tax_amount: Number(orderTax.toFixed(2)),
       service_charge_amount: orderServiceCharge,
       total_amount: totalAmount,
@@ -685,6 +691,7 @@ async function addOrderItemsInternal(
   if (orderError || !order) {
     return { success: false, error: "Order not found" };
   }
+
   if (order.status === "completed" || order.status === "cancelled") {
     return {
       success: false,
@@ -694,6 +701,7 @@ async function addOrderItemsInternal(
 
   // 2. Fetch products + area
   const productIds = items.map((i) => i.product_id);
+
   const { data: products, error: productsError } = await supabase
     .from("pos_products")
     .select("id, name, price, area_id, area_code, is_active")
@@ -720,7 +728,7 @@ async function addOrderItemsInternal(
     }
 
     const unitPrice = toNumber(product.price);
-    const discount = toNumber(item.discount_amount);
+    const discount = Math.round(toNumber(item.discount_amount));
     const lineTotal = Math.max(0, unitPrice * item.quantity - discount);
 
     rowsToInsert.push({
@@ -787,7 +795,12 @@ const addItemsSchema = z.object({
       z.object({
         product_id: z.string().uuid(),
         quantity: z.coerce.number().positive().max(999),
-        discount_amount: z.coerce.number().min(0).optional().default(0),
+        discount_amount: z.coerce
+          .number()
+          .min(0)
+          .int() // whole pesos only
+          .optional()
+          .default(0),
       }),
     )
     .min(1),
@@ -796,7 +809,7 @@ const addItemsSchema = z.object({
 const updateItemSchema = z.object({
   item_id: z.string().uuid(),
   quantity: z.coerce.number().positive().max(999).optional(),
-  discount_amount: z.coerce.number().min(0).optional(),
+  discount_amount: z.coerce.number().min(0).int().optional(),
 });
 
 const paymentSchema = z.object({
@@ -825,7 +838,7 @@ const createQrOrderSchema = z.object({
       z.object({
         product_id: z.string().uuid(),
         quantity: z.coerce.number().positive().max(999),
-        discount_amount: z.coerce.number().min(0).optional().default(0),
+        discount_amount: z.coerce.number().min(0).int().optional().default(0),
       }),
     )
     .min(1),
@@ -1101,8 +1114,9 @@ export async function updateOrderItem(
     }
 
     const quantity = validated.quantity ?? toNumber(existing.quantity);
-    const discount =
-      validated.discount_amount ?? toNumber(existing.discount_amount);
+    const discount = Math.round(
+      validated.discount_amount ?? toNumber(existing.discount_amount),
+    );
     const unitPrice = toNumber(existing.unit_price);
     const lineTotal = Math.max(0, unitPrice * quantity - discount);
 
