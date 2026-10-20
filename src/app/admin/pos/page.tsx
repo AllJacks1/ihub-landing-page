@@ -7,6 +7,7 @@ import {
   Clock,
   AlertTriangle,
   ArrowUpRight,
+  ChefHat,
 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
