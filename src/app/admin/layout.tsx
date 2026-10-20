@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import AdminSidebar from "@/components/sections/AdminSidebar";
 import { UserMenu } from "@/components/sections/Profile";
-import { getCurrentUser } from "@/lib/actions";
+import { getCurrentUser, requireRole } from "@/lib/actions";
 
 export default async function AdminLayout({
   children,
@@ -22,7 +22,11 @@ export default async function AdminLayout({
     redirect("/");
   }
 
-  const user = await getCurrentUser();
+  const user = await requireRole(["cashier", "management", "partner", "crew"]);
+
+  if (!user) {
+    redirect("/");
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback, type ReactNode } from "react";
-import { Package, Wrench } from "lucide-react";
+import { Package, Wrench, ChefHat, Coffee } from "lucide-react";
+import Link from "next/link";
 
 import { Card, CardContent } from "@/components/ui/card";
 import InventoryProductsSection from "@/components/pages/InventoryProductsSection";
@@ -52,7 +53,7 @@ export default function InventoryPage({ children }: InventoryPageProps) {
 
   return (
     <main className="flex min-h-[calc(100vh-4rem)] flex-1 flex-col bg-stone-50">
-      {/* Header — matches Sales page */}
+      {/* Header â€” matches Sales page */}
       <div className="border-b border-stone-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
         <p className="text-xs font-semibold uppercase tracking-wider text-[#F36509]">
           iHUB Admin / POS
@@ -64,6 +65,22 @@ export default function InventoryPage({ children }: InventoryPageProps) {
           Manage consumable products and reusable equipment separately for the
           Bar and Kitchen.
         </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link
+            href="/admin/pos/monitor/kitchen"
+            className="inline-flex items-center gap-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:border-[#F36509]/40 hover:bg-stone-50 hover:text-[#F36509]"
+          >
+            <ChefHat className="h-4 w-4" />
+            Kitchen Monitor
+          </Link>
+          <Link
+            href="/admin/pos/monitor/bar"
+            className="inline-flex items-center gap-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:border-[#F36509]/40 hover:bg-stone-50 hover:text-[#F36509]"
+          >
+            <Coffee className="h-4 w-4" />
+            Bar Monitor
+          </Link>
+        </div>
       </div>
 
       <div className="flex-1 p-4 sm:p-6">
