@@ -45,6 +45,7 @@ import {
   addOrderItems,
   recordPayment,
   completeOrder,
+  cancelOrder,
 } from "@/lib/order-actions";
 import { getCurrentUser } from "@/lib/actions";
 import { computeScPwdDiscount } from "@/lib/utils";
@@ -114,11 +115,6 @@ export default function PrimaryTerminalPage() {
     }
   }
 
-  useEffect(() => {
-    loadProducts();
-    loadActiveSessions();
-  }, []);
-
   async function loadProducts() {
     setIsLoading(true);
 
@@ -150,7 +146,71 @@ export default function PrimaryTerminalPage() {
   }
 
   useEffect(() => {
-    loadProducts();
+    let cancelled = false;
+
+    async function bootstrap() {
+      setIsLoading(true);
+      try {
+        const user = await getCurrentUser();
+        if (cancelled) return;
+        setCashierFullname(user?.full_name ?? "Unknown Cashier");
+
+        const ctx = await ensureTerminalContext();
+        if (cancelled) return;
+
+        if (!ctx.success || !ctx.data) {
+          setContextError(ctx.error ?? "Terminal context unavailable");
+          setContextReady(false);
+          // still try unscoped products as fallback
+          const [productsResult, categoriesResult] = await Promise.all([
+            getPosProducts(),
+            getPosCategories(),
+          ]);
+          // set them if success...
+          return;
+        }
+
+        setBranchId(ctx.data.branch.id);
+        setTerminalId(ctx.data.terminal.id);
+        setShiftId(ctx.data.shift.id);
+        setBranchName(ctx.data.branch.name);
+        setTerminalName(ctx.data.terminal.name);
+        setContextReady(true);
+        setContextError(null);
+
+        const [productsResult, categoriesResult, billingRes] =
+          await Promise.all([
+            getPosProducts(ctx.data.branch.id),
+            getPosCategories(),
+            getBranchBillingSettings(ctx.data.branch.id),
+          ]);
+
+        if (cancelled) return;
+
+        if (productsResult.success) setProducts(productsResult.data);
+        if (categoriesResult.success) {
+          setCategories(["All", ...categoriesResult.data.map((c) => c.name)]);
+        }
+        if (billingRes.success && billingRes.data) {
+          setBillingSettings(billingRes.data);
+        }
+
+        await loadActiveSessions();
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) {
+          setContextError("Failed to initialise terminal");
+          setContextReady(false);
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+
+    bootstrap();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const filteredProducts = useMemo(() => {
@@ -170,16 +230,7 @@ export default function PrimaryTerminalPage() {
     });
   }, [products, searchQuery, selectedCategory]);
 
-  const {
-    subtotal,
-    eligibleSubtotal,
-    nonEligibleSubtotal,
-    taxAmount,
-    serviceChargeAmount, // SC calculated on full eligible (no discount yet)
-    finalTotal, // before SC/PWD discount
-  } = useMemo(() => {
-    console.log(cart);
-
+  const { subtotal, eligibleSubtotal, nonEligibleSubtotal } = useMemo(() => {
     let eligibleSub = 0;
     let nonEligibleSub = 0;
 
@@ -194,37 +245,12 @@ export default function PrimaryTerminalPage() {
       }
     }
 
-    const sub = eligibleSub + nonEligibleSub;
-
-    const vatRate = billingSettings?.vat_enabled ? billingSettings.vat_rate : 0;
-    const scRate = billingSettings?.service_charge_enabled
-      ? billingSettings.service_charge_rate
-      : 0;
-    const priceMode = billingSettings?.price_mode ?? "exclusive";
-
-    // Tax still calculated on the full subtotal (common practice)
-    let tax = 0;
-    if (vatRate > 0) {
-      tax =
-        priceMode === "inclusive"
-          ? (sub * vatRate) / (100 + vatRate)
-          : sub * (vatRate / 100);
-    }
-
-    // Service charge only on eligible items (before any discount)
-    const sc = scRate > 0 ? Math.round(eligibleSub * (scRate / 100)) : 0;
-
-    const total = priceMode === "inclusive" ? sub + sc : sub + tax + sc;
-
     return {
-      subtotal: sub,
+      subtotal: eligibleSub + nonEligibleSub,
       eligibleSubtotal: eligibleSub,
       nonEligibleSubtotal: nonEligibleSub,
-      taxAmount: Number(tax.toFixed(2)),
-      serviceChargeAmount: sc,
-      finalTotal: Number(total.toFixed(2)),
     };
-  }, [cart, billingSettings]);
+  }, [cart]);
 
   const totalItems = useMemo(() => {
     return cart.reduce((total, item) => total + item.quantity, 0);
@@ -273,23 +299,58 @@ export default function PrimaryTerminalPage() {
   }
 
   // SC/PWD discount applied on top of finalTotal (VAT + service charge included)
-  const discountResult = useMemo(
-    () =>
-      computeScPwdDiscount({
-        totalBill: eligibleSubtotal, // ← only food & drinks
-        seniors: seniorCount,
-        pwds: pwdCount,
-        otherGuests: otherGuestCount,
-        vatIncluded: discountVatIncluded,
-      }),
-    [
-      eligibleSubtotal,
-      seniorCount,
-      pwdCount,
-      otherGuestCount,
-      discountVatIncluded,
-    ],
-  );
+  const discountResult = computeScPwdDiscount({
+    totalBill: eligibleSubtotal,
+    seniors: seniorCount,
+    pwds: pwdCount,
+    otherGuests: otherGuestCount,
+    vatIncluded: discountVatIncluded,
+  });
+
+  const { taxAmount, serviceChargeAmount, finalTotal } = useMemo(() => {
+    const vatRate = billingSettings?.vat_enabled ? billingSettings.vat_rate : 0;
+
+    const scRate = billingSettings?.service_charge_enabled
+      ? billingSettings.service_charge_rate
+      : 0;
+
+    const priceMode = billingSettings?.price_mode ?? "exclusive";
+
+    const afterDiscountEligible = Math.max(
+      0,
+      eligibleSubtotal - (discountResult.totalSavings || 0),
+    );
+
+    const netSelling = nonEligibleSubtotal + afterDiscountEligible;
+
+    let tax = 0;
+
+    if (vatRate > 0) {
+      tax =
+        priceMode === "inclusive"
+          ? (netSelling * vatRate) / (100 + vatRate)
+          : netSelling * (vatRate / 100);
+    }
+
+    const sc =
+      scRate > 0 ? Math.round(afterDiscountEligible * (scRate / 100)) : 0;
+
+    const total =
+      priceMode === "inclusive"
+        ? Number((netSelling + sc).toFixed(2))
+        : Number((netSelling + tax + sc).toFixed(2));
+
+    return {
+      taxAmount: Number(tax.toFixed(2)),
+      serviceChargeAmount: sc,
+      finalTotal: total,
+    };
+  }, [
+    eligibleSubtotal,
+    nonEligibleSubtotal,
+    discountResult.totalSavings,
+    billingSettings,
+  ]);
 
   const adjustedServiceCharge = useMemo(() => {
     const scRate = billingSettings?.service_charge_enabled
@@ -376,11 +437,12 @@ export default function PrimaryTerminalPage() {
   }
 
   async function handleConfirmPayment() {
-    if (!canConfirmPayment) return;
+    if (!canConfirmPayment || !branchId || !terminalId || !shiftId) return;
 
     setIsProcessingPayment(true);
+    let orderId: string | null = null;
+
     try {
-      // 1. Create walk-in order
       const orderResult = await createPosOrder({
         branch_id: branchId,
         terminal_id: terminalId,
@@ -393,37 +455,29 @@ export default function PrimaryTerminalPage() {
         toast.error(orderResult.error ?? "Failed to create order");
         return;
       }
+      orderId = orderResult.data.id;
 
-      const orderId = orderResult.data.id;
-
-      // Whole-peso SC/PWD savings, split across lines with largest-remainder
-      const totalSavings = Math.round(discountResult?.totalSavings || 0);
-      const n = cart.length;
-      const base = n > 0 ? Math.floor(totalSavings / n) : 0;
-      let remainder = n > 0 ? totalSavings - base * n : 0;
-
-      const items = cart.map((item) => {
-        const extra = remainder > 0 ? 1 : 0;
-        if (remainder > 0) remainder -= 1;
-        return {
-          product_id: item.id,
-          quantity: item.quantity,
-          discount_amount: base + extra, // integer pesos only
-        };
+      // Proportional largest-remainder only on eligible lines
+      const eligible = cart.filter((i) => {
+        const c = (i.area_code ?? "").toLowerCase();
+        return c === "ieat" || c === "idrink";
       });
+      const totalSavings = Math.round(discountResult.totalSavings || 0);
+      const discountMap = allocateDiscount(eligible, totalSavings); // helper
 
-      // 2. Add cart lines
-      const itemsResult = await addOrderItems({
-        order_id: orderId,
-        items,
-      });
+      const items = cart.map((item) => ({
+        product_id: item.id,
+        quantity: item.quantity,
+        discount_amount: discountMap.get(item.id) ?? 0,
+      }));
 
+      const itemsResult = await addOrderItems({ order_id: orderId, items });
       if (!itemsResult.success) {
         toast.error(itemsResult.error ?? "Failed to add items");
+        await cancelOrder(orderId); // clean up
         return;
       }
 
-      // 3. Record payment against amount due (after SC/PWD discount if any)
       const received =
         paymentMethod === "cash"
           ? parseFloat(amountTendered) || amountDue
@@ -438,10 +492,9 @@ export default function PrimaryTerminalPage() {
 
       if (!payResult.success) {
         toast.error(payResult.error ?? "Payment failed");
-        return;
+        return; // items + open order remain; operator can complete later
       }
 
-      // 4. Complete (deducts inventory when branch_id is set)
       const completeResult = await completeOrder(orderId);
       if (!completeResult.success) {
         toast.error(
@@ -461,52 +514,44 @@ export default function PrimaryTerminalPage() {
       setAmountTendered("");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Payment failed");
+      if (orderId) {
+        // optional: cancelOrder(orderId)
+      }
     } finally {
       setIsProcessingPayment(false);
     }
   }
 
-  useEffect(() => {
-    async function bootstrap() {
-      try {
-        const user = await getCurrentUser();
-        setCashierFullname(user?.full_name ?? "Unknown Cashier");
+  /** Largest-remainder allocation of whole-peso savings by line total */
+  function allocateDiscount(
+    items: CartItem[],
+    totalSavings: number,
+  ): Map<string, number> {
+    const map = new Map<string, number>();
+    if (items.length === 0 || totalSavings <= 0) return map;
 
-        const ctx = await ensureTerminalContext();
-        if (!ctx.success || !ctx.data) {
-          setContextError(ctx.error ?? "Terminal context unavailable");
-          setContextReady(false);
-          return;
-        }
+    const weights = items.map((i) => i.price * i.quantity);
+    const sum = weights.reduce((a, b) => a + b, 0);
+    if (sum <= 0) return map;
 
-        setBranchId(ctx.data.branch.id);
-        setTerminalId(ctx.data.terminal.id);
-        setShiftId(ctx.data.shift.id);
-        setBranchName(ctx.data.branch.name);
-        setTerminalName(ctx.data.terminal.name);
-        setContextReady(true);
-        setContextError(null);
+    let allocated = 0;
+    const remainders: { id: string; rem: number }[] = [];
 
-        // reload products scoped to this branch
-        const productsResult = await getPosProducts(ctx.data.branch.id);
-        if (productsResult.success) {
-          setProducts(productsResult.data);
-        }
+    items.forEach((item, idx) => {
+      const exact = (weights[idx] / sum) * totalSavings;
+      const floor = Math.floor(exact);
+      map.set(item.id, floor);
+      allocated += floor;
+      remainders.push({ id: item.id, rem: exact - floor });
+    });
 
-        const billingRes = await getBranchBillingSettings(ctx.data.branch.id);
-        if (billingRes.success && billingRes.data) {
-          setBillingSettings(billingRes.data);
-        }
-      } catch (e) {
-        console.error(e);
-        setContextError("Failed to initialise terminal");
-        setContextReady(false);
-      }
-    }
+    remainders
+      .sort((a, b) => b.rem - a.rem || a.id.localeCompare(b.id))
+      .slice(0, totalSavings - allocated)
+      .forEach(({ id }) => map.set(id, (map.get(id) ?? 0) + 1));
 
-    bootstrap();
-    loadActiveSessions();
-  }, []);
+    return map;
+  }
 
   const canPay =
     contextReady &&

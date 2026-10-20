@@ -375,7 +375,12 @@ async function recalculateOrderTotals(
     .single();
 
   if (orderErr || !order) {
-    return { success: false, subtotal: 0, total: 0, error: "Order not found" };
+    return {
+      success: false,
+      subtotal: 0,
+      total: 0,
+      error: "Order not found",
+    };
   }
 
   // 2. Fetch billing settings
@@ -402,21 +407,39 @@ async function recalculateOrderTotals(
     }
   }
 
-  // 3. Fetch order items with product/area details
-  const { data: items } = await supabase
+  // 3. Fetch order items
+  const { data: items, error: itemsErr } = await supabase
     .from("pos_order_items")
     .select(
       "id, quantity, unit_price, discount_amount, area_id, area_code, is_vat_exempt",
     )
     .eq("order_id", orderId);
 
+  if (itemsErr) {
+    return {
+      success: false,
+      subtotal: 0,
+      total: 0,
+      error: "Failed to fetch order items",
+    };
+  }
+
   const orderItems = items ?? [];
+
   let orderSubtotal = 0;
   let orderDiscount = 0;
   let orderTax = 0;
   let orderServiceCharge = 0;
 
-  // Group items by area for area-level service charges
+  // Only these area codes qualify for service charge.
+  const SERVICE_CHARGE_CODES = new Set(["ieat", "idrink"]);
+
+  const isServiceChargeable = (areaCode: string | null) =>
+    SERVICE_CHARGE_CODES.has((areaCode ?? "").trim().toLowerCase());
+
+  // 4. Group items by area.
+  // subtotal includes ALL items after discounts.
+  // serviceChargeSubtotal includes ONLY ieat and idrink items.
   const areaMap = new Map<
     string,
     {
@@ -424,96 +447,126 @@ async function recalculateOrderTotals(
       area_code: string | null;
       items: typeof orderItems;
       subtotal: number;
+      serviceChargeSubtotal: number;
     }
   >();
 
   for (const item of orderItems) {
     const qty = toNumber(item.quantity);
     const unitPrice = toNumber(item.unit_price);
-    const discount = Math.round(toNumber(item.discount_amount)); // whole pesos
+    const discount = Math.round(toNumber(item.discount_amount));
+
     const lineGross = qty * unitPrice;
     const lineNet = Math.max(0, lineGross - discount);
 
     orderSubtotal += lineGross;
     orderDiscount += discount;
 
-    // VAT calculation
+    // VAT applies independently of service-charge eligibility.
     let itemVat = 0;
+
     if (vatEnabled && !item.is_vat_exempt) {
-      if (priceMode === "inclusive") {
-        itemVat = (lineNet * vatRate) / (100 + vatRate);
-      } else {
-        itemVat = lineNet * (vatRate / 100);
-      }
+      itemVat =
+        priceMode === "inclusive"
+          ? (lineNet * vatRate) / (100 + vatRate)
+          : lineNet * (vatRate / 100);
     }
+
     orderTax += itemVat;
 
     const areaKey = item.area_id ?? item.area_code ?? "general";
+
     if (!areaMap.has(areaKey)) {
       areaMap.set(areaKey, {
         area_id: item.area_id ?? null,
         area_code: item.area_code ?? null,
         items: [],
         subtotal: 0,
+        serviceChargeSubtotal: 0,
       });
     }
-    const areaGroup = areaMap.get(areaKey)!;
-    areaGroup.items.push(item);
-    areaGroup.subtotal += lineNet;
+
+    const group = areaMap.get(areaKey)!;
+
+    group.items.push(item);
+    group.subtotal += lineNet;
+
+    // Only eligible items contribute to the service-charge base.
+    if (scEnabled && isServiceChargeable(item.area_code)) {
+      group.serviceChargeSubtotal += lineNet;
+    }
   }
 
   const areaChargesRows = [];
 
+  // 5. Calculate service charge per area and allocate it
+  // only to eligible items.
   for (const [, group] of areaMap.entries()) {
-    let areaSc = 0;
-    if (scEnabled && group.subtotal > 0) {
-      areaSc = Math.round(group.subtotal * (scRate / 100)); // whole pesos
-    }
+    const areaSc =
+      scEnabled && group.serviceChargeSubtotal > 0
+        ? Math.round(group.serviceChargeSubtotal * (scRate / 100))
+        : 0;
+
     orderServiceCharge += areaSc;
 
-    // Build per-item nets (same formula as group.subtotal)
-    type Alloc = {
+    type Allocation = {
       id: string;
       net: number;
       allocated: number;
       remainder: number;
     };
-    const itemAllocations: Alloc[] = [];
+
+    const allocations: Allocation[] = [];
 
     for (const item of group.items) {
+      const eligible = scEnabled && isServiceChargeable(item.area_code);
+
       const itemNet = Math.max(
         0,
         toNumber(item.quantity) * toNumber(item.unit_price) -
           Math.round(toNumber(item.discount_amount)),
       );
-      itemAllocations.push({
+
+      allocations.push({
         id: item.id,
-        net: itemNet,
+        // Ineligible items have no share of the charge.
+        net: eligible ? itemNet : 0,
         allocated: 0,
         remainder: 0,
       });
     }
 
-    const totalGroupSubtotal = itemAllocations.reduce((s, a) => s + a.net, 0);
+    const eligibleSubtotal = allocations.reduce(
+      (sum, allocation) => sum + allocation.net,
+      0,
+    );
 
-    if (totalGroupSubtotal > 0 && areaSc > 0) {
+    // Allocate whole pesos proportionally to eligible items.
+    if (eligibleSubtotal > 0 && areaSc > 0) {
       let allocatedSum = 0;
 
-      for (const a of itemAllocations) {
-        if (a.net <= 0) continue; // no SC on fully discounted lines
-        const exactShare = (a.net / totalGroupSubtotal) * areaSc;
-        a.allocated = Math.floor(exactShare);
-        a.remainder = exactShare - a.allocated;
-        allocatedSum += a.allocated;
+      for (const allocation of allocations) {
+        if (allocation.net <= 0) continue;
+
+        const exactShare = (allocation.net / eligibleSubtotal) * areaSc;
+
+        allocation.allocated = Math.floor(exactShare);
+        allocation.remainder = exactShare - allocation.allocated;
+
+        allocatedSum += allocation.allocated;
       }
 
-      // Hamilton / largest-remainder: give leftover pesos to highest fractional parts
+      // Distribute remaining pesos using largest remainders.
       const remainderPesos = areaSc - allocatedSum;
-      const ranked = itemAllocations
-        .filter((a) => a.net > 0)
+
+      const ranked = allocations
+        .filter((allocation) => allocation.net > 0)
         .sort((a, b) => {
-          if (b.remainder !== a.remainder) return b.remainder - a.remainder;
-          return a.id.localeCompare(b.id); // stable tie-break
+          if (b.remainder !== a.remainder) {
+            return b.remainder - a.remainder;
+          }
+
+          return a.id.localeCompare(b.id);
         });
 
       for (let i = 0; i < remainderPesos && i < ranked.length; i++) {
@@ -521,16 +574,22 @@ async function recalculateOrderTotals(
       }
     }
 
-    const mapAlloc = new Map(itemAllocations.map((a) => [a.id, a.allocated]));
+    const allocationMap = new Map(
+      allocations.map((allocation) => [allocation.id, allocation.allocated]),
+    );
 
-    // Update individual item service charges + VAT in DB
+    let areaVat = 0;
+
+    // Update each item's service charge and VAT.
     for (const item of group.items) {
-      const itemSc = mapAlloc.get(item.id) ?? 0;
+      const itemSc = allocationMap.get(item.id) ?? 0;
+
       const itemNet = Math.max(
         0,
         toNumber(item.quantity) * toNumber(item.unit_price) -
           Math.round(toNumber(item.discount_amount)),
       );
+
       const vatFactor =
         vatEnabled && !item.is_vat_exempt
           ? priceMode === "inclusive"
@@ -538,32 +597,32 @@ async function recalculateOrderTotals(
             : vatRate / 100
           : 0;
 
-      await supabase
+      const itemVat = itemNet * vatFactor;
+
+      areaVat += itemVat;
+
+      const { error: updateItemErr } = await supabase
         .from("pos_order_items")
         .update({
           service_charge: itemSc,
-          vat_amount: Number((itemNet * vatFactor).toFixed(2)),
+          vat_amount: Number(itemVat.toFixed(2)),
           vat_rate: vatEnabled && !item.is_vat_exempt ? vatRate : 0,
         })
         .eq("id", item.id);
+
+      if (updateItemErr) {
+        return {
+          success: false,
+          subtotal: orderSubtotal,
+          total: 0,
+          error: `Failed to update item ${item.id}`,
+        };
+      }
     }
 
-    const areaVat = group.items.reduce((sum, item) => {
-      const itemNet = Math.max(
-        0,
-        toNumber(item.quantity) * toNumber(item.unit_price) -
-          Math.round(toNumber(item.discount_amount)),
-      );
-      if (!vatEnabled || item.is_vat_exempt) return sum;
-      return (
-        sum +
-        (priceMode === "inclusive"
-          ? (itemNet * vatRate) / (100 + vatRate)
-          : itemNet * (vatRate / 100))
-      );
-    }, 0);
-
-    const areaTotal = group.subtotal + areaVat + areaSc;
+    // Area subtotal includes all items, not just eligible ones.
+    const areaTotal =
+      group.subtotal + (priceMode === "exclusive" ? areaVat : 0) + areaSc;
 
     areaChargesRows.push({
       order_id: orderId,
@@ -579,18 +638,27 @@ async function recalculateOrderTotals(
     });
   }
 
-  // Upsert area charges summary
+  // 6. Upsert area charge summaries
   if (areaChargesRows.length > 0) {
-    await supabase.from("pos_order_area_charges").upsert(areaChargesRows, {
-      onConflict: "order_id,area_id",
-    });
+    const { error: areaErr } = await supabase
+      .from("pos_order_area_charges")
+      .upsert(areaChargesRows, {
+        onConflict: "order_id,area_id",
+      });
+
+    if (areaErr) {
+      return {
+        success: false,
+        subtotal: orderSubtotal,
+        total: 0,
+        error: "Failed to update area charge summaries",
+      };
+    }
   }
 
-  // Net selling amounts + VAT + service charges
-  const netSelling =
-    priceMode === "inclusive"
-      ? orderSubtotal - orderDiscount
-      : orderSubtotal - orderDiscount;
+  // 7. Calculate final order total
+  const netSelling = orderSubtotal - orderDiscount;
+
   const totalAmount = Number(
     (
       netSelling +
@@ -599,8 +667,8 @@ async function recalculateOrderTotals(
     ).toFixed(2),
   );
 
-  // 5. Update order summary totals
-  await supabase
+  // 8. Update order summary
+  const { error: updateOrderErr } = await supabase
     .from("pos_orders")
     .update({
       subtotal: orderSubtotal,
@@ -612,7 +680,20 @@ async function recalculateOrderTotals(
     })
     .eq("id", orderId);
 
-  return { success: true, subtotal: orderSubtotal, total: totalAmount };
+  if (updateOrderErr) {
+    return {
+      success: false,
+      subtotal: orderSubtotal,
+      total: 0,
+      error: "Failed to update order totals",
+    };
+  }
+
+  return {
+    success: true,
+    subtotal: orderSubtotal,
+    total: totalAmount,
+  };
 }
 
 async function deductInventory(
@@ -702,9 +783,21 @@ async function addOrderItemsInternal(
   // 2. Fetch products + area
   const productIds = items.map((i) => i.product_id);
 
+  // 3. Fetch products with the related pos_areas table joined
   const { data: products, error: productsError } = await supabase
     .from("pos_products")
-    .select("id, name, price, area_id, area_code, is_active")
+    .select(
+      `
+    id, 
+    name, 
+    price, 
+    area_id, 
+    is_active, 
+    pos_areas (
+      code
+    )
+  `,
+    )
     .in("id", productIds);
 
   if (productsError) {
@@ -713,7 +806,7 @@ async function addOrderItemsInternal(
 
   const productMap = new Map((products ?? []).map((p) => [p.id, p]));
 
-  // 3. Build rows with area snapshot
+  // 4. Build rows with area snapshot
   const rowsToInsert = [];
   for (const item of items) {
     const product = productMap.get(item.product_id);
@@ -731,6 +824,15 @@ async function addOrderItemsInternal(
     const discount = Math.round(toNumber(item.discount_amount));
     const lineTotal = Math.max(0, unitPrice * item.quantity - discount);
 
+    // 5. Cast pos_areas to avoid the 'never' type error
+    const posArea = product.pos_areas as
+      | { code?: string }
+      | { code?: string }[]
+      | null;
+    const areaCode = Array.isArray(posArea)
+      ? (posArea[0]?.code ?? null)
+      : (posArea?.code ?? null);
+
     rowsToInsert.push({
       order_id: orderId,
       product_id: product.id,
@@ -740,11 +842,11 @@ async function addOrderItemsInternal(
       discount_amount: discount,
       line_total: lineTotal,
       area_id: product.area_id ?? null,
-      area_code: product.area_code ?? null,
+      area_code: areaCode,
     });
   }
 
-  // 4. Insert
+  // 6. Insert
   const { data: inserted, error: insertError } = await supabase
     .from("pos_order_items")
     .insert(rowsToInsert)
@@ -754,7 +856,7 @@ async function addOrderItemsInternal(
     return { success: false, error: insertError.message };
   }
 
-  // 5. Recalculate totals
+  // 7. Recalculate totals
   await recalculateOrderTotals(supabase, orderId);
 
   return {
