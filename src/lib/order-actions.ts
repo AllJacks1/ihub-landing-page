@@ -31,7 +31,10 @@ export type SessionOrder = {
   id: string;
   order_number?: string;
   status: string;
+  subtotal?: number;
   total_amount: number;
+  service_charge?: number;
+  tax_amount?: number;
   created_at: string;
   item_count?: number;
   items?: {
@@ -1433,7 +1436,7 @@ export async function getOrdersBySessionId(sessionId: string): Promise<{
         subtotal: toNumber(o.subtotal),
         discount_amount: toNumber(o.discount_amount),
         tax_amount: toNumber(o.tax_amount),
-        service_charge_amount: toNumber(o.service_charge_amount),
+        service_charge: toNumber(o.service_charge_amount),
         total_amount: toNumber(o.total_amount),
         created_at: o.created_at,
         payment_method: primaryPayment?.payment_method ?? null,
@@ -1671,6 +1674,10 @@ export async function getOrdersBySessionToken(sessionToken: string): Promise<{
         id,
         order_number,
         status,
+        subtotal,
+        discount_amount,
+        tax_amount,
+        service_charge_amount,
         total_amount,
         created_at,
         pos_order_items (
@@ -1708,6 +1715,10 @@ export async function getOrdersBySessionToken(sessionToken: string): Promise<{
       return {
         id: o.id,
         status: o.status,
+        subtotal: toNumber(o.subtotal),
+        discount_amount: toNumber(o.discount_amount),
+        tax_amount: toNumber(o.tax_amount),
+        service_charge: toNumber(o.service_charge_amount),
         total_amount: toNumber(o.total_amount),
         created_at: o.created_at,
         payment_method: primaryPayment?.payment_method ?? null,

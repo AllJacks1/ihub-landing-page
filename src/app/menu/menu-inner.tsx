@@ -7,7 +7,6 @@ import {
   Minus,
   ShoppingCart,
   Package,
-  Smartphone,
   X,
   Trash2,
   QrCode,
@@ -45,9 +44,7 @@ import {
   type SessionOrder,
 } from "@/lib/order-actions";
 
-type CartItem = PosProduct & {
-  quantity: number;
-};
+type CartItem = PosProduct & { quantity: number };
 
 const REQUIRED_CATEGORIES = [
   "Food",
@@ -59,6 +56,8 @@ const REQUIRED_CATEGORIES = [
 ] as const;
 
 type Category = (typeof REQUIRED_CATEGORIES)[number];
+
+const BRAND = "#F36508";
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-PH", {
@@ -77,11 +76,59 @@ function statusBadgeClass(status: string): string {
       return "border-blue-200 bg-blue-50 text-blue-700";
     case "in_progress":
       return "border-amber-200 bg-amber-50 text-amber-800";
-    default: // open
+    default:
       return "border-stone-200 bg-stone-50 text-stone-700";
   }
 }
 
+/* ── Skeletons ─────────────────────────────────────────────────────────── */
+function MenuSkeleton() {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div
+          key={i}
+          className="animate-pulse overflow-hidden rounded-2xl border border-stone-200/80 bg-white"
+        >
+          <div className="h-36 bg-stone-200/70" />
+          <div className="space-y-3 p-4">
+            <div className="flex justify-between gap-4">
+              <div className="h-4 w-2/3 rounded bg-stone-200" />
+              <div className="h-4 w-14 rounded bg-orange-100" />
+            </div>
+            <div className="h-3 w-full rounded bg-stone-200/80" />
+            <div className="h-9 w-full rounded-xl bg-stone-200/60" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SectionState({
+  icon: Icon,
+  title,
+  body,
+  action,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  body: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-h-[50vh] flex-col items-center justify-center px-6 text-center">
+      <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-stone-200/80">
+        <Icon className="h-8 w-8 text-stone-300" />
+      </div>
+      <h3 className="mt-5 text-base font-semibold text-stone-900">{title}</h3>
+      <div className="mt-1.5 max-w-sm text-sm text-stone-500">{body}</div>
+      {action && <div className="mt-6">{action}</div>}
+    </div>
+  );
+}
+
+/* ── Main ──────────────────────────────────────────────────────────────── */
 export default function MenuInner() {
   const searchParams = useSearchParams();
   const sessionToken = searchParams.get("session");
@@ -94,6 +141,7 @@ export default function MenuInner() {
   const [selectedCategory, setSelectedCategory] = useState<Category | "All">(
     "All",
   );
+  const [selectedArea, setSelectedArea] = useState<string | "All">("All");
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -106,7 +154,6 @@ export default function MenuInner() {
     updatedExisting?: boolean;
   } | null>(null);
 
-  // Session validation
   const [session, setSession] = useState<{
     valid: boolean;
     expired: boolean;
@@ -122,30 +169,26 @@ export default function MenuInner() {
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
 
+  /* ── Data loading ──────────────────────────────────────────────────── */
   async function loadData() {
     setIsLoading(true);
     setError(null);
-
     try {
       const [productsResult, categoriesResult] = await Promise.all([
         getPosProducts(),
         getPosCategories(),
       ]);
-
       if (productsResult.success) {
         setProducts(productsResult.data);
       } else {
         setError(productsResult.error ?? "Failed to load products");
       }
-
       if (categoriesResult.success) {
-        const availableCategories = new Set(
-          categoriesResult.data.map((c) => c.name),
-        );
-        const requiredCategories = REQUIRED_CATEGORIES.filter((c) =>
-          availableCategories.has(c),
-        );
-        setCategories(["All", ...requiredCategories]);
+        const available = new Set(categoriesResult.data.map((c) => c.name));
+        setCategories([
+          "All",
+          ...REQUIRED_CATEGORIES.filter((c) => available.has(c)),
+        ]);
       } else if (!productsResult.success) {
         console.error(categoriesResult.error);
       }
@@ -166,11 +209,7 @@ export default function MenuInner() {
     setIsLoadingOrders(true);
     try {
       const result = await getOrdersBySessionToken(sessionToken);
-      if (result.success) {
-        setOrders(result.data);
-      } else {
-        setOrders([]);
-      }
+      setOrders(result.success ? result.data : []);
     } catch {
       setOrders([]);
     } finally {
@@ -178,21 +217,11 @@ export default function MenuInner() {
     }
   }
 
-  useEffect(() => {
-    if (canOrder) {
-      loadOrders();
-    } else {
-      setOrders([]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canOrder, sessionToken]);
-
   async function validateSession() {
     if (!sessionToken) {
       setSession(null);
       return;
     }
-
     setIsValidatingSession(true);
     try {
       const result = await getPosSessionByToken(sessionToken);
@@ -202,7 +231,9 @@ export default function MenuInner() {
           expired: result.data.expired,
           table_number: result.data.table_number,
           room_name: result.data.room_name,
-          cubicle_name: (result.data as any).cubicle_name ?? null,
+          cubicle_name:
+            (result.data as { cubicle_name?: string | null }).cubicle_name ??
+            null,
         });
       } else {
         setSession({ valid: false, expired: false });
@@ -216,7 +247,6 @@ export default function MenuInner() {
 
   useEffect(() => {
     loadData();
-    validateSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -225,19 +255,16 @@ export default function MenuInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionToken]);
 
-  const searchFilteredProducts = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return products;
+  useEffect(() => {
+    if (canOrder) {
+      loadOrders();
+    } else {
+      setOrders([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canOrder, sessionToken]);
 
-    return products.filter((product) => {
-      return (
-        product.name.toLowerCase().includes(query) ||
-        product.description?.toLowerCase().includes(query)
-      );
-    });
-  }, [products, searchQuery]);
-
-  // After products load
+  /* ── Derived state ─────────────────────────────────────────────────── */
   const areas = useMemo(() => {
     const map = new Map<string, string>();
     products.forEach((p) => {
@@ -246,67 +273,68 @@ export default function MenuInner() {
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
   }, [products]);
 
-  const [selectedArea, setSelectedArea] = useState<string | "All">("All");
+  const searchFilteredProducts = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return products;
+    return products.filter(
+      (p) =>
+        p.name.toLowerCase().includes(query) ||
+        p.description?.toLowerCase().includes(query),
+    );
+  }, [products, searchQuery]);
 
   const displayedProducts = useMemo(() => {
     let list = searchFilteredProducts;
-    if (selectedCategory !== "All") {
+    if (selectedCategory !== "All")
       list = list.filter((p) => p.category_name === selectedCategory);
-    }
-    if (selectedArea !== "All") {
+    if (selectedArea !== "All")
       list = list.filter((p) => p.area_id === selectedArea);
-    }
-    // inventory sync (from previous step)
-    // list = list.filter((p) => p.in_stock !== false);
     return list;
   }, [searchFilteredProducts, selectedCategory, selectedArea]);
 
-  const subtotal = useMemo(() => {
-    return cart.reduce((total, item) => total + item.price * item.quantity, 0);
-  }, [cart]);
+  const categoryCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    searchFilteredProducts.forEach((p) => {
+      map.set(p.category_name, (map.get(p.category_name) ?? 0) + 1);
+    });
+    return map;
+  }, [searchFilteredProducts]);
 
-  const totalItems = useMemo(() => {
-    return cart.reduce((total, item) => total + item.quantity, 0);
-  }, [cart]);
+  const subtotal = useMemo(
+    () => cart.reduce((t, i) => t + i.price * i.quantity, 0),
+    [cart],
+  );
+  const totalItems = useMemo(
+    () => cart.reduce((t, i) => t + i.quantity, 0),
+    [cart],
+  );
 
+  /* ── Cart ops ──────────────────────────────────────────────────────── */
   function addToCart(product: PosProduct) {
     if (!canOrder) {
       toast.error("A valid QR session is required to order");
       return;
     }
-    setCart((currentCart) => {
-      const existing = currentCart.find((item) => item.id === product.id);
-      if (existing) {
-        return currentCart.map((item) =>
-          item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item,
-        );
-      }
-      return [...currentCart, { ...product, quantity: 1 }];
+    setCart((cur) => {
+      const existing = cur.find((i) => i.id === product.id);
+      return existing
+        ? cur.map((i) =>
+            i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i,
+          )
+        : [...cur, { ...product, quantity: 1 }];
     });
   }
 
-  function increaseQuantity(id: string) {
-    setCart((currentCart) =>
-      currentCart.map((item) =>
-        item.id === id ? { ...item, quantity: item.quantity + 1 } : item,
-      ),
+  function setQuantity(id: string, qty: number) {
+    setCart((cur) =>
+      qty <= 0
+        ? cur.filter((i) => i.id !== id)
+        : cur.map((i) => (i.id === id ? { ...i, quantity: qty } : i)),
     );
   }
 
-  function decreaseQuantity(id: string) {
-    setCart((currentCart) => {
-      const item = currentCart.find((i) => i.id === id);
-      if (!item || item.quantity <= 1) return currentCart;
-      return currentCart.map((i) =>
-        i.id === id ? { ...i, quantity: i.quantity - 1 } : i,
-      );
-    });
-  }
-
   function removeFromCart(id: string) {
-    setCart((currentCart) => currentCart.filter((item) => item.id !== id));
+    setCart((cur) => cur.filter((i) => i.id !== id));
   }
 
   function clearCart() {
@@ -322,7 +350,6 @@ export default function MenuInner() {
       toast.error("Your cart is empty");
       return;
     }
-
     setIsSubmitting(true);
     try {
       const result = await createQrOrder({
@@ -334,12 +361,10 @@ export default function MenuInner() {
           discount_amount: 0,
         })),
       });
-
       if (!result.success || !result.data) {
         toast.error(result.error ?? "Failed to place order");
         return;
       }
-
       setOrderPlaced({
         orderNumber: result.data.order_number,
         total: result.data.total_amount,
@@ -365,43 +390,64 @@ export default function MenuInner() {
     return "Valid session";
   }
 
-  // ── Loading ──────────────────────────────────────────────────────────────
+  /* ── Loading / error / success screens ─────────────────────────────── */
   if (isLoading) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-stone-50 p-6">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-12 w-12 animate-spin rounded-full border-4 border-[#F36508] border-t-transparent" />
-          <p className="text-sm font-medium text-stone-600">Loading menu...</p>
+      <main className="min-h-screen bg-stone-50">
+        <div className="sticky top-0 z-30 border-b border-stone-200/80 bg-stone-50/90 backdrop-blur">
+          <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:px-8">
+            <div className="h-8 w-8 animate-pulse rounded-xl bg-orange-100" />
+            <div className="h-4 w-24 animate-pulse rounded bg-stone-200" />
+          </div>
+        </div>
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mb-5 h-11 max-w-md animate-pulse rounded-xl bg-stone-200/80" />
+          <div className="mb-6 flex gap-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-9 w-24 animate-pulse rounded-full bg-stone-200/80"
+              />
+            ))}
+          </div>
+          <MenuSkeleton />
         </div>
       </main>
     );
   }
 
-  // ── Error ────────────────────────────────────────────────────────────────
   if (error) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-stone-50 p-6">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <Package className="h-12 w-12 text-stone-400" />
-          <h3 className="text-lg font-semibold text-stone-900">
-            Unable to load menu
-          </h3>
-          <p className="text-sm text-stone-500">{error}</p>
-          <Button onClick={() => loadData()}>Retry</Button>
-        </div>
+      <main className="flex min-h-screen items-center justify-center bg-stone-50 p-6">
+        <SectionState
+          icon={Package}
+          title="Unable to load menu"
+          body={error}
+          action={
+            <Button
+              onClick={() => loadData()}
+              className="rounded-xl text-white hover:bg-[#d95a08]"
+              style={{ backgroundColor: BRAND }}
+            >
+              Try again
+            </Button>
+          }
+        />
       </main>
     );
   }
 
-  // ── Order success ────────────────────────────────────────────────────────
   if (orderPlaced) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-stone-50 p-6">
-        <div className="w-full max-w-sm rounded-2xl border border-emerald-200 bg-white p-8 text-center shadow-sm">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100">
-            <CheckCircle className="h-7 w-7 text-emerald-600" />
+      <main className="flex min-h-screen items-center justify-center bg-stone-50 p-6">
+        <div className="w-full max-w-sm rounded-3xl border border-stone-200/80 bg-white p-8 text-center shadow-lg shadow-stone-200/60">
+          <div className="relative mx-auto mb-5 flex h-16 w-16 items-center justify-center">
+            <span className="absolute inset-0 animate-ping rounded-full bg-emerald-100 opacity-60" />
+            <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100">
+              <CheckCircle className="h-7 w-7 text-emerald-600" />
+            </span>
           </div>
-          <h2 className="font-serif text-xl font-semibold text-stone-900">
+          <h2 className="text-xl font-semibold tracking-tight text-stone-900">
             Order placed!
           </h2>
           <p className="mt-2 text-sm text-stone-500">
@@ -410,19 +456,20 @@ export default function MenuInner() {
               : "Your order has been sent to the kitchen."}
           </p>
           {orderPlaced.orderNumber && (
-            <p className="mt-3 font-mono text-sm text-stone-600">
+            <p className="mt-3 inline-flex rounded-full bg-stone-100 px-3 py-1 font-mono text-xs text-stone-600">
               {orderPlaced.orderNumber}
             </p>
           )}
-          <p className="mt-1 text-lg font-semibold text-stone-900">
+          <p className="mt-2 text-2xl font-bold tracking-tight text-stone-900">
             {formatCurrency(orderPlaced.total)}
           </p>
-          <p className="mt-4 text-xs text-stone-400">
+          <p className="mt-4 text-xs leading-relaxed text-stone-400">
             Please wait for staff to confirm. You can keep adding items on this
-            table. Staff will charge once when you pay.
+            table — staff will charge once when you pay.
           </p>
           <Button
-            className="mt-6 w-full rounded-xl bg-[#F36508] text-white hover:bg-[#d95a08]"
+            className="mt-6 w-full rounded-xl text-white hover:bg-[#d95a08]"
+            style={{ backgroundColor: BRAND }}
             onClick={() => setOrderPlaced(null)}
           >
             Order more
@@ -443,380 +490,475 @@ export default function MenuInner() {
     );
   }
 
-  // ── Main menu ────────────────────────────────────────────────────────────
+  /* ── Main menu ─────────────────────────────────────────────────────── */
   return (
-    <main className="min-h-screen bg-stone-50 pb-24">
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mt-24 mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-[#F36508] p-3">
-              <Package className="h-6 w-6 text-white" />
+    <main className="min-h-screen bg-stone-50 pb-28">
+      {/* Sticky glass header */}
+      <header className="sticky top-0 z-30 border-b border-stone-200/80 bg-stone-50/90 backdrop-blur-md">
+        <div className=" mt-10"></div>
+        {canOrder && (
+          <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl shadow-sm"
+                style={{ backgroundColor: BRAND }}
+              >
+                <Package className="h-4 w-4 text-white" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="truncate text-sm font-semibold tracking-tight text-stone-900">
+                  {getSessionLabel()}
+                </h1>
+                <p className="truncate text-[11px] leading-tight text-stone-500">
+                  Scan to order · Pick up at the counter
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="font-serif text-2xl font-semibold tracking-tight text-stone-900">
-                Menu
-              </h1>
-              <p className="text-sm text-stone-500">
-                Scan to order. Pick up at the counter.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Session status */}
-        {(sessionToken || isValidatingSession) && (
-          <div className="mb-6">
-            {isValidatingSession ? (
-              <Card className="border-stone-200 bg-white">
-                <CardContent className="flex items-center gap-3 p-4">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#F36508] border-t-transparent" />
-                  <p className="text-sm font-medium text-stone-600">
-                    Validating session...
-                  </p>
-                </CardContent>
-              </Card>
-            ) : session?.valid ? (
-              <Card className="border-emerald-200 bg-emerald-50">
-                <CardContent className="flex items-center justify-between gap-4 p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-xl bg-emerald-100 p-2">
-                      <CheckCircle className="h-5 w-5 text-emerald-700" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-emerald-800">
-                        Session Active
-                      </p>
-                      <p className="text-sm text-emerald-600">
-                        {getSessionLabel()}
-                      </p>
-                    </div>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className="border-emerald-200 bg-emerald-50 text-emerald-700"
+            <div className="flex items-center gap-2">
+              <Badge className="hidden border-0 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 sm:inline-flex">
+                <QrCode className="mr-1 h-3 w-3" />
+                Ordering on
+              </Badge>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCartOpen(true);
+                }}
+                className="relative flex h-9 items-center gap-1.5 rounded-full bg-white px-3 text-sm font-medium text-stone-700 ring-1 ring-stone-200 transition hover:bg-stone-100 sm:hidden"
+              >
+                <ShoppingCart className="h-4 w-4" />
+                {totalItems > 0 && (
+                  <span
+                    className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white"
+                    style={{ backgroundColor: BRAND }}
                   >
-                    <QrCode className="mr-1 h-3 w-3" />
-                    QR Order
-                  </Badge>
-                </CardContent>
-              </Card>
-            ) : (
-              <Card className="border-red-200 bg-red-50">
-                <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
-                  <div className="rounded-xl bg-red-100 p-3">
-                    {session?.expired ? (
-                      <Clock className="h-6 w-6 text-red-600" />
-                    ) : (
-                      <AlertCircle className="h-6 w-6 text-red-600" />
-                    )}
-                  </div>
-                  <h3 className="text-lg font-semibold text-red-800">
-                    {session?.expired
-                      ? "This QR session has expired"
-                      : "Invalid or inactive QR session"}
-                  </h3>
-                  <p className="max-w-sm text-sm text-red-600">
-                    {session?.expired
-                      ? "The ordering session for this table/room has expired. Please ask staff to create a new session."
-                      : "This QR code is not valid or the session has been deactivated. Please ask staff for assistance."}
-                  </p>
-                  <p className="text-xs text-red-500">
-                    You can still browse the menu, but ordering is disabled.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
-
-        {/* No session token at all */}
-        {!sessionToken && !isValidatingSession && (
-          <div className="mb-6">
-            <Card className="border-amber-200 bg-amber-50">
-              <CardContent className="flex items-center gap-3 p-4">
-                <AlertCircle className="h-5 w-5 shrink-0 text-amber-600" />
-                <div>
-                  <p className="text-sm font-medium text-amber-800">
-                    No QR session
-                  </p>
-                  <p className="text-xs text-amber-700">
-                    Scan a table/room QR code to place an order. Browsing only
-                    for now.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+                    {totalItems}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         )}
 
         {/* Search */}
-        <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search products..."
-            className="h-11 rounded-xl border-stone-200 bg-white pl-10 pr-10"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
+        <div className="mx-auto max-w-7xl px-4 pb-3 sm:px-6 lg:px-8">
+          <div className="relative max-w-md">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search the menu..."
+              className="h-10 rounded-full border-stone-200 bg-white pl-10 pr-10 shadow-sm focus-visible:ring-orange-500/30"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-stone-400 transition hover:bg-stone-100 hover:text-stone-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        {/* Categories */}
-        <div className="mb-6 overflow-x-auto pb-1">
-          <div className="flex gap-2">
+        {/* Category pills */}
+        <div className="mx-auto max-w-7xl px-4 pb-3 sm:px-6 lg:px-8">
+          <div className="-mx-4 flex snap-x gap-2 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:flex-wrap sm:px-0">
             {categories.map((category) => {
               const active = selectedCategory === category;
-              const hasMatchingProducts =
+              const count =
                 category === "All"
-                  ? searchFilteredProducts.length > 0
-                  : searchFilteredProducts.some(
-                      (p) => p.category_name === category,
-                    );
-
-              const isDisabled =
-                searchQuery.trim() !== "" && !hasMatchingProducts;
-
+                  ? searchFilteredProducts.length
+                  : (categoryCounts.get(category) ?? 0);
               return (
-                <Button
+                <button
                   key={category}
                   type="button"
-                  variant={active ? "default" : "outline"}
                   onClick={() => setSelectedCategory(category)}
-                  disabled={isDisabled}
-                  className={
-                    hasMatchingProducts
-                      ? active
-                        ? "rounded-full bg-[#F36508] text-white hover:bg-[#d95a08]"
-                        : "rounded-full border-stone-200 bg-white text-stone-600 hover:bg-stone-100"
-                      : "cursor-not-allowed rounded-full border-stone-200 bg-stone-100 text-stone-400"
-                  }
+                  className={`flex shrink-0 snap-start items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition-all ${
+                    active
+                      ? "text-white shadow-sm"
+                      : "bg-white text-stone-600 ring-1 ring-stone-200 hover:bg-stone-100 hover:text-stone-900"
+                  }`}
+                  style={active ? { backgroundColor: BRAND } : undefined}
                 >
                   {category}
-                </Button>
+                  <span
+                    className={`rounded-full px-1.5 text-[10px] font-semibold ${
+                      active
+                        ? "bg-white/25 text-white"
+                        : "bg-stone-100 text-stone-500"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
               );
             })}
           </div>
         </div>
+      </header>
+
+      <div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 lg:px-8">
+        {/* Session banner */}
+        {sessionToken && (
+          <div className="mb-5">
+            {isValidatingSession ? (
+              <div className="flex items-center gap-2.5 rounded-2xl border border-stone-200/80 bg-white px-4 py-3 text-sm text-stone-500 shadow-sm">
+                <Loader2
+                  className="h-4 w-4 animate-spin"
+                  style={{ color: BRAND }}
+                />
+                Validating session…
+              </div>
+            ) : session?.valid ? (
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-200/70 bg-gradient-to-r from-emerald-50 to-white px-4 py-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  </span>
+                  <p className="text-sm font-medium text-emerald-800">
+                    Session active · {getSessionLabel()}
+                  </p>
+                </div>
+                {orders.length > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="cursor-pointer border-stone-200 bg-white text-stone-600 hover:bg-stone-50"
+                    onClick={() => {
+                      setIsOrdersOpen(true);
+                      loadOrders();
+                    }}
+                  >
+                    <Receipt className="mr-1 h-3 w-3" />
+                    {orders.length} order{orders.length !== 1 ? "s" : ""}
+                  </Badge>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3 rounded-2xl border border-red-200/70 bg-red-50/80 p-5 text-center sm:flex-row sm:items-center sm:text-left">
+                <div className="mx-auto shrink-0 rounded-2xl bg-red-100 p-3 sm:mx-0">
+                  {session?.expired ? (
+                    <Clock className="h-5 w-5 text-red-600" />
+                  ) : (
+                    <AlertCircle className="h-5 w-5 text-red-600" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-red-800">
+                    {session?.expired
+                      ? "This QR session has expired"
+                      : "Invalid or inactive QR session"}
+                  </p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-red-600">
+                    {session?.expired
+                      ? "The ordering session for this table has expired. Ask staff to create a new one."
+                      : "This QR code isn't valid or the session was deactivated. Ask staff for help."}{" "}
+                    You can still browse the menu.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!sessionToken && (
+          <div className="mb-5 flex items-center gap-3 rounded-2xl border border-amber-200/70 bg-amber-50/80 px-4 py-3">
+            <AlertCircle className="h-5 w-5 shrink-0 text-amber-600" />
+            <p className="text-sm text-amber-800">
+              <span className="font-semibold">Browsing only.</span>{" "}
+              <span className="text-amber-700">
+                Scan a table or room QR code to place an order.
+              </span>
+            </p>
+          </div>
+        )}
+
+        {/* Area filter */}
+        {areas.length > 1 && (
+          <div className="mb-5 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-wider text-stone-400">
+              Station
+            </span>
+            {(["All", ...areas.map((a) => a.id)] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setSelectedArea(id)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                  selectedArea === id
+                    ? "bg-stone-900 text-white"
+                    : "bg-white text-stone-500 ring-1 ring-stone-200 hover:text-stone-900"
+                }`}
+              >
+                {id === "All"
+                  ? "All stations"
+                  : areas.find((a) => a.id === id)?.name}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Product grid */}
-        <div className="mb-6">
-          {displayedProducts.length === 0 ? (
-            <Card className="border-stone-200 bg-white">
-              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                <div className="rounded-full bg-stone-100 p-4">
-                  <Package className="h-6 w-6 text-stone-400" />
-                </div>
-                <h3 className="mt-4 text-sm font-semibold text-stone-900">
-                  {searchQuery.trim()
-                    ? "No results found."
-                    : "No products available."}
-                </h3>
-                <p className="mt-1 max-w-sm text-sm text-stone-500">
-                  {searchQuery.trim()
-                    ? "Try a different search term or clear the search."
-                    : "Add active products to the POS database to display them here."}
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {displayedProducts.map((product) => (
+        {displayedProducts.length === 0 ? (
+          <div className="rounded-3xl border border-dashed border-stone-300 bg-white/60 py-16 text-center">
+            <div className="mx-auto w-fit rounded-3xl bg-stone-100 p-4">
+              <Package className="h-6 w-6 text-stone-400" />
+            </div>
+            <h3 className="mt-4 text-sm font-semibold text-stone-900">
+              {searchQuery.trim() ? "No matches found" : "No products here yet"}
+            </h3>
+            <p className="mx-auto mt-1 max-w-xs text-sm text-stone-500">
+              {searchQuery.trim()
+                ? "Try a different search term or category."
+                : "Add active products in the POS to display them here."}
+            </p>
+            {searchQuery.trim() && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4 rounded-full"
+                onClick={() => setSearchQuery("")}
+              >
+                Clear search
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {displayedProducts.map((product) => {
+              const cartItem = cart.find((i) => i.id === product.id);
+              return (
                 <Card
                   key={product.id}
-                  className="border-stone-200 bg-white transition-shadow hover:shadow-sm"
+                  className="group flex flex-col overflow-hidden py-0 rounded-2xl border-stone-200/80 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-stone-200/70"
                 >
-                  <CardContent className="p-4">
-                    <div className="flex gap-3">
-                      <div className="flex-shrink-0 rounded-xl bg-stone-100 p-3">
-                        {product.image_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={product.image_url}
-                            alt={product.name}
-                            className="h-20 w-20 rounded-lg object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-20 w-20 items-center justify-center rounded-lg bg-stone-200">
-                            <Package className="h-8 w-8 text-stone-400" />
-                          </div>
-                        )}
+                  {/* Image */}
+                  <div className="relative h-36 shrink-0 overflow-hidden bg-stone-100">
+                    {product.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={product.image_url}
+                        alt={product.name}
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-stone-100 to-stone-200">
+                        <Package className="h-10 w-10 text-stone-300" />
                       </div>
+                    )}
+                    {cartItem && (
+                      <span className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full bg-stone-900 text-xs font-bold text-white shadow">
+                        {cartItem.quantity}
+                      </span>
+                    )}
+                  </div>
 
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <h3 className="truncate text-sm font-semibold text-stone-900">
-                            {product.name}
-                          </h3>
-                          <span className="text-sm font-semibold text-[#F36508]">
-                            {formatCurrency(product.price)}
-                          </span>
-                        </div>
-
-                        {product.description && (
-                          <p className="line-clamp-2 text-xs text-stone-500">
-                            {product.description}
-                          </p>
-                        )}
-
-                        <div className="flex items-center gap-2 pt-2">
-                          <Badge variant="outline" className="text-xs">
-                            {product.category_name}
-                          </Badge>
-                          {product.area_name && (
-                            <Badge variant="outline" className="text-xs">
-                              {product.area_name}
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
+                  <CardContent className="flex flex-1 flex-col gap-2.5 p-4">
+                    {/* Title + price */}
+                    <div>
+                      <h3 className="truncate text-sm font-semibold text-stone-900">
+                        {product.name}
+                      </h3>
+                      <p
+                        className="mt-0.5 text-sm font-bold"
+                        style={{ color: BRAND }}
+                      >
+                        {formatCurrency(product.price)}
+                      </p>
                     </div>
 
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => addToCart(product)}
-                      disabled={!canOrder}
-                      className="mt-3 w-full justify-center rounded-xl bg-[#F36508]/10 text-[#F36508] hover:bg-[#F36508]/20 disabled:opacity-50"
-                    >
-                      <Plus className="mr-1 h-4 w-4" />
-                      {canOrder ? "Add to Cart" : "Session required"}
-                    </Button>
+                    {/* Description — always present for consistent height */}
+                    <p className="line-clamp-2 min-h-[2.5rem] text-xs leading-relaxed text-stone-500">
+                      {product.description || "No description"}
+                    </p>
+
+                    {/* Pills — fixed min-height so rows stay aligned */}
+                    <div className="flex min-h-[1.5rem] flex-wrap items-center gap-1.5">
+                      {product.category_name && (
+                        <Badge
+                          variant="secondary"
+                          className="rounded-full bg-stone-100 text-[11px] font-medium text-stone-600 hover:bg-stone-100"
+                        >
+                          {product.category_name}
+                        </Badge>
+                      )}
+                      {product.area_name && (
+                        <Badge
+                          variant="outline"
+                          className="rounded-full border-stone-200 text-[11px] font-medium text-stone-500"
+                        >
+                          {product.area_name}
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Action — pushed to bottom */}
+                    <div className="mt-auto pt-1">
+                      {cartItem ? (
+                        <div className="flex h-9 items-center justify-between rounded-xl bg-orange-50 ring-1 ring-orange-200/70">
+                          <button
+                            type="button"
+                            aria-label="Decrease quantity"
+                            onClick={() =>
+                              setQuantity(product.id, cartItem.quantity - 1)
+                            }
+                            className="flex h-full w-10 items-center justify-center rounded-l-xl text-orange-700 transition hover:bg-orange-100"
+                          >
+                            {cartItem.quantity === 1 ? (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            ) : (
+                              <Minus className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                          <span
+                            className="text-sm font-bold tabular-nums"
+                            style={{ color: BRAND }}
+                          >
+                            {cartItem.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            aria-label="Increase quantity"
+                            onClick={() =>
+                              setQuantity(product.id, cartItem.quantity + 1)
+                            }
+                            className="flex h-full w-10 items-center justify-center rounded-r-xl text-orange-700 transition hover:bg-orange-100"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => addToCart(product)}
+                          disabled={!canOrder}
+                          className="h-9 w-full rounded-xl font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+                          style={
+                            canOrder ? { backgroundColor: BRAND } : undefined
+                          }
+                        >
+                          <Plus className="mr-1.5 h-4 w-4" />
+                          {canOrder ? "Add" : "Scan QR to order"}
+                        </Button>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
-              ))}
-            </div>
-          )}
-        </div>
+              );
+            })}
+          </div>
+        )}
+
+        <p className="mt-10 text-center text-xs text-stone-400">
+          Prices in Philippine Peso · Pay at the counter
+        </p>
       </div>
 
+      {/* Floating actions */}
       {canOrder && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            setIsOrdersOpen(true);
-            loadOrders();
-          }}
-          className="fixed bottom-6 right-28 z-40 flex items-center gap-2 rounded-full border-stone-200 bg-white px-4 py-3 font-semibold text-stone-800 shadow-lg hover:bg-stone-50"
-        >
-          <Receipt className="h-5 w-5" />
-          <span>Orders</span>
+        <div className="fixed bottom-5 right-4 z-40 flex flex-col items-end gap-3 sm:right-6">
           {orders.length > 0 && (
-            <Badge
-              variant="secondary"
-              className="ml-1 rounded-full bg-stone-200 text-stone-800"
+            <button
+              type="button"
+              onClick={() => {
+                setIsOrdersOpen(true);
+                loadOrders();
+              }}
+              className="flex h-11 items-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-stone-800 shadow-lg ring-1 ring-stone-200 transition hover:bg-stone-50"
             >
-              {orders.length}
-            </Badge>
+              <Receipt className="h-4 w-4" />
+              <span className="inline">Orders</span>
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-stone-900 px-1.5 text-[10px] font-bold text-white">
+                {orders.length}
+              </span>
+            </button>
           )}
-        </Button>
+          <button
+            type="button"
+            onClick={() => setIsCartOpen(true)}
+            className="flex h-13 items-center gap-2.5 rounded-full py-3 pl-4 pr-5 font-semibold text-white shadow-xl shadow-orange-500/30 transition hover:brightness-95 active:scale-95"
+            style={{ backgroundColor: BRAND, height: 52 }}
+          >
+            <span className="relative flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-sm font-bold">
+              {totalItems}
+            </span>
+            <ShoppingCart className="h-5 w-5" />
+            <span className="text-sm">{formatCurrency(subtotal)}</span>
+          </button>
+        </div>
       )}
 
-      {/* Floating cart button + dialog */}
+      {/* Cart dialog */}
       <Dialog open={isCartOpen} onOpenChange={setIsCartOpen}>
-        <Button
-          type="button"
-          onClick={() => setIsCartOpen(true)}
-          disabled={!canOrder && cart.length === 0}
-          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-[#F36508] px-4 py-3 font-semibold text-white shadow-lg hover:bg-[#d95a08] disabled:opacity-60"
-        >
-          <ShoppingCart className="h-5 w-5" />
-          <span>
-            {totalItems} item{totalItems !== 1 ? "s" : ""}
-          </span>
-          <Badge
-            variant="secondary"
-            className="ml-1 rounded-full bg-white/20 text-white"
-          >
-            {formatCurrency(subtotal)}
-          </Badge>
-        </Button>
-
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Your Cart</DialogTitle>
+            <DialogTitle>Your cart</DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="max-h-[45vh] flex-1 overflow-y-auto pr-1">
             {cart.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <ShoppingCart className="h-10 w-10 text-stone-300" />
+              <div className="flex flex-col items-center py-12 text-center">
+                <div className="rounded-3xl bg-stone-100 p-4">
+                  <ShoppingCart className="h-6 w-6 text-stone-400" />
+                </div>
                 <p className="mt-3 text-sm text-stone-500">
                   Your cart is empty.
                 </p>
               </div>
             ) : (
-              <div className="space-y-4 py-4">
+              <div className="divide-y divide-stone-100">
                 {cart.map((item) => (
-                  <div key={item.id} className="flex items-center gap-3">
-                    <div className="flex-shrink-0 rounded-lg bg-stone-100 p-2">
+                  <div key={item.id} className="flex items-center gap-3 py-3.5">
+                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-stone-100">
                       {item.image_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={item.image_url}
                           alt={item.name}
-                          className="h-12 w-12 rounded object-cover"
+                          className="h-full w-full object-cover"
                         />
                       ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded bg-stone-200">
-                          <Package className="h-6 w-6 text-stone-400" />
+                        <div className="flex h-full w-full items-center justify-center bg-stone-200">
+                          <Package className="h-5 w-5 text-stone-400" />
                         </div>
                       )}
                     </div>
-
-                    <div className="flex-1">
-                      <h3 className="text-sm font-semibold text-stone-900">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate text-sm font-semibold text-stone-900">
                         {item.name}
                       </h3>
                       <p className="text-xs text-stone-500">
-                        {formatCurrency(item.price)} × {item.quantity}
+                        {formatCurrency(item.price)} each
                       </p>
                       <p className="text-xs font-semibold text-stone-900">
-                        = {formatCurrency(item.price * item.quantity)}
+                        {formatCurrency(item.price * item.quantity)}
                       </p>
                     </div>
-
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => decreaseQuantity(item.id)}
-                        disabled={isSubmitting}
+                    <div className="flex items-center gap-1 rounded-full bg-stone-100 px-1 py-1">
+                      <button
+                        type="button"
+                        aria-label="Decrease"
+                        onClick={() => setQuantity(item.id, item.quantity - 1)}
+                        className="flex h-7 w-7 items-center justify-center rounded-full text-stone-600 transition hover:bg-white hover:shadow-sm"
                       >
-                        <Minus className="h-3 w-3" />
-                      </Button>
-                      <span className="text-sm font-semibold">
+                        <Minus className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="w-6 text-center text-sm font-bold tabular-nums">
                         {item.quantity}
                       </span>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => increaseQuantity(item.id)}
-                        disabled={isSubmitting}
+                      <button
+                        type="button"
+                        aria-label="Increase"
+                        onClick={() => setQuantity(item.id, item.quantity + 1)}
+                        className="flex h-7 w-7 items-center justify-center rounded-full text-stone-600 transition hover:bg-white hover:shadow-sm"
                       >
-                        <Plus className="h-3 w-3" />
-                      </Button>
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => removeFromCart(item.id)}
-                      disabled={isSubmitting}
-                      className="text-stone-400 hover:text-red-600"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
                   </div>
                 ))}
               </div>
@@ -825,16 +967,18 @@ export default function MenuInner() {
 
           <Separator />
 
-          <DialogFooter className="flex-col items-stretch gap-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-stone-500">Total</span>
-              <span className="text-lg font-semibold text-stone-900">
+          <DialogFooter className="flex-col items-stretch gap-3 sm:flex-col">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-stone-500">
+                {totalItems} item{totalItems !== 1 ? "s" : ""}
+              </span>
+              <span className="text-lg font-bold tracking-tight text-stone-900">
                 {formatCurrency(subtotal)}
               </span>
             </div>
 
             {!canOrder && (
-              <p className="text-center text-xs text-amber-600">
+              <p className="rounded-xl bg-amber-50 px-3 py-2 text-center text-xs text-amber-700">
                 A valid QR session is required to submit an order.
               </p>
             )}
@@ -845,23 +989,24 @@ export default function MenuInner() {
                 variant="outline"
                 onClick={clearCart}
                 disabled={cart.length === 0 || isSubmitting}
-                className="flex-1"
+                className="flex-1 rounded-xl"
               >
-                Clear Cart
+                Clear
               </Button>
               <Button
                 type="button"
                 onClick={handleSubmitOrder}
                 disabled={cart.length === 0 || !canOrder || isSubmitting}
-                className="flex-1 rounded-xl bg-[#F36508] text-white hover:bg-[#d95a08]"
+                className="flex-1 rounded-xl font-semibold text-white hover:brightness-95"
+                style={{ backgroundColor: BRAND }}
               >
                 {isSubmitting ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Placing...
+                    Placing…
                   </>
                 ) : (
-                  "Submit Order"
+                  "Place order"
                 )}
               </Button>
             </div>
@@ -869,18 +1014,22 @@ export default function MenuInner() {
         </DialogContent>
       </Dialog>
 
+      {/* Orders dialog */}
       <Dialog open={isOrdersOpen} onOpenChange={setIsOrdersOpen}>
-        <DialogContent className="flex max-h-[85vh] max-w-md flex-col overflow-hidden">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] w-[calc(100%-2rem)] max-w-md flex-col overflow-hidden rounded-2xl p-0 sm:w-full">
+          <DialogHeader className="shrink-0 border-b border-stone-100 px-4 pb-3 pt-4 sm:px-6">
             <DialogTitle className="flex items-center justify-between gap-2 pr-8">
-              <span>Your orders</span>
+              <span className="text-base font-semibold tracking-tight">
+                Your orders
+              </span>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 onClick={() => loadOrders()}
                 disabled={isLoadingOrders}
-                className="h-8 w-8"
+                className="h-8 w-8 rounded-full"
+                aria-label="Refresh orders"
               >
                 <RefreshCw
                   className={`h-4 w-4 ${isLoadingOrders ? "animate-spin" : ""}`}
@@ -889,83 +1038,145 @@ export default function MenuInner() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto py-2">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 sm:px-6">
             {isLoadingOrders ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-[#F36508]" />
-                <p className="mt-3 text-sm text-stone-500">Loading orders...</p>
+              <div className="flex flex-col items-center py-12">
+                <Loader2
+                  className="h-8 w-8 animate-spin"
+                  style={{ color: BRAND }}
+                />
+                <p className="mt-3 text-sm text-stone-500">Loading orders…</p>
               </div>
             ) : orders.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Receipt className="h-10 w-10 text-stone-300" />
+              <div className="flex flex-col items-center py-12 text-center">
+                <div className="rounded-3xl bg-stone-100 p-4">
+                  <Receipt className="h-6 w-6 text-stone-400" />
+                </div>
                 <p className="mt-3 text-sm text-stone-500">
                   No orders yet for this table.
                 </p>
                 <p className="mt-1 text-xs text-stone-400">
-                  Place an order from the menu and it will show up here.
+                  Orders you place will appear here.
                 </p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {orders.map((order) => (
-                  <Card key={order.id} className="border-stone-200">
-                    <CardContent className="space-y-3 p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="font-mono text-sm font-semibold text-stone-900">
-                            {order.order_number ?? order.id.slice(0, 8)}
-                          </p>
-                          <p className="text-xs text-stone-500">
-                            {new Date(order.created_at).toLocaleString(
-                              "en-PH",
-                              {
-                                dateStyle: "medium",
-                                timeStyle: "short",
-                              },
-                            )}
-                          </p>
+              <div className="space-y-3 pb-2">
+                {orders.map((order) => {
+                  const hasBreakdown =
+                    order.subtotal != null ||
+                    order.service_charge != null ||
+                    order.tax_amount != null;
+
+                  return (
+                    <Card
+                      key={order.id}
+                      className="rounded-2xl border-stone-200/80 shadow-sm"
+                    >
+                      <CardContent className="space-y-3 p-4">
+                        {/* Header: order # + status */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-mono text-sm font-semibold text-stone-900">
+                              {order.order_number ?? order.id.slice(0, 8)}
+                            </p>
+                            <p className="mt-0.5 text-xs text-stone-500">
+                              {new Date(order.created_at).toLocaleString(
+                                "en-PH",
+                                {
+                                  dateStyle: "medium",
+                                  timeStyle: "short",
+                                },
+                              )}
+                            </p>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className={`shrink-0 rounded-full capitalize ${statusBadgeClass(order.status)}`}
+                          >
+                            {order.status.replace(/_/g, " ")}
+                          </Badge>
                         </div>
-                        <Badge
-                          variant="outline"
-                          className={statusBadgeClass(order.status)}
-                        >
-                          {order.status.replace(/_/g, " ")}
-                        </Badge>
-                      </div>
 
-                      {order.items && order.items.length > 0 && (
-                        <ul className="space-y-1.5 text-sm">
-                          {order.items.map((item) => (
-                            <li
-                              key={item.id}
-                              className="flex justify-between gap-2 text-stone-700"
-                            >
-                              <span>
-                                {item.quantity}× {item.product_name}
-                              </span>
-                              <span className="shrink-0 font-medium">
-                                {formatCurrency(item.line_total)}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                        {/* Line items */}
+                        {order.items && order.items.length > 0 && (
+                          <ul className="space-y-1.5 text-sm">
+                            {order.items.map((item) => (
+                              <li
+                                key={item.id}
+                                className="flex justify-between gap-3 text-stone-700"
+                              >
+                                <span className="min-w-0 truncate">
+                                  <span className="tabular-nums text-stone-500">
+                                    {item.quantity}×
+                                  </span>{" "}
+                                  {item.product_name}
+                                </span>
+                                <span className="shrink-0 font-medium tabular-nums">
+                                  {formatCurrency(item.line_total)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
 
-                      <Separator />
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-stone-500">Total</span>
-                        <span className="font-semibold text-stone-900">
-                          {formatCurrency(order.total_amount)}
-                        </span>
-                      </div>
-                      {order.payment_method && (
-                        <p className="text-xs text-stone-400">
-                          Paid via {order.payment_method}
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
+                        <Separator className="bg-stone-100" />
+
+                        {/* Amount breakdown */}
+                        <div className="space-y-1.5 text-sm">
+                          {hasBreakdown && (
+                            <>
+                              {order.subtotal != null && (
+                                <div className="flex justify-between text-stone-500">
+                                  <span>Subtotal</span>
+                                  <span className="tabular-nums">
+                                    {formatCurrency(order.subtotal)}
+                                  </span>
+                                </div>
+                              )}
+                              {order.service_charge != null &&
+                                order.service_charge > 0 && (
+                                  <div className="flex justify-between text-stone-500">
+                                    <span>Service charge</span>
+                                    <span className="tabular-nums">
+                                      {formatCurrency(order.service_charge)}
+                                    </span>
+                                  </div>
+                                )}
+                              {order.tax_amount != null &&
+                                order.tax_amount > 0 && (
+                                  <div className="flex justify-between text-stone-500">
+                                    <span>Tax</span>
+                                    <span className="tabular-nums">
+                                      {formatCurrency(order.tax_amount)}
+                                    </span>
+                                  </div>
+                                )}
+                            </>
+                          )}
+
+                          <div className="flex items-center justify-between pt-0.5">
+                            <span className="font-medium text-stone-700">
+                              Total
+                            </span>
+                            <span className="text-base font-semibold tabular-nums text-stone-900">
+                              {formatCurrency(order.total_amount)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Payment method */}
+                        {order.payment_method && (
+                          <p className="text-xs text-stone-400">
+                            Paid via{" "}
+                            <span className="capitalize">
+                              {order.payment_method.replace(/_/g, " ")}
+                            </span>
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </div>

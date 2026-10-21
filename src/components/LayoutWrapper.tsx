@@ -12,9 +12,10 @@ export default function LayoutWrapper({
   const pathname = usePathname();
 
   const isAdminRoute = pathname.startsWith("/admin");
+  const isMenu = pathname.startsWith("/menu");
   const isIAccessMember = pathname.startsWith("/iaccess/member");
 
-  const hideNavbarAndFooter = isAdminRoute || isIAccessMember;
+  const hideNavbarAndFooter = isAdminRoute || isIAccessMember || isMenu;
 
   return (
     <>
