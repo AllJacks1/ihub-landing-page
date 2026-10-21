@@ -54,11 +54,12 @@ export type SessionOrder = {
     product_name: string;
     quantity: number;
     unit_price: number;
+    service_charge?: number;
+    discount_amount?: number;
     line_total: number;
     area_code?: string | null;
   }[];
   payment_method?: string | null;
-  /** Optional billing breakdown (from order when VAT / service charge applied) */
   subtotal?: number | null;
   tax_amount?: number | null;
   service_charge_amount?: number | null;

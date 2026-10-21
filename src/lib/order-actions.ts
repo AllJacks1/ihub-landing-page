@@ -1758,3 +1758,209 @@ export async function getOrdersBySessionToken(sessionToken: string): Promise<{
     };
   }
 }
+
+// =============================================================================
+// Schemas (add near the other schemas)
+// =============================================================================
+
+const updatePosOrderSchema = z.object({
+  order_id: z.string().uuid(),
+  terminal_id: z.string().uuid().optional().nullable(),
+  shift_id: z.string().uuid().optional().nullable(),
+  cashier_user_id: z.string().uuid().optional().nullable(),
+  total_amount: z.coerce.number().min(0).optional(),
+  service_charge_amount: z.coerce.number().min(0).optional(),
+});
+
+const updateOrderItemDiscountSchema = z.object({
+  item_id: z.string().uuid(),
+  discount_amount: z.coerce.number().min(0).int().optional(),
+  line_total: z.coerce.number().min(0).optional(),
+  service_charge: z.coerce.number().min(0).optional(),
+  discount_reason: z.string().max(500).optional().nullable(),
+});
+
+// =============================================================================
+// Update Order (staff) — terminal / shift / cashier / totals
+// =============================================================================
+
+export async function updatePosOrder(
+  input: z.infer<typeof updatePosOrderSchema>,
+): Promise<{
+  success: boolean;
+  data?: PosOrder;
+  error?: string;
+}> {
+  try {
+    const validated = updatePosOrderSchema.parse(input);
+    const staff = await requireOrderStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createOrderAdminClient();
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("pos_orders")
+      .select("id, status")
+      .eq("id", validated.order_id)
+      .single();
+
+    if (fetchError || !existing) {
+      return { success: false, error: "Order not found" };
+    }
+
+    if (existing.status === "completed" || existing.status === "cancelled") {
+      return {
+        success: false,
+        error: `Cannot update a ${existing.status} order`,
+      };
+    }
+
+    const patch: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (validated.terminal_id !== undefined) {
+      patch.terminal_id = validated.terminal_id;
+    }
+    if (validated.shift_id !== undefined) {
+      patch.shift_id = validated.shift_id;
+    }
+    if (validated.cashier_user_id !== undefined) {
+      patch.cashier_user_id = validated.cashier_user_id;
+    }
+    if (validated.total_amount !== undefined) {
+      patch.total_amount = validated.total_amount;
+    }
+    if (validated.service_charge_amount !== undefined) {
+      patch.service_charge_amount = validated.service_charge_amount;
+    }
+
+    // Nothing to update
+    if (Object.keys(patch).length === 1) {
+      const { data: current } = await supabase
+        .from("pos_orders")
+        .select("*")
+        .eq("id", validated.order_id)
+        .single();
+      return {
+        success: true,
+        data: current ? mapPosOrder(current) : undefined,
+      };
+    }
+
+    const { data, error } = await supabase
+      .from("pos_orders")
+      .update(patch)
+      .eq("id", validated.order_id)
+      .select("*")
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data: mapPosOrder(data) };
+  } catch (error) {
+    return { success: false, error: zodErrorMessage(error) };
+  }
+}
+
+// =============================================================================
+// Update Order Item discount / line_total / service_charge / reason (staff)
+// =============================================================================
+
+export async function updateOrderItemDiscount(
+  input: z.infer<typeof updateOrderItemDiscountSchema>,
+): Promise<{
+  success: boolean;
+  data?: PosOrderItem;
+  error?: string;
+}> {
+  try {
+    const validated = updateOrderItemDiscountSchema.parse(input);
+    const staff = await requireOrderStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createOrderAdminClient();
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("pos_order_items")
+      .select(
+        "id, order_id, unit_price, quantity, discount_amount, line_total, service_charge",
+      )
+      .eq("id", validated.item_id)
+      .single();
+
+    if (fetchError || !existing) {
+      return { success: false, error: "Order item not found" };
+    }
+
+    // Guard: don't edit completed/cancelled orders
+    const { data: order } = await supabase
+      .from("pos_orders")
+      .select("status")
+      .eq("id", existing.order_id)
+      .single();
+
+    if (
+      order &&
+      (order.status === "completed" || order.status === "cancelled")
+    ) {
+      return {
+        success: false,
+        error: `Cannot edit items on a ${order.status} order`,
+      };
+    }
+
+    const quantity = toNumber(existing.quantity);
+    const unitPrice = toNumber(existing.unit_price);
+
+    const discount =
+      validated.discount_amount !== undefined
+        ? Math.round(validated.discount_amount)
+        : Math.round(toNumber(existing.discount_amount));
+
+    // Prefer explicit line_total if provided; otherwise recompute from qty × price − discount
+    const lineTotal =
+      validated.line_total !== undefined
+        ? Math.max(0, validated.line_total)
+        : Math.max(0, unitPrice * quantity - discount);
+
+    const serviceCharge =
+      validated.service_charge !== undefined
+        ? Math.max(0, validated.service_charge)
+        : toNumber(existing.service_charge ?? 0);
+
+    const patch: Record<string, unknown> = {
+      discount_amount: discount,
+      line_total: lineTotal,
+      service_charge: serviceCharge,
+    };
+
+    if (validated.discount_reason !== undefined) {
+      patch.discount_reason = validated.discount_reason;
+    }
+
+    const { data, error } = await supabase
+      .from("pos_order_items")
+      .update(patch)
+      .eq("id", validated.item_id)
+      .select("*")
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Keep order-level totals in sync (VAT / SC allocation, etc.)
+    await recalculateOrderTotals(supabase, existing.order_id);
+
+    return { success: true, data: mapPosOrderItem(data) };
+  } catch (error) {
+    return { success: false, error: zodErrorMessage(error) };
+  }
+}

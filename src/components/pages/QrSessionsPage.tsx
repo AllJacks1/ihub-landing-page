@@ -48,35 +48,16 @@ import {
   getLocationLabel,
   LocationType,
 } from "@/lib/pos-locations";
-import type { useQrSessions } from "@/hooks/useQrSessions";
+import type { SessionOrder, useQrSessions } from "@/hooks/useQrSessions";
 import { Banknote, CreditCard } from "lucide-react";
-import { recordPayment, completeOrder } from "@/lib/order-actions";
+import {
+  recordPayment,
+  completeOrder,
+  updateOrderItemDiscount,
+  updatePosOrder,
+} from "@/lib/order-actions";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
-
-/** Minimal order shape expected from the hook for the session orders modal */
-export type SessionOrder = {
-  id: string;
-  status: string;
-  total_amount: number;
-  created_at: string;
-  item_count?: number;
-  items?: {
-    id: string;
-    product_name: string;
-    quantity: number;
-    unit_price: number;
-    line_total: number;
-    area_code?: string | null;
-  }[];
-  payment_method?: string | null;
-  /** Optional billing breakdown (from order when VAT / service charge applied) */
-  subtotal?: number | null;
-  tax_amount?: number | null;
-  service_charge_amount?: number | null;
-  vat_rate?: number | null;
-  service_charge_rate?: number | null;
-};
 
 type QrSessionsPageProps = QrSessionsReturn & {
   getSessionStatusBadge: (status: string) => React.ReactNode;
@@ -351,23 +332,90 @@ export default function QrSessionsPage({
   const [otherGuestCount, setOtherGuestCount] = useState(1);
   const [discountVatIncluded, setDiscountVatIncluded] = useState(true);
 
-  const discountResult = useMemo(
-    () =>
-      computeScPwdDiscount({
-        totalBill: payOrder?.total_amount ?? 0,
-        seniors: seniorCount,
-        pwds: pwdCount,
-        otherGuests: otherGuestCount,
-        vatIncluded: discountVatIncluded,
-      }),
-    [
-      payOrder?.total_amount,
-      seniorCount,
-      pwdCount,
-      otherGuestCount,
-      discountVatIncluded,
-    ],
-  );
+  console.log(payOrder?.items);
+
+  const discountResult = useMemo(() => {
+    const items = payOrder?.items ?? [];
+
+    let eligibleSubtotal = 0;
+    let nonEligibleSubtotal = 0;
+    let originalServiceCharge = 0;
+
+    for (const item of items) {
+      const lineAmount =
+        (Number(item.unit_price) || 0) * (Number(item.quantity) || 0);
+      const sc = Number(item.service_charge) || 0;
+
+      originalServiceCharge += sc;
+
+      if (item.area_code === "ieat" || item.area_code === "idrink") {
+        eligibleSubtotal += lineAmount;
+      } else {
+        nonEligibleSubtotal += lineAmount;
+      }
+    }
+
+    const scPwd = computeScPwdDiscount({
+      totalBill: eligibleSubtotal,
+      seniors: seniorCount,
+      pwds: pwdCount,
+      otherGuests: otherGuestCount,
+      vatIncluded: discountVatIncluded,
+    });
+
+    const discountFactor =
+      eligibleSubtotal > 0 ? scPwd.amountDue / eligibleSubtotal : 1;
+
+    const scRate =
+      payOrder?.service_charge_rate != null
+        ? Number(payOrder.service_charge_rate) / 100
+        : null;
+
+    let recalculatedServiceCharge = 0;
+
+    for (const item of items) {
+      const lineAmount =
+        (Number(item.unit_price) || 0) * (Number(item.quantity) || 0);
+      const originalSc = Number(item.service_charge) || 0;
+
+      const isEligible =
+        item.area_code === "ieat" || item.area_code === "idrink";
+
+      if (isEligible) {
+        if (scRate != null) {
+          const discountedLine = lineAmount * discountFactor;
+          recalculatedServiceCharge += discountedLine * scRate;
+        } else {
+          recalculatedServiceCharge += originalSc * discountFactor;
+        }
+      } else {
+        recalculatedServiceCharge += originalSc;
+      }
+    }
+
+    // Round the total service charge up to the next whole peso.
+    recalculatedServiceCharge = Math.ceil(recalculatedServiceCharge);
+
+    const amountDue =
+      scPwd.amountDue + nonEligibleSubtotal + recalculatedServiceCharge;
+
+    return {
+      ...scPwd,
+      amountDue,
+      eligibleSubtotal,
+      nonEligibleSubtotal,
+      originalServiceCharge,
+      recalculatedServiceCharge,
+      discountFactor,
+    };
+  }, [
+    payOrder?.items,
+    payOrder?.service_charge_rate,
+    seniorCount,
+    pwdCount,
+    otherGuestCount,
+    discountVatIncluded,
+  ]);
 
   const amountDue = discountResult.amountDue;
 
@@ -415,7 +463,86 @@ export default function QrSessionsPage({
     if (!payOrder || !canConfirmPayment || !ordersModalSession) return;
 
     setIsProcessingPayment(true);
+
     try {
+      const hasDiscount =
+        discountResult.valid && (seniorCount > 0 || pwdCount > 0);
+      const items = payOrder.items ?? [];
+
+      // ── 1. Apply SC / PWD discounts to line items ──────────────────────────
+      if (hasDiscount) {
+        const reasonParts: string[] = [];
+        if (seniorCount > 0) reasonParts.push(`${seniorCount} Senior`);
+        if (pwdCount > 0) reasonParts.push(`${pwdCount} PWD`);
+        const discountReason = `SC/PWD: ${reasonParts.join(", ")} (${otherGuestCount} other guest${otherGuestCount === 1 ? "" : "s"})`;
+
+        const scRate =
+          payOrder.service_charge_rate != null
+            ? Number(payOrder.service_charge_rate) / 100
+            : null;
+
+        for (const item of items) {
+          const lineAmount =
+            (Number(item.unit_price) || 0) * (Number(item.quantity) || 0);
+          const originalSc = Number(item.service_charge) || 0;
+          const isEligible =
+            item.area_code === "ieat" || item.area_code === "idrink";
+
+          let discountAmount = Math.round(Number(item.discount_amount) || 0);
+          let lineTotal =
+            Number(item.line_total) || Math.max(0, lineAmount - discountAmount);
+          let serviceCharge = originalSc;
+
+          if (isEligible) {
+            // Proportional share of the SC/PWD discount
+            discountAmount = Math.round(
+              lineAmount * (1 - discountResult.discountFactor),
+            );
+            lineTotal = Math.max(0, lineAmount - discountAmount);
+
+            if (scRate != null) {
+              // SC on the discounted net (matches discountResult when rate is known)
+              serviceCharge = Math.round(lineTotal * scRate);
+            } else {
+              // Scale the original SC by the same factor
+              serviceCharge = Math.round(
+                originalSc * discountResult.discountFactor,
+              );
+            }
+          }
+
+          const updateResult = await updateOrderItemDiscount({
+            item_id: item.id,
+            discount_amount: discountAmount,
+            line_total: lineTotal,
+            service_charge: serviceCharge,
+            discount_reason: isEligible ? discountReason : null,
+          });
+
+          if (!updateResult.success) {
+            toast.error(
+              updateResult.error ?? "Failed to apply discount to item",
+            );
+            return;
+          }
+        }
+
+        // ── 2. Force order totals to the exact amount the cashier confirmed ──
+        // (recalculateOrderTotals inside updateOrderItemDiscount may differ
+        //  slightly due to rounding / allocation; lock to amountDue)
+        const orderUpdate = await updatePosOrder({
+          order_id: payOrder.id,
+          total_amount: amountDue,
+          service_charge_amount: discountResult.recalculatedServiceCharge,
+        });
+
+        if (!orderUpdate.success) {
+          toast.error(orderUpdate.error ?? "Failed to update order totals");
+          return;
+        }
+      }
+
+      // ── 3. Record payment for the (possibly discounted) amountDue ──────────
       const received =
         paymentMethod === "cash"
           ? parseFloat(amountTendered) || amountDue
@@ -433,7 +560,9 @@ export default function QrSessionsPage({
         return;
       }
 
+      // ── 4. Complete the order ──────────────────────────────────────────────
       const completeResult = await completeOrder(payOrder.id);
+
       if (!completeResult.success) {
         toast.error(
           completeResult.error ??
@@ -450,6 +579,9 @@ export default function QrSessionsPage({
 
       setPayOrder(null);
       setAmountTendered("");
+      setSeniorCount(0);
+      setPwdCount(0);
+      setOtherGuestCount(1);
       onLoadSessionOrders?.(ordersModalSession.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Payment failed");
@@ -1639,20 +1771,22 @@ export default function QrSessionsPage({
                     </span>
                   </div>
                 )}
-                {payOrder.service_charge_amount != null &&
-                  payOrder.service_charge_amount > 0 && (
-                    <div className="flex justify-between text-stone-500">
-                      <span>
-                        Service charge
-                        {payOrder.service_charge_rate != null
-                          ? ` (${payOrder.service_charge_rate}%)`
-                          : ""}
-                      </span>
-                      <span className="tabular-nums">
-                        {formatCurrency(payOrder.service_charge_amount)}
-                      </span>
-                    </div>
-                  )}
+                {/* Service charge – show recalculated when discount is applied */}
+                {(payOrder.service_charge_amount != null &&
+                  payOrder.service_charge_amount > 0) ||
+                discountResult.recalculatedServiceCharge > 0 ? (
+                  <div className="flex justify-between text-stone-500">
+                    <span>
+                      Service charge
+                      {payOrder.service_charge_rate != null
+                        ? ` (${payOrder.service_charge_rate}%)`
+                        : ""}
+                    </span>
+                    <span className="tabular-nums">
+                      {formatCurrency(discountResult.recalculatedServiceCharge)}
+                    </span>
+                  </div>
+                ) : null}
                 {discountResult.totalSavings > 0 && (
                   <div className="flex justify-between text-emerald-700">
                     <span>SC/PWD savings</span>
