@@ -1,9 +1,10 @@
 "use server";
 
 import { createServerClient } from "@supabase/ssr";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { z } from "zod";
+import { createInventoryAdminClient } from "./inventory-admin-client";
 
 // ==================== Types ====================
 
@@ -96,56 +97,8 @@ async function createInventorySupabaseClient() {
   );
 }
 
-// Server-only privileged client. Every query runs as the service
-// role (the inventory tables have RLS enabled with no policies),
-// so this client must never run in the browser and must only be
-// used after the requester passed staff authorization (see
-// requireInventoryStaff). Auth persistence and refresh are
-// disabled so queries execute with the service key itself, never
-// with a signed-in user's JWT. The service-role key is a
-// server-side secret and is never sent to the browser.
-let inventoryAdminClient: SupabaseClient | null = null;
+// Server-only privileged client moved to ./inventory-admin-client
 
-function createInventoryAdminClient(): SupabaseClient {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl) {
-    throw new Error("NEXT_PUBLIC_SUPABASE_URL is not configured");
-  }
-
-  if (!serviceRoleKey || serviceRoleKey.trim() === "") {
-    throw new Error(
-      "SUPABASE_SERVICE_ROLE_KEY is not configured; inventory management is disabled",
-    );
-  }
-
-  if (!inventoryAdminClient) {
-    inventoryAdminClient = createClient(supabaseUrl, serviceRoleKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
-  }
-
-  return inventoryAdminClient;
-}
-
-// Trusted staff authorization for inventory operations. Mirrors
-// the project's existing admin mechanism (createPost() and
-// getCurrentUser() in src/lib/actions.ts):
-//   1. identify the requester from their Supabase Auth session, and
-//   2. verify the account exists in the profiles staff directory.
-//
-// auth.getUser() alone is NOT treated as sufficient — any
-// authenticated Supabase account passes it — so the profiles
-// directory check restricts these operations to known staff
-// accounts. The adminId cookie gate in src/app/admin/layout.tsx
-// is a route convenience, not a security boundary, and is not
-// relied on here. The staff id used for audit rows always comes
-// from this verified session — never from the client.
 type InventoryStaffUser = {
   id: string;
   email: string | null;

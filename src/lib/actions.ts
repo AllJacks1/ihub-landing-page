@@ -128,12 +128,16 @@ export async function createPost(formData: {
     const validated = createPostSchema.parse(formData);
     const supabase = await createSupabaseClient();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) {
+      return {
+        success: false,
+        error: "You must be logged in to create a post",
+      };
+    }
 
-    if (authError || !user) {
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (!authUser) {
       return {
         success: false,
         error: "You must be logged in to create a post",
@@ -143,7 +147,7 @@ export async function createPost(formData: {
     const { data: profileData, error: profileError } = await supabase
       .from("profiles")
       .select("id")
-      .eq("auth_user_id", user.id)
+      .eq("auth_user_id", authUser.id)
       .single();
 
     if (profileError) {
@@ -298,6 +302,11 @@ export async function createCategory(formData: {
   parent_id?: string | null;
 }) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) {
+      return { success: false, error: "Unauthorized" };
+    }
+
     const validated = createCategorySchema.parse(formData);
     const supabase = await createSupabaseClient();
 
@@ -540,6 +549,9 @@ export async function updatePost(
   }>,
 ) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const validated = createPostSchema.partial().parse(formData);
     const supabase = await createSupabaseClient();
 
@@ -579,6 +591,9 @@ export async function updatePost(
 
 export async function deletePost(postId: string) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const supabase = await createSupabaseClient();
     const {
       data: { user },
@@ -625,21 +640,16 @@ const createTagSchema = z.object({
 
 export async function createTag(formData: { name: string; slug: string }) {
   try {
-    const validated = createTagSchema.parse(formData);
-    const supabase = await createSupabaseClient();
-
-    // Auth check
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) {
       return {
         success: false,
         error: "You must be logged in to create a tag",
       };
     }
+
+    const validated = createTagSchema.parse(formData);
+    const supabase = await createSupabaseClient();
 
     // Check slug uniqueness
     const { data: existing } = await supabase
@@ -1067,6 +1077,20 @@ export async function createReservation(
   _prevState: CreateReservationState | null,
   formData: FormData,
 ): Promise<CreateReservationState> {
+  const modeValue = formData.get("mode");
+
+  // Allow customer (client) bookings without authentication.
+  // Require staff authorization for admin-created reservations.
+  if (modeValue === "admin") {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) {
+      return {
+        success: false,
+        message: "Unauthorized",
+      };
+    }
+  }
+
   const raw = {
     full_name: formData.get("full_name"),
     email: formData.get("email"),
@@ -1286,13 +1310,11 @@ export async function createTable(formData: {
   zone: TableZone;
 }) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const validated = createTableSchema.parse(formData);
     const supabase = await createSupabaseClient();
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Unauthorized" };
 
     // Optional: check unique table_number per zone
     const { data: existing } = await supabase
@@ -1341,6 +1363,9 @@ export async function createRoom(formData: {
   description?: string | null;
 }) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const validated = createRoomSchema.parse(formData);
     const supabase = await createSupabaseClient();
 
@@ -1377,6 +1402,9 @@ export async function createRoom(formData: {
 
 export async function toggleTableActive(id: string, isActive: boolean) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const supabase = await createSupabaseClient();
 
     const {
@@ -1400,6 +1428,9 @@ export async function toggleTableActive(id: string, isActive: boolean) {
 
 export async function toggleRoomActive(id: string, isActive: boolean) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const supabase = await createSupabaseClient();
 
     const {
@@ -1428,6 +1459,9 @@ export async function assignTableToReservation(
   tableId: string,
 ) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const supabase = await createSupabaseClient();
 
     const {
@@ -1484,6 +1518,9 @@ export async function assignRoomToReservation(
   roomId: string,
 ) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const supabase = await createSupabaseClient();
 
     const {
@@ -1536,6 +1573,9 @@ export async function assignRoomToReservation(
 
 export async function unassignTable(reservationId: string, tableId: string) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const supabase = await createSupabaseClient();
 
     const {
@@ -1566,6 +1606,9 @@ export async function unassignTable(reservationId: string, tableId: string) {
 
 export async function unassignRoom(reservationId: string, roomId: string) {
   try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
+
     const supabase = await createSupabaseClient();
 
     const {
@@ -1805,12 +1848,10 @@ export async function updateReservation(
   },
 ) {
   try {
-    const supabase = await createSupabaseClient();
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) return { success: false, error: "Unauthorized" };
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Unauthorized" };
+    const supabase = await createSupabaseClient();
 
     const { data: updated, error } = await supabase
       .from("reservations")
@@ -1846,6 +1887,11 @@ export async function updateReservationStatus(
     | "cancelled"
     | "no_show",
 ) {
+  const roleUser = await requireRole(["management"]);
+  if (!roleUser) {
+    return { success: false as const, message: "Unauthorized" };
+  }
+
   const supabase = await createSupabaseClient();
 
   const { error } = await supabase
@@ -1874,12 +1920,17 @@ export async function logoutUser() {
   return { success: true as const };
 }
 
+export type UserRole = "cashier" | "management" | "partner" | "crew";
+
 export type CurrentUser = {
   full_name: string;
   email: string;
   initials: string;
   avatarUrl?: string | null;
+  role: UserRole;
 };
+
+const ALLOWED_ROLES: UserRole[] = ["cashier", "management", "partner", "crew"];
 
 function getInitials(name: string | null | undefined, email?: string | null) {
   const source = (name || email || "?").trim();
@@ -1902,30 +1953,80 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 
   if (authError || !user) return null;
 
-  // Prefer profile row (your table)
-  const { data: profile } = await supabase
-    .from("profiles") // change if your table name differs
-    .select("full_name, email")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
+  // Retrieve profile and role from public.profiles using auth_user_id.
+  let profile: {
+    full_name: string | null;
+    email: string | null;
+    role: unknown;
+  } | null = null;
+
+  try {
+    const { data, error: profileError } = await supabase
+      .from("profiles")
+      .select("full_name, email, role")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("getCurrentUser: profiles query failed", profileError);
+      return null;
+    }
+
+    profile = data;
+  } catch (error) {
+    console.error("getCurrentUser: profiles query threw", error);
+    return null;
+  }
+
+  // Fail closed if profile is missing.
+  if (!profile) {
+    return null;
+  }
+
+  // Fail closed if role is null or not one of the allowed roles.
+  const roleValue = profile.role;
+  if (typeof roleValue !== "string") {
+    return null;
+  }
+
+  const role = roleValue as UserRole;
+  if (!ALLOWED_ROLES.includes(role)) {
+    return null;
+  }
 
   const full_name =
-    profile?.full_name ||
+    profile.full_name ||
     (user.user_metadata?.full_name as string | undefined) ||
     user.email?.split("@")[0] ||
     "User";
 
-  const email = profile?.email || user.email || "";
+  const email = profile.email || user.email || "";
 
   return {
     full_name,
     email,
     initials: getInitials(full_name, email),
     avatarUrl: null,
+    role,
   };
 }
 
-// 1. Base object schema (no refinements)
+export async function requireRole(
+  allowedRoles: UserRole[],
+): Promise<CurrentUser | null> {
+  const user = await getCurrentUser();
+  if (!user) return null;
+
+  if (!ALLOWED_ROLES.includes(user.role)) {
+    return null;
+  }
+
+  if (!allowedRoles.includes(user.role)) {
+    return null;
+  }
+
+  return user;
+}
 const eventBaseSchema = z.object({
   title: z
     .string()

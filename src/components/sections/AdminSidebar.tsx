@@ -23,6 +23,8 @@ import {
   PartyPopper,
   Monitor,
   Warehouse,
+  ChefHat,
+  Coffee,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -31,6 +33,15 @@ type SidebarItem = {
   icon: React.ElementType;
   href: string;
   badge?: string;
+  items?: SidebarSubItem[];
+};
+
+type SidebarSubItem = {
+  id: string;
+  label: string;
+  icon: React.ElementType;
+  href: string;
+  items?: SidebarSubItem[];
 };
 
 type SidebarGroup = {
@@ -139,6 +150,34 @@ const sidebarGroups: SidebarGroup[] = [
         label: "Inventory",
         icon: Warehouse,
         href: "/admin/pos/inventory",
+        items: [
+          {
+            id: "inventory-overview",
+            label: "Overview",
+            icon: Warehouse,
+            href: "/admin/pos/inventory",
+          },
+          {
+            id: "monitor",
+            label: "Monitor",
+            icon: Monitor,
+            href: "/admin/pos/monitor",
+            items: [
+              {
+                id: "monitor-kitchen",
+                label: "Kitchen Monitor",
+                icon: ChefHat,
+                href: "/admin/pos/monitor/kitchen",
+              },
+              {
+                id: "monitor-bar",
+                label: "Bar Monitor",
+                icon: Coffee,
+                href: "/admin/pos/monitor/bar",
+              },
+            ],
+          },
+        ],
       },
       {
         id: "monitoring-reports",
