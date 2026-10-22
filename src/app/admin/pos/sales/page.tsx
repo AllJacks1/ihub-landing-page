@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Calendar,
   ChevronDown,
   Download,
-  Filter,
   Package,
   RefreshCw,
   Search,
@@ -23,66 +22,23 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-type SalesSummary = {
-  totalSales: number;
-  totalTransactions: number;
-  averageTicket: number;
-  totalItems: number;
-};
-
-type EmployeeSale = {
-  id: string;
-  name: string;
-  role: string;
-  sales: number;
-  transactions: number;
-  items: number;
-  avgTicket: number;
-};
-
-type CategorySale = {
-  id: string;
-  name: string;
-  sales: number;
-  quantity: number;
-  percentage: number;
-};
-
-type ProductSale = {
-  id: string;
-  name: string;
-  category: string;
-  sales: number;
-  quantity: number;
-  avgPrice: number;
-};
-
-type BranchSale = {
-  id: string;
-  name: string;
-  sales: number;
-  transactions: number;
-  percentage: number;
-};
-
-type AreaSale = {
-  id: string;
-  name: string;
-  sales: number;
-  transactions: number;
-  percentage: number;
-};
-
-type QuotaItem = {
-  id: string;
-  name: string;
-  type: "employee" | "branch";
-  target: number;
-  actual: number;
-  period: string;
-};
+import {
+  getSalesReportSummary,
+  getSalesByEmployee,
+  getSalesByCategory,
+  getSalesByProduct,
+  getSalesByBranch,
+  getSalesByArea,
+  getSalesQuotas,
+  resolveDateRangePreset,
+  type SalesSummary,
+  type EmployeeSale,
+  type CategorySale,
+  type ProductSale,
+  type BranchSale,
+  type AreaSale,
+  type QuotaItem,
+} from "@/lib/reports-action"; // adjust path if your actions live elsewhere
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -97,235 +53,6 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-PH").format(value);
 }
 
-// ─── Mock data (replace with real API later) ─────────────────────────────────
-
-const MOCK_SUMMARY: SalesSummary = {
-  totalSales: 248750,
-  totalTransactions: 186,
-  averageTicket: 1337.37,
-  totalItems: 412,
-};
-
-const MOCK_EMPLOYEES: EmployeeSale[] = [
-  {
-    id: "1",
-    name: "Maria Santos",
-    role: "Cashier",
-    sales: 68200,
-    transactions: 54,
-    items: 128,
-    avgTicket: 1262.96,
-  },
-  {
-    id: "2",
-    name: "Juan Dela Cruz",
-    role: "Cashier",
-    sales: 59450,
-    transactions: 47,
-    items: 105,
-    avgTicket: 1264.89,
-  },
-  {
-    id: "3",
-    name: "Ana Reyes",
-    role: "Supervisor",
-    sales: 52100,
-    transactions: 38,
-    items: 92,
-    avgTicket: 1371.05,
-  },
-  {
-    id: "4",
-    name: "Carlos Mendoza",
-    role: "Cashier",
-    sales: 41000,
-    transactions: 32,
-    items: 67,
-    avgTicket: 1281.25,
-  },
-  {
-    id: "5",
-    name: "Liza Gomez",
-    role: "Cashier",
-    sales: 28000,
-    transactions: 15,
-    items: 20,
-    avgTicket: 1866.67,
-  },
-];
-
-const MOCK_CATEGORIES: CategorySale[] = [
-  { id: "1", name: "Beverages", sales: 89400, quantity: 210, percentage: 35.9 },
-  { id: "2", name: "Snacks", sales: 61200, quantity: 145, percentage: 24.6 },
-  { id: "3", name: "Meals", sales: 54800, quantity: 38, percentage: 22.0 },
-  { id: "4", name: "Dessert", sales: 28900, quantity: 52, percentage: 11.6 },
-  { id: "5", name: "Others", sales: 14450, quantity: 17, percentage: 5.9 },
-];
-
-const MOCK_PRODUCTS: ProductSale[] = [
-  {
-    id: "1",
-    name: "Iced Coffee",
-    category: "Beverages",
-    sales: 28400,
-    quantity: 142,
-    avgPrice: 200,
-  },
-  {
-    id: "2",
-    name: "Chicken Rice Meal",
-    category: "Meals",
-    sales: 22800,
-    quantity: 19,
-    avgPrice: 1200,
-  },
-  {
-    id: "3",
-    name: "French Fries",
-    category: "Snacks",
-    sales: 18600,
-    quantity: 93,
-    avgPrice: 200,
-  },
-  {
-    id: "4",
-    name: "Chocolate Cake Slice",
-    category: "Dessert",
-    sales: 15200,
-    quantity: 38,
-    avgPrice: 400,
-  },
-  {
-    id: "5",
-    name: "Bottled Water",
-    category: "Beverages",
-    sales: 12400,
-    quantity: 124,
-    avgPrice: 100,
-  },
-  {
-    id: "6",
-    name: "Burger Combo",
-    category: "Meals",
-    sales: 11800,
-    quantity: 8,
-    avgPrice: 1475,
-  },
-];
-
-const MOCK_BRANCHES: BranchSale[] = [
-  {
-    id: "1",
-    name: "Main Branch",
-    sales: 142300,
-    transactions: 98,
-    percentage: 57.2,
-  },
-  {
-    id: "2",
-    name: "SM Mall Branch",
-    sales: 68400,
-    transactions: 52,
-    percentage: 27.5,
-  },
-  {
-    id: "3",
-    name: "Airport Kiosk",
-    sales: 38050,
-    transactions: 36,
-    percentage: 15.3,
-  },
-];
-
-const MOCK_AREAS: AreaSale[] = [
-  {
-    id: "1",
-    name: "iDrink",
-    sales: 89400,
-    transactions: 72,
-    percentage: 35.9,
-  },
-  {
-    id: "2",
-    name: "iEat",
-    sales: 116000,
-    transactions: 68,
-    percentage: 46.6,
-  },
-  {
-    id: "3",
-    name: "iWork/iStudy",
-    sales: 28900,
-    transactions: 28,
-    percentage: 11.6,
-  },
-  {
-    id: "4",
-    name: "iPlay",
-    sales: 14450,
-    transactions: 18,
-    percentage: 5.9,
-  },
-  {
-    id: "5",
-    name: "OneHub",
-    sales: 23450,
-    transactions: 18,
-    percentage: 5.9,
-  },
-];
-
-const MOCK_QUOTAS: QuotaItem[] = [
-  {
-    id: "1",
-    name: "Maria Santos",
-    type: "employee",
-    target: 80000,
-    actual: 68200,
-    period: "October 2026",
-  },
-  {
-    id: "2",
-    name: "Juan Dela Cruz",
-    type: "employee",
-    target: 70000,
-    actual: 59450,
-    period: "October 2026",
-  },
-  {
-    id: "3",
-    name: "Ana Reyes",
-    type: "employee",
-    target: 60000,
-    actual: 52100,
-    period: "October 2026",
-  },
-  {
-    id: "4",
-    name: "Main Branch",
-    type: "branch",
-    target: 200000,
-    actual: 142300,
-    period: "October 2026",
-  },
-  {
-    id: "5",
-    name: "SM Mall Branch",
-    type: "branch",
-    target: 90000,
-    actual: 68400,
-    period: "October 2026",
-  },
-  {
-    id: "6",
-    name: "Airport Kiosk",
-    type: "branch",
-    target: 50000,
-    actual: 38050,
-    period: "October 2026",
-  },
-];
-
 // ─── Component ───────────────────────────────────────────────────────────────
 
 type Tab = "employee" | "category" | "product" | "branch" | "area" | "quota";
@@ -335,12 +62,82 @@ export default function SalesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateRange, setDateRange] = useState("this-month");
+  const [error, setError] = useState<string | null>(null);
 
-  // Simulate loading
+  // Real data state
+  const [summary, setSummary] = useState<SalesSummary>({
+    totalSales: 0,
+    totalTransactions: 0,
+    averageTicket: 0,
+    totalItems: 0,
+  });
+  const [employees, setEmployees] = useState<EmployeeSale[]>([]);
+  const [categories, setCategories] = useState<CategorySale[]>([]);
+  const [products, setProducts] = useState<ProductSale[]>([]);
+  const [branches, setBranches] = useState<BranchSale[]>([]);
+  const [areas, setAreas] = useState<AreaSale[]>([]);
+  const [quotas, setQuotas] = useState<QuotaItem[]>([]);
+
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const { from, to } = resolveDateRangePreset(dateRange);
+      const filters = { from, to };
+
+      const [
+        summaryRes,
+        employeesRes,
+        categoriesRes,
+        productsRes,
+        branchesRes,
+        areasRes,
+        quotasRes,
+      ] = await Promise.all([
+        getSalesReportSummary({ ...filters, area_group: "all" }),
+        getSalesByEmployee(filters),
+        getSalesByCategory(filters),
+        getSalesByProduct(filters),
+        getSalesByBranch(filters),
+        getSalesByArea(filters),
+        getSalesQuotas(filters),
+      ]);
+
+      if (summaryRes.success && summaryRes.data) {
+        setSummary(summaryRes.data);
+      } else if (!summaryRes.success) {
+        setError(summaryRes.error ?? "Failed to load summary");
+      }
+
+      if (employeesRes.success && employeesRes.data) {
+        setEmployees(employeesRes.data);
+      }
+      if (categoriesRes.success && categoriesRes.data) {
+        setCategories(categoriesRes.data);
+      }
+      if (productsRes.success && productsRes.data) {
+        setProducts(productsRes.data);
+      }
+      if (branchesRes.success && branchesRes.data) {
+        setBranches(branchesRes.data);
+      }
+      if (areasRes.success && areasRes.data) {
+        setAreas(areasRes.data);
+      }
+      if (quotasRes.success && quotasRes.data) {
+        setQuotas(quotasRes.data);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unexpected error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [dateRange]);
+
   useEffect(() => {
-    const t = setTimeout(() => setIsLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+    loadData();
+  }, [loadData]);
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     {
@@ -366,30 +163,31 @@ export default function SalesPage() {
   // Filtered data
   const filteredEmployees = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return MOCK_EMPLOYEES;
-    return MOCK_EMPLOYEES.filter(
+    if (!q) return employees;
+    return employees.filter(
       (e) =>
         e.name.toLowerCase().includes(q) || e.role.toLowerCase().includes(q),
     );
-  }, [searchQuery]);
+  }, [searchQuery, employees]);
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return MOCK_PRODUCTS;
-    return MOCK_PRODUCTS.filter(
+    if (!q) return products;
+    return products.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.category.toLowerCase().includes(q),
     );
-  }, [searchQuery]);
+  }, [searchQuery, products]);
 
   const filteredQuotas = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return MOCK_QUOTAS;
-    return MOCK_QUOTAS.filter((qItem) => qItem.name.toLowerCase().includes(q));
-  }, [searchQuery]);
+    if (!q) return quotas;
+    return quotas.filter((qItem) => qItem.name.toLowerCase().includes(q));
+  }, [searchQuery, quotas]);
 
   function getQuotaProgress(actual: number, target: number) {
+    if (target <= 0) return 0;
     return Math.min(100, Math.round((actual / target) * 100));
   }
 
@@ -431,7 +229,6 @@ export default function SalesPage() {
                 <option value="this-week">This Week</option>
                 <option value="this-month">This Month</option>
                 <option value="last-month">Last Month</option>
-                <option value="custom">Custom Range</option>
               </select>
               <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
               <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
@@ -441,6 +238,8 @@ export default function SalesPage() {
               type="button"
               variant="outline"
               className="h-11 rounded-xl border-stone-200"
+              disabled
+              title="Export coming soon"
             >
               <Download className="mr-2 h-4 w-4" />
               Export
@@ -450,10 +249,8 @@ export default function SalesPage() {
               type="button"
               variant="outline"
               className="h-11 rounded-xl border-stone-200"
-              onClick={() => {
-                setIsLoading(true);
-                setTimeout(() => setIsLoading(false), 500);
-              }}
+              onClick={() => loadData()}
+              disabled={isLoading}
             >
               <RefreshCw
                 className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
@@ -465,6 +262,12 @@ export default function SalesPage() {
       </div>
 
       <div className="flex-1 p-4 sm:p-6">
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
         {/* KPI Cards */}
         <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Card className="border-stone-200 bg-white">
@@ -478,11 +281,9 @@ export default function SalesPage() {
                 </div>
               </div>
               <p className="mt-3 text-2xl font-bold text-stone-900">
-                {isLoading ? "—" : formatCurrency(MOCK_SUMMARY.totalSales)}
+                {isLoading ? "—" : formatCurrency(summary.totalSales)}
               </p>
-              <p className="mt-1 text-xs text-emerald-600">
-                +12.4% vs last period
-              </p>
+              <p className="mt-1 text-xs text-stone-500">Completed orders</p>
             </CardContent>
           </Card>
 
@@ -497,10 +298,10 @@ export default function SalesPage() {
                 </div>
               </div>
               <p className="mt-3 text-2xl font-bold text-stone-900">
-                {isLoading ? "—" : formatNumber(MOCK_SUMMARY.totalTransactions)}
+                {isLoading ? "—" : formatNumber(summary.totalTransactions)}
               </p>
               <p className="mt-1 text-xs text-stone-500">
-                Avg {formatCurrency(MOCK_SUMMARY.averageTicket)}
+                Avg {formatCurrency(summary.averageTicket)}
               </p>
             </CardContent>
           </Card>
@@ -516,7 +317,7 @@ export default function SalesPage() {
                 </div>
               </div>
               <p className="mt-3 text-2xl font-bold text-stone-900">
-                {isLoading ? "—" : formatNumber(MOCK_SUMMARY.totalItems)}
+                {isLoading ? "—" : formatNumber(summary.totalItems)}
               </p>
               <p className="mt-1 text-xs text-stone-500">
                 Across all categories
@@ -535,7 +336,7 @@ export default function SalesPage() {
                 </div>
               </div>
               <p className="mt-3 text-2xl font-bold text-stone-900">
-                {isLoading ? "—" : formatCurrency(MOCK_SUMMARY.averageTicket)}
+                {isLoading ? "—" : formatCurrency(summary.averageTicket)}
               </p>
               <p className="mt-1 text-xs text-stone-500">Per transaction</p>
             </CardContent>
@@ -687,35 +488,46 @@ export default function SalesPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {MOCK_CATEGORIES.map((cat) => (
-                          <tr
-                            key={cat.id}
-                            className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
-                          >
-                            <td className="px-5 py-4 font-medium text-stone-900">
-                              {cat.name}
-                            </td>
-                            <td className="px-5 py-4 text-right font-semibold text-stone-900">
-                              {formatCurrency(cat.sales)}
-                            </td>
-                            <td className="px-5 py-4 text-right text-stone-600">
-                              {cat.quantity}
-                            </td>
-                            <td className="px-5 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
-                                  <div
-                                    className="h-full rounded-full bg-[#F36509]"
-                                    style={{ width: `${cat.percentage}%` }}
-                                  />
-                                </div>
-                                <span className="w-12 text-right text-xs text-stone-500">
-                                  {cat.percentage}%
-                                </span>
-                              </div>
+                        {categories.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={4}
+                              className="px-5 py-12 text-center text-stone-500"
+                            >
+                              No category data
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          categories.map((cat) => (
+                            <tr
+                              key={cat.id}
+                              className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
+                            >
+                              <td className="px-5 py-4 font-medium text-stone-900">
+                                {cat.name}
+                              </td>
+                              <td className="px-5 py-4 text-right font-semibold text-stone-900">
+                                {formatCurrency(cat.sales)}
+                              </td>
+                              <td className="px-5 py-4 text-right text-stone-600">
+                                {cat.quantity}
+                              </td>
+                              <td className="px-5 py-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
+                                    <div
+                                      className="h-full rounded-full bg-[#F36509]"
+                                      style={{ width: `${cat.percentage}%` }}
+                                    />
+                                  </div>
+                                  <span className="w-12 text-right text-xs text-stone-500">
+                                    {cat.percentage}%
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -809,35 +621,48 @@ export default function SalesPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {MOCK_BRANCHES.map((branch) => (
-                          <tr
-                            key={branch.id}
-                            className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
-                          >
-                            <td className="px-5 py-4 font-medium text-stone-900">
-                              {branch.name}
-                            </td>
-                            <td className="px-5 py-4 text-right font-semibold text-stone-900">
-                              {formatCurrency(branch.sales)}
-                            </td>
-                            <td className="px-5 py-4 text-right text-stone-600">
-                              {branch.transactions}
-                            </td>
-                            <td className="px-5 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
-                                  <div
-                                    className="h-full rounded-full bg-[#F36509]"
-                                    style={{ width: `${branch.percentage}%` }}
-                                  />
-                                </div>
-                                <span className="w-12 text-right text-xs text-stone-500">
-                                  {branch.percentage}%
-                                </span>
-                              </div>
+                        {branches.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={4}
+                              className="px-5 py-12 text-center text-stone-500"
+                            >
+                              No branch data
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          branches.map((branch) => (
+                            <tr
+                              key={branch.id}
+                              className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
+                            >
+                              <td className="px-5 py-4 font-medium text-stone-900">
+                                {branch.name}
+                              </td>
+                              <td className="px-5 py-4 text-right font-semibold text-stone-900">
+                                {formatCurrency(branch.sales)}
+                              </td>
+                              <td className="px-5 py-4 text-right text-stone-600">
+                                {branch.transactions}
+                              </td>
+                              <td className="px-5 py-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
+                                    <div
+                                      className="h-full rounded-full bg-[#F36509]"
+                                      style={{
+                                        width: `${branch.percentage}%`,
+                                      }}
+                                    />
+                                  </div>
+                                  <span className="w-12 text-right text-xs text-stone-500">
+                                    {branch.percentage}%
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -864,35 +689,46 @@ export default function SalesPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {MOCK_AREAS.map((area) => (
-                          <tr
-                            key={area.id}
-                            className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
-                          >
-                            <td className="px-5 py-4 font-medium text-stone-900">
-                              {area.name}
-                            </td>
-                            <td className="px-5 py-4 text-right font-semibold text-stone-900">
-                              {formatCurrency(area.sales)}
-                            </td>
-                            <td className="px-5 py-4 text-right text-stone-600">
-                              {area.transactions}
-                            </td>
-                            <td className="px-5 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
-                                  <div
-                                    className="h-full rounded-full bg-[#F36509]"
-                                    style={{ width: `${area.percentage}%` }}
-                                  />
-                                </div>
-                                <span className="w-12 text-right text-xs text-stone-500">
-                                  {area.percentage}%
-                                </span>
-                              </div>
+                        {areas.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={4}
+                              className="px-5 py-12 text-center text-stone-500"
+                            >
+                              No area data
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          areas.map((area) => (
+                            <tr
+                              key={area.id}
+                              className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
+                            >
+                              <td className="px-5 py-4 font-medium text-stone-900">
+                                {area.name}
+                              </td>
+                              <td className="px-5 py-4 text-right font-semibold text-stone-900">
+                                {formatCurrency(area.sales)}
+                              </td>
+                              <td className="px-5 py-4 text-right text-stone-600">
+                                {area.transactions}
+                              </td>
+                              <td className="px-5 py-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
+                                    <div
+                                      className="h-full rounded-full bg-[#F36509]"
+                                      style={{ width: `${area.percentage}%` }}
+                                    />
+                                  </div>
+                                  <span className="w-12 text-right text-xs text-stone-500">
+                                    {area.percentage}%
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -903,7 +739,7 @@ export default function SalesPage() {
                   <div className="divide-y divide-stone-100">
                     {filteredQuotas.length === 0 ? (
                       <div className="px-5 py-12 text-center text-stone-500">
-                        No quotas found
+                        No quotas configured yet
                       </div>
                     ) : (
                       filteredQuotas.map((item) => {

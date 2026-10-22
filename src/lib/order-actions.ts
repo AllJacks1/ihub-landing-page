@@ -1072,6 +1072,11 @@ export async function createQrOrder(
       };
     }
 
+    const staff = await requireOrderStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
     const orderNumber = generateOrderNumber();
 
     const { data: order, error: orderError } = await supabase
@@ -1080,7 +1085,7 @@ export async function createQrOrder(
         order_number: orderNumber,
         branch_id: branchId,
         session_id: sessionId,
-        cashier_user_id: null,
+        cashier_user_id: staff.user.id,
         order_type: validated.order_type,
         order_source: "qr",
         status: "open",

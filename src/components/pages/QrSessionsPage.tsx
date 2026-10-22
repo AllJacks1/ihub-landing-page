@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   QrCode,
@@ -16,6 +16,8 @@ import {
   Eye,
   ShoppingBag,
   Receipt,
+  Banknote,
+  CreditCard,
 } from "lucide-react";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
@@ -49,18 +51,18 @@ import {
   LocationType,
 } from "@/lib/pos-locations";
 import type { SessionOrder, useQrSessions } from "@/hooks/useQrSessions";
-import { Banknote, CreditCard } from "lucide-react";
 import {
   recordPayment,
   completeOrder,
   updateOrderItemDiscount,
   updatePosOrder,
 } from "@/lib/order-actions";
+import { ensureTerminalContext } from "@/lib/pos-actions";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
 
 type QrSessionsPageProps = QrSessionsReturn & {
-  getSessionStatusBadge: (status: string) => React.ReactNode;
+  getSessionStatusBadge: (status: string) => ReactNode;
   /** Map of session.id → orders for that session. Populate from the hook. */
   sessionOrders?: Record<string, SessionOrder[]>;
   /** Loading state while fetching orders for a specific session */
@@ -99,7 +101,8 @@ function getTimeRemaining(expiresAt: string): {
   if (hours > 0) {
     return {
       label: `${hours}h ${minutes}m left`,
-      urgent: hours < 1,
+      // Less than 2 hours remaining is treated as urgent
+      urgent: hours < 2,
       expired: false,
     };
   }
@@ -332,7 +335,35 @@ export default function QrSessionsPage({
   const [otherGuestCount, setOtherGuestCount] = useState(1);
   const [discountVatIncluded, setDiscountVatIncluded] = useState(true);
 
-  console.log(payOrder?.items);
+  const [terminalId, setTerminalId] = useState<string | null>(null);
+  const [shiftId, setShiftId] = useState<string | null>(null);
+
+  // Bootstrap terminal + open shift so payments can be recorded against them.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function bootstrap() {
+      try {
+        const ctx = await ensureTerminalContext();
+        if (cancelled) return;
+
+        if (!ctx.success || !ctx.data) {
+          console.error(ctx.error ?? "Terminal context unavailable");
+          return;
+        }
+
+        setTerminalId(ctx.data.terminal.id);
+        setShiftId(ctx.data.shift.id);
+      } catch (e) {
+        console.error("Failed to initialise terminal context", e);
+      }
+    }
+
+    bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const discountResult = useMemo(() => {
     const items = payOrder?.items ?? [];
@@ -396,8 +427,13 @@ export default function QrSessionsPage({
     // Round the total service charge up to the next whole peso.
     recalculatedServiceCharge = Math.ceil(recalculatedServiceCharge);
 
-    const amountDue =
-      scPwd.amountDue + nonEligibleSubtotal + recalculatedServiceCharge;
+    // When no SC/PWD guests are entered, keep the order's existing total so
+    // payment matches what the kitchen/receipt already shows.
+    const hasScPwdGuests = seniorCount > 0 || pwdCount > 0;
+    const amountDue = hasScPwdGuests
+      ? scPwd.amountDue + nonEligibleSubtotal + recalculatedServiceCharge
+      : Number(payOrder?.total_amount) ||
+        eligibleSubtotal + nonEligibleSubtotal + recalculatedServiceCharge;
 
     return {
       ...scPwd,
@@ -405,17 +441,12 @@ export default function QrSessionsPage({
       eligibleSubtotal,
       nonEligibleSubtotal,
       originalServiceCharge,
-      recalculatedServiceCharge,
+      recalculatedServiceCharge: hasScPwdGuests
+        ? recalculatedServiceCharge
+        : Number(payOrder?.service_charge_amount) || recalculatedServiceCharge,
       discountFactor,
     };
-  }, [
-    payOrder?.items,
-    payOrder?.service_charge_rate,
-    seniorCount,
-    pwdCount,
-    otherGuestCount,
-    discountVatIncluded,
-  ]);
+  }, [payOrder, seniorCount, pwdCount, otherGuestCount, discountVatIncluded]);
 
   const amountDue = discountResult.amountDue;
 
@@ -471,6 +502,13 @@ export default function QrSessionsPage({
 
       // ── 1. Apply SC / PWD discounts to line items ──────────────────────────
       if (hasDiscount) {
+        if (!terminalId || !shiftId) {
+          toast.error(
+            "Terminal context not ready. Wait a moment and try again.",
+          );
+          return;
+        }
+
         const reasonParts: string[] = [];
         if (seniorCount > 0) reasonParts.push(`${seniorCount} Senior`);
         if (pwdCount > 0) reasonParts.push(`${pwdCount} PWD`);
@@ -532,6 +570,8 @@ export default function QrSessionsPage({
         //  slightly due to rounding / allocation; lock to amountDue)
         const orderUpdate = await updatePosOrder({
           order_id: payOrder.id,
+          terminal_id: terminalId,
+          shift_id: shiftId,
           total_amount: amountDue,
           service_charge_amount: discountResult.recalculatedServiceCharge,
         });
