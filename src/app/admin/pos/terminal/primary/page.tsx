@@ -32,6 +32,7 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { toast } from "sonner";
+import { QRCodeSVG } from "qrcode.react";
 import {
   Dialog,
   DialogContent,
@@ -1621,8 +1622,21 @@ export default function PrimaryTerminalPage() {
           <div className="space-y-4 py-2">
             {heldSessionUrl && (
               <>
-                <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-                  <p className="break-all text-center text-xs text-stone-600">
+                <div className="flex flex-col items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 p-4">
+                  <div className="rounded-xl bg-white p-3 shadow-sm">
+                    <QRCodeSVG
+                      value={heldSessionUrl}
+                      size={200}
+                      level="M"
+                      includeMargin={false}
+                      bgColor="#ffffff"
+                      fgColor="#1c1917"
+                    />
+                  </div>
+                  <p className="text-center text-xs text-stone-500">
+                    Scan to open the menu session
+                  </p>
+                  <p className="break-all text-center text-[11px] text-stone-400">
                     {heldSessionUrl}
                   </p>
                 </div>
