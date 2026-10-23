@@ -689,68 +689,6 @@ export default function PrimaryTerminalPage() {
 
     return map;
   }
-
-  async function handleHoldOrder() {
-    if (!branchId || cart.length === 0) {
-      toast.error(!branchId ? "Terminal context not ready" : "Cart is empty");
-      return;
-    }
-
-    setIsHolding(true);
-
-    try {
-      // 1. Create a QR session for this branch (walk-in / no table binding)
-      //    If your API requires table_id / room_id / cubicle_id, pass one of them
-      //    or open a small picker dialog first.
-      const sessionResult = await createPosSession({
-        branch_id: branchId,
-        // table_id / room_id / cubicle_id: optional — omit if your backend allows pure walk-in sessions
-      });
-
-      if (!sessionResult.success || !sessionResult.data) {
-        toast.error(sessionResult.error ?? "Failed to create QR session");
-        return;
-      }
-
-      const qrToken = sessionResult.data.qr_token;
-
-      // 2. Place the current cart against that session (held / open order)
-      const orderResult = await createQrOrder({
-        session_token: qrToken,
-        order_type: "dine_in", // or "walk_in" if your action supports it
-        items: cart.map((item) => ({
-          product_id: item.id,
-          quantity: item.quantity,
-          discount_amount: 0, // apply SC/PWD later at payment
-        })),
-      });
-
-      if (!orderResult.success || !orderResult.data) {
-        toast.error(orderResult.error ?? "Failed to place held order");
-        return;
-      }
-
-      // 3. Build the customer URL
-      const baseUrl =
-        typeof window !== "undefined" ? window.location.origin : "";
-      const url = `${baseUrl}/menu?session=${qrToken}`;
-
-      setHeldSessionUrl(url);
-      setHeldSessionToken(qrToken);
-      setHeldOrderNumber(orderResult.data.order_number ?? null);
-      setShowHoldQrDialog(true);
-
-      clearCart();
-      await loadActiveSessions();
-      toast.success("Order held · QR session ready");
-    } catch (err) {
-      console.error("Hold order error:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to hold order");
-    } finally {
-      setIsHolding(false);
-    }
-  }
-
   function openHoldDialog() {
     if (!branchId || cart.length === 0) {
       toast.error(!branchId ? "Terminal context not ready" : "Cart is empty");

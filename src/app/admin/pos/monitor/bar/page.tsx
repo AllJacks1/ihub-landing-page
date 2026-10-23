@@ -4,9 +4,8 @@ import { STATION_UPDATE_ROLES } from "@/lib/monitor-types";
 import { Suspense } from "react";
 import MonitorCardComponent from "./monitor-card";
 import { Loader } from "lucide-react";
-
+import MonitorAutoRefresh from "@/components/MonitorAutoRefresh";
 const STATION = "bar" as const;
-
 const STATION_META = {
   bar: {
     label: "Bar Monitor",
@@ -16,13 +15,10 @@ const STATION_META = {
     updateRole: STATION_UPDATE_ROLES.bar.map((r) => r.role),
   },
 } as const;
-
 interface Props {}
-
 export default async function MonitorPage(_props: Props) {
   const station = STATION;
   const meta = STATION_META[station];
-
   const user = await getCurrentUser();
   const userRole = user?.role ?? null;
   if (!userRole) {
@@ -43,7 +39,6 @@ export default async function MonitorPage(_props: Props) {
       </main>
     );
   }
-
   const allowedRoles = meta.updateRole as string[];
   if (!allowedRoles.includes(userRole)) {
     return (
@@ -63,14 +58,12 @@ export default async function MonitorPage(_props: Props) {
       </main>
     );
   }
-
   const result = await getMonitorData(station);
-
   const data = result.success && result.data ? result.data : undefined;
   const isLoading = false;
-
   return (
-    <main className="flex-1 bg-stone-50">
+      <main className="flex-1 bg-stone-50">
+      <MonitorAutoRefresh />
       <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-7xl flex-col p-6">
         <div className="flex flex-col gap-6">
           <div className="flex items-center gap-4">
@@ -84,33 +77,25 @@ export default async function MonitorPage(_props: Props) {
               <p className="text-sm text-stone-500">{meta.subtitle}</p>
             </div>
           </div>
-
-          {data && (
-            <div className="grid gap-4 sm:grid-cols-3">
-              <StockCard
-                label="In Stock"
-                value={data.stockViewItems.filter((i) => i.quantity > 0).length}
-                icon={<span className="text-lg">📦</span>}
-              />
-              <StockCard
-                label="Low Stock"
-                value={data.stockItems.length}
-                icon={<span className="text-lg">⚠️</span>}
-                accent="amber"
-              />
-              <StockCard
-                label="Out of Stock"
-                value={data.outOfStockItems.length}
-                icon={<span className="text-lg">✘</span>}
-                accent="red"
-              />
+                  <div className="grid gap-4 sm:grid-cols-3">
+            {result && !result.success ? (
+            <div className="flex flex-col items-center justify-center py-16 text-red-600">
+              <span className="text-4xl">??</span>
+              <p className="mt-4 text-lg">Monitor failed to load</p>
+              <p className="mt-1 text-sm">{result.error ?? "Unknown error"}</p>
             </div>
-          )}
-
-          <div className="flex-1 space-y-4 overflow-y-auto">
-            {isLoading ? (
+          ) : isLoading ? (
               <div className="flex items-center justify-center py-16">
                 <span className="h-8 w-8 animate-spin rounded-full border-2 border-[#F36509] border-t-transparent" />
+              </div>
+            ) : data && data.unassignedItems.length > 0 ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                <p className="font-semibold">Unassigned/invalid area items (not routed)</p>
+                <ul className="mt-2 list-disc pl-5">
+                  {data.unassignedItems.map((i) => (
+                    <li key={i.itemId}>{i.productName} (order {i.orderNumber}) area: {i.areaCode ?? "missing"}</li>
+                  ))}
+                </ul>
               </div>
             ) : !data || data.orders.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-stone-500">
@@ -131,7 +116,6 @@ export default async function MonitorPage(_props: Props) {
     </main>
   );
 }
-
 function StockCard({
   label,
   value,
@@ -160,11 +144,10 @@ function StockCard({
     </div>
   );
 }
-
 function SuspenseFallback({ children }: { children: React.ReactNode }) {
   return (
     <Suspense fallback={<div className="flex items-center justify-center py-16"><Loader className="h-8 w-8 animate-spin text-[#F36509]" /></div>}>
-      {children}
+    {children}
     </Suspense>
   );
 }
