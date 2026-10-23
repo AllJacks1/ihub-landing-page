@@ -19,7 +19,7 @@ import {
   LocationType,
   PosLocation,
 } from "@/lib/pos-locations";
-import { getOrdersBySessionId } from "@/lib/order-actions";
+import { createQrOrder, getOrdersBySessionId } from "@/lib/order-actions";
 
 /** Minimal branch shape for the create-session picker */
 export type PosBranchOption = {

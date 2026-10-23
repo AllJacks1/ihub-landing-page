@@ -27,6 +27,7 @@ import {
   ensureTerminalContext,
   type PosProduct,
   getBranchBillingSettings,
+  createPosSession,
 } from "@/lib/pos-actions";
 import Image from "next/image";
 import Link from "next/link";
@@ -46,8 +47,9 @@ import {
   recordPayment,
   completeOrder,
   cancelOrder,
+  createQrOrder,
 } from "@/lib/order-actions";
-import { getCurrentUser } from "@/lib/actions";
+import { getCurrentUser, getRooms, getTables } from "@/lib/actions";
 import { computeScPwdDiscount } from "@/lib/utils";
 
 type CartItem = PosProduct & {
@@ -59,6 +61,26 @@ function formatCurrency(value: number) {
     style: "currency",
     currency: "PHP",
   }).format(value);
+}
+
+const LOCATION_TYPES = ["table", "room"] as const; // no cubicle in your actions
+type LocationType = (typeof LOCATION_TYPES)[number];
+
+const LOCATION_TYPE_LABELS: Record<LocationType, string> = {
+  table: "Table",
+  room: "Room",
+};
+
+type LocationItem = {
+  id: string;
+  name: string; // display name (table_number or room name)
+  seats: number;
+  is_active: boolean;
+  zone?: string;
+};
+
+function getLocationLabel(type: LocationType, name: string) {
+  return type === "table" ? `Table ${name}` : `Room ${name}`;
 }
 
 export default function PrimaryTerminalPage() {
@@ -96,6 +118,33 @@ export default function PrimaryTerminalPage() {
 
   // Optional: set from your branch picker / default branch
   const [branchId, setBranchId] = useState<string | undefined>(undefined);
+
+  const [isHolding, setIsHolding] = useState(false);
+  const [showHoldQrDialog, setShowHoldQrDialog] = useState(false);
+  const [heldSessionUrl, setHeldSessionUrl] = useState<string | null>(null);
+  const [heldSessionToken, setHeldSessionToken] = useState<string | null>(null);
+  const [heldOrderNumber, setHeldOrderNumber] = useState<string | null>(null);
+
+  const [showCreateSessionDialog, setShowCreateSessionDialog] = useState(false);
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
+
+  const [createSessionForm, setCreateSessionForm] = useState<{
+    type: LocationType;
+    id: string;
+    branch_id: string;
+  }>({
+    type: "table",
+    id: "",
+    branch_id: "",
+  });
+
+  const [locations, setLocations] = useState<{
+    table: LocationItem[];
+    room: LocationItem[];
+  }>({
+    table: [],
+    room: [],
+  });
 
   const [billingSettings, setBillingSettings] = useState<{
     vat_enabled: boolean;
@@ -170,20 +219,51 @@ export default function PrimaryTerminalPage() {
           return;
         }
 
-        setBranchId(ctx.data.branch.id);
-        setTerminalId(ctx.data.terminal.id);
-        setShiftId(ctx.data.shift.id);
-        setBranchName(ctx.data.branch.name);
-        setTerminalName(ctx.data.terminal.name);
+        if (!ctx.success || !ctx.data) {
+          setContextError(ctx.error ?? "Terminal context unavailable");
+          setContextReady(false);
+
+          const [productsResult, categoriesResult] = await Promise.all([
+            getPosProducts(),
+            getPosCategories(),
+          ]);
+          if (cancelled) return;
+          if (productsResult.success) setProducts(productsResult.data);
+          if (categoriesResult.success) {
+            setCategories(["All", ...categoriesResult.data.map((c) => c.name)]);
+          }
+          return;
+        }
+
+        // Narrow once — no more ctx.data?.xxx errors
+        const { branch, terminal, shift } = ctx.data;
+
+        setBranchId(branch.id);
+        setTerminalId(terminal.id);
+        setShiftId(shift.id);
+        setBranchName(branch.name);
+        setTerminalName(terminal.name);
         setContextReady(true);
         setContextError(null);
 
-        const [productsResult, categoriesResult, billingRes] =
-          await Promise.all([
-            getPosProducts(ctx.data.branch.id),
-            getPosCategories(),
-            getBranchBillingSettings(ctx.data.branch.id),
-          ]);
+        setCreateSessionForm((prev) => ({
+          ...prev,
+          branch_id: branch.id,
+        }));
+
+        const [
+          productsResult,
+          categoriesResult,
+          billingRes,
+          tablesRes,
+          roomsRes,
+        ] = await Promise.all([
+          getPosProducts(branch.id),
+          getPosCategories(),
+          getBranchBillingSettings(branch.id),
+          getTables(),
+          getRooms(),
+        ]);
 
         if (cancelled) return;
 
@@ -194,6 +274,22 @@ export default function PrimaryTerminalPage() {
         if (billingRes.success && billingRes.data) {
           setBillingSettings(billingRes.data);
         }
+
+        setLocations({
+          table: (tablesRes.success ? tablesRes.data : []).map((t) => ({
+            id: t.id,
+            name: t.table_number,
+            seats: t.seats,
+            is_active: t.is_active,
+            zone: t.zone,
+          })),
+          room: (roomsRes.success ? roomsRes.data : []).map((r) => ({
+            id: r.id,
+            name: r.name,
+            seats: r.seats,
+            is_active: r.is_active,
+          })),
+        });
 
         await loadActiveSessions();
       } catch (e) {
@@ -551,6 +647,150 @@ export default function PrimaryTerminalPage() {
       .forEach(({ id }) => map.set(id, (map.get(id) ?? 0) + 1));
 
     return map;
+  }
+
+  async function handleHoldOrder() {
+    if (!branchId || cart.length === 0) {
+      toast.error(!branchId ? "Terminal context not ready" : "Cart is empty");
+      return;
+    }
+
+    setIsHolding(true);
+
+    try {
+      // 1. Create a QR session for this branch (walk-in / no table binding)
+      //    If your API requires table_id / room_id / cubicle_id, pass one of them
+      //    or open a small picker dialog first.
+      const sessionResult = await createPosSession({
+        branch_id: branchId,
+        // table_id / room_id / cubicle_id: optional — omit if your backend allows pure walk-in sessions
+      });
+
+      if (!sessionResult.success || !sessionResult.data) {
+        toast.error(sessionResult.error ?? "Failed to create QR session");
+        return;
+      }
+
+      const qrToken = sessionResult.data.qr_token;
+
+      // 2. Place the current cart against that session (held / open order)
+      const orderResult = await createQrOrder({
+        session_token: qrToken,
+        order_type: "dine_in", // or "walk_in" if your action supports it
+        items: cart.map((item) => ({
+          product_id: item.id,
+          quantity: item.quantity,
+          discount_amount: 0, // apply SC/PWD later at payment
+        })),
+      });
+
+      if (!orderResult.success || !orderResult.data) {
+        toast.error(orderResult.error ?? "Failed to place held order");
+        return;
+      }
+
+      // 3. Build the customer URL
+      const baseUrl =
+        typeof window !== "undefined" ? window.location.origin : "";
+      const url = `${baseUrl}/menu?session=${qrToken}`;
+
+      setHeldSessionUrl(url);
+      setHeldSessionToken(qrToken);
+      setHeldOrderNumber(orderResult.data.order_number ?? null);
+      setShowHoldQrDialog(true);
+
+      clearCart();
+      await loadActiveSessions();
+      toast.success("Order held · QR session ready");
+    } catch (err) {
+      console.error("Hold order error:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to hold order");
+    } finally {
+      setIsHolding(false);
+    }
+  }
+
+  function openHoldDialog() {
+    if (!branchId || cart.length === 0) {
+      toast.error(!branchId ? "Terminal context not ready" : "Cart is empty");
+      return;
+    }
+    setCreateSessionForm((prev) => ({
+      ...prev,
+      branch_id: branchId,
+      id: "",
+    }));
+    setShowCreateSessionDialog(true);
+  }
+
+  async function handleCreateSession() {
+    if (!createSessionForm.id || !createSessionForm.branch_id) {
+      toast.error("Please select a location");
+      return;
+    }
+    if (cart.length === 0) {
+      toast.error("Cart is empty");
+      return;
+    }
+
+    setIsCreatingSession(true);
+
+    try {
+      const { type, id, branch_id } = createSessionForm;
+
+      const sessionResult = await createPosSession({
+        table_id: type === "table" ? id : undefined,
+        room_id: type === "room" ? id : undefined,
+        branch_id,
+      });
+
+      if (!sessionResult.success || !sessionResult.data) {
+        toast.error(sessionResult.error ?? "Failed to create session");
+        return;
+      }
+
+      const qrToken = sessionResult.data.qr_token;
+
+      const orderResult = await createQrOrder({
+        session_token: qrToken,
+        order_type: "dine_in",
+        items: cart.map((item) => ({
+          product_id: item.id,
+          quantity: item.quantity,
+          discount_amount: 0,
+        })),
+      });
+
+      if (!orderResult.success || !orderResult.data) {
+        toast.error(orderResult.error ?? "Failed to place held order");
+        return;
+      }
+
+      const baseUrl =
+        typeof window !== "undefined" ? window.location.origin : "";
+      const url = `${baseUrl}/menu?session=${qrToken}`;
+
+      setHeldSessionUrl(url);
+      setHeldSessionToken(qrToken);
+      setHeldOrderNumber(orderResult.data.order_number ?? null);
+
+      clearCart();
+      setShowCreateSessionDialog(false);
+      setShowHoldQrDialog(true);
+      await loadActiveSessions();
+      toast.success("Order held · QR session ready");
+
+      setCreateSessionForm((prev) => ({
+        type: "table",
+        id: "",
+        branch_id: prev.branch_id,
+      }));
+    } catch (err) {
+      console.error("Hold / create session error:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to hold order");
+    } finally {
+      setIsCreatingSession(false);
+    }
   }
 
   const canPay =
@@ -957,11 +1197,14 @@ export default function PrimaryTerminalPage() {
               <Button
                 type="button"
                 variant="outline"
-                disabled={cart.length === 0}
+                disabled={
+                  cart.length === 0 || isCreatingSession || !contextReady
+                }
+                onClick={openHoldDialog}
                 className="h-11 border-stone-200 bg-white"
               >
                 <Receipt className="mr-2 h-4 w-4" />
-                Hold
+                {isCreatingSession ? "Holding…" : "Hold"}
               </Button>
 
               <Button
@@ -1235,6 +1478,181 @@ export default function PrimaryTerminalPage() {
               {isProcessingPayment
                 ? "Processing…"
                 : `Confirm ${formatCurrency(amountDue)}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={showCreateSessionDialog}
+        onOpenChange={setShowCreateSessionDialog}
+      >
+        <DialogContent className="w-[calc(100vw-2rem)] rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">
+              Hold order · Create QR Session
+            </DialogTitle>
+            <DialogDescription>
+              Select a table or room. The current cart will be placed on that
+              session so the customer can order again via QR.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">
+                Branch
+              </label>
+              <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-800">
+                {branchName || "—"}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">
+                Location Type
+              </label>
+              <div className="flex flex-wrap gap-4">
+                {LOCATION_TYPES.map((type) => (
+                  <label
+                    key={type}
+                    className="flex cursor-pointer items-center gap-2"
+                  >
+                    <input
+                      type="radio"
+                      name="sessionType"
+                      value={type}
+                      checked={createSessionForm.type === type}
+                      onChange={() =>
+                        setCreateSessionForm((prev) => ({
+                          ...prev,
+                          type,
+                          id: "",
+                        }))
+                      }
+                      className="h-4 w-4 border-stone-300 text-[#F36509] focus:ring-[#F36509]"
+                    />
+                    <span className="text-sm text-stone-700">
+                      {LOCATION_TYPE_LABELS[type]}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">
+                Select {LOCATION_TYPE_LABELS[createSessionForm.type]}
+              </label>
+              <select
+                value={createSessionForm.id}
+                onChange={(e) =>
+                  setCreateSessionForm((prev) => ({
+                    ...prev,
+                    id: e.target.value,
+                  }))
+                }
+                className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F36509]/30"
+              >
+                <option value="">Choose...</option>
+                {locations[createSessionForm.type]
+                  .filter((l) => l.is_active)
+                  .map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {createSessionForm.type === "table"
+                        ? `${getLocationLabel("table", location.name)} (${location.zone ?? "—"}, ${location.seats} seats)`
+                        : `${getLocationLabel("room", location.name)} (${location.seats} seats)`}
+                    </option>
+                  ))}
+              </select>
+              {locations[createSessionForm.type].filter((l) => l.is_active)
+                .length === 0 && (
+                <p className="text-xs text-stone-500">
+                  No active{" "}
+                  {LOCATION_TYPE_LABELS[createSessionForm.type].toLowerCase()}s
+                  available.
+                </p>
+              )}
+            </div>
+
+            <p className="text-xs text-stone-500">
+              {cart.length} item{cart.length === 1 ? "" : "s"} will be added to
+              this session.
+            </p>
+          </div>
+
+          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowCreateSessionDialog(false)}
+              disabled={isCreatingSession}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleCreateSession}
+              disabled={
+                isCreatingSession ||
+                !createSessionForm.id ||
+                !createSessionForm.branch_id ||
+                cart.length === 0
+              }
+              className="rounded-xl bg-[#F36509] text-white hover:bg-[#d95a08]"
+            >
+              {isCreatingSession ? "Holding…" : "Hold & Create Session"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showHoldQrDialog} onOpenChange={setShowHoldQrDialog}>
+        <DialogContent className="w-[calc(100vw-2rem)] rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">Order held</DialogTitle>
+            <DialogDescription>
+              {heldOrderNumber
+                ? `Order #${heldOrderNumber} is open. Give this link to the customer so they can order again.`
+                : "Give this link to the customer so they can order again."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {heldSessionUrl && (
+              <>
+                <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+                  <p className="break-all text-center text-xs text-stone-600">
+                    {heldSessionUrl}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    navigator.clipboard.writeText(heldSessionUrl);
+                    toast.success("Link copied");
+                  }}
+                >
+                  Copy link
+                </Button>
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={() => {
+                setShowHoldQrDialog(false);
+                setHeldSessionUrl(null);
+                setHeldSessionToken(null);
+                setHeldOrderNumber(null);
+              }}
+              className="bg-[#F36509] text-white hover:bg-[#d95a08]"
+            >
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>

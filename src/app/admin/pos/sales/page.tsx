@@ -15,6 +15,8 @@ import {
   BarChart3,
   Layers,
   MapPin,
+  ChevronRight,
+  ChevronLeft,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,7 +32,6 @@ import {
   getSalesByBranch,
   getSalesByArea,
   getSalesQuotas,
-  resolveDateRangePreset,
   type SalesSummary,
   type EmployeeSale,
   type CategorySale,
@@ -38,6 +39,7 @@ import {
   type BranchSale,
   type AreaSale,
   type QuotaItem,
+  resolveDateRange,
 } from "@/lib/reports-action"; // adjust path if your actions live elsewhere
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -53,6 +55,36 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-PH").format(value);
 }
 
+function toDateInputValue(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Last 7 days inclusive: today − 6 → today */
+function getDefaultRange(): { from: Date; to: Date } {
+  const to = new Date();
+  to.setHours(0, 0, 0, 0);
+  const from = new Date(to);
+  from.setDate(from.getDate() - 6);
+  return { from, to };
+}
+
+function addDays(d: Date, days: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function isSameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 type Tab = "employee" | "category" | "product" | "branch" | "area" | "quota";
@@ -61,7 +93,8 @@ export default function SalesPage() {
   const [activeTab, setActiveTab] = useState<Tab>("employee");
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [dateRange, setDateRange] = useState("this-month");
+  const [fromDate, setFromDate] = useState<Date>(() => getDefaultRange().from);
+  const [toDate, setToDate] = useState<Date>(() => getDefaultRange().to);
   const [error, setError] = useState<string | null>(null);
 
   // Real data state
@@ -83,7 +116,7 @@ export default function SalesPage() {
     setError(null);
 
     try {
-      const { from, to } = resolveDateRangePreset(dateRange);
+      const { from, to } = await resolveDateRange(fromDate, toDate);
       const filters = { from, to };
 
       const [
@@ -133,7 +166,7 @@ export default function SalesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [dateRange]);
+  }, [fromDate, toDate]);
 
   useEffect(() => {
     loadData();
@@ -198,6 +231,56 @@ export default function SalesPage() {
     return "bg-stone-300";
   }
 
+  const today = useMemo(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+  }, []);
+
+  const canGoNext = toDate < today;
+
+  function shiftRange(days: number) {
+    const nextFrom = addDays(fromDate, days);
+    let nextTo = addDays(toDate, days);
+
+    // Clamp so end never goes past today
+    if (nextTo > today) {
+      const overflow = Math.round(
+        (nextTo.getTime() - today.getTime()) / (24 * 60 * 60 * 1000),
+      );
+      nextTo = today;
+      // keep the same span length if possible
+      const span =
+        Math.round(
+          (toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000),
+        ) + 1;
+      nextFrom.setTime(today.getTime());
+      nextFrom.setDate(today.getDate() - (span - 1));
+    }
+
+    setFromDate(nextFrom);
+    setToDate(nextTo);
+  }
+
+  function handleFromChange(value: string) {
+    if (!value) return;
+    const d = new Date(value + "T00:00:00");
+    if (Number.isNaN(d.getTime())) return;
+    setFromDate(d);
+    // if start > end, push end forward
+    if (d > toDate) setToDate(d);
+  }
+
+  function handleToChange(value: string) {
+    if (!value) return;
+    const d = new Date(value + "T00:00:00");
+    if (Number.isNaN(d.getTime())) return;
+    // never allow future dates
+    const clamped = d > today ? today : d;
+    setToDate(clamped);
+    if (clamped < fromDate) setFromDate(clamped);
+  }
+
   return (
     <main className="flex min-h-[calc(100vh-4rem)] flex-1 flex-col bg-stone-50">
       {/* Header */}
@@ -218,20 +301,49 @@ export default function SalesPage() {
 
           <div className="flex flex-wrap items-center gap-3">
             {/* Date range */}
-            <div className="relative">
-              <select
-                value={dateRange}
-                onChange={(e) => setDateRange(e.target.value)}
-                className="h-11 appearance-none rounded-xl border border-stone-200 bg-white pl-10 pr-10 text-sm font-medium text-stone-800 outline-none focus:border-[#F36509]/50 focus:ring-2 focus:ring-[#F36509]/20"
+            <div className="flex items-center gap-1 rounded-xl border border-stone-200 bg-white p-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0 rounded-lg text-stone-600 hover:bg-stone-100"
+                onClick={() => shiftRange(-7)}
+                title="Previous week"
               >
-                <option value="today">Today</option>
-                <option value="yesterday">Yesterday</option>
-                <option value="this-week">This Week</option>
-                <option value="this-month">This Month</option>
-                <option value="last-month">Last Month</option>
-              </select>
-              <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+
+              <div className="flex items-center gap-1.5 px-1">
+                Date Range:
+                <input
+                  type="date"
+                  value={toDateInputValue(fromDate)}
+                  max={toDateInputValue(toDate)}
+                  onChange={(e) => handleFromChange(e.target.value)}
+                  className="h-9 w-[8.2rem] rounded-lg border-0 bg-transparent px-1 text-sm font-medium text-stone-800 outline-none focus:ring-0"
+                />
+                <span className="text-stone-400">–</span>
+                <input
+                  type="date"
+                  value={toDateInputValue(toDate)}
+                  min={toDateInputValue(fromDate)}
+                  max={toDateInputValue(today)}
+                  onChange={(e) => handleToChange(e.target.value)}
+                  className="h-9 w-[8.2rem] rounded-lg border-0 bg-transparent px-1 text-sm font-medium text-stone-800 outline-none focus:ring-0"
+                />
+              </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0 rounded-lg text-stone-600 hover:bg-stone-100 disabled:opacity-40"
+                onClick={() => shiftRange(7)}
+                disabled={!canGoNext}
+                title="Next week"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
 
             <Button

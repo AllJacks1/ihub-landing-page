@@ -177,10 +177,10 @@ export type DateRangeInput = z.infer<typeof dateRangeSchema>;
 /**
  * Convert the UI date-range preset into ISO from/to bounds (local timezone).
  */
-export async function resolveDateRangePreset(
-  preset: string,
+export async function resolveDateRange(
+  from?: string | Date | null,
+  to?: string | Date | null,
 ): Promise<{ from: string | null; to: string | null }> {
-  const now = new Date();
   const startOfDay = (d: Date) => {
     const x = new Date(d);
     x.setHours(0, 0, 0, 0);
@@ -192,49 +192,19 @@ export async function resolveDateRangePreset(
     return x;
   };
 
-  switch (preset) {
-    case "today": {
-      return {
-        from: startOfDay(now).toISOString(),
-        to: endOfDay(now).toISOString(),
-      };
-    }
-    case "yesterday": {
-      const y = new Date(now);
-      y.setDate(y.getDate() - 1);
-      return {
-        from: startOfDay(y).toISOString(),
-        to: endOfDay(y).toISOString(),
-      };
-    }
-    case "this-week": {
-      const day = now.getDay(); // 0 = Sun
-      const diffToMonday = day === 0 ? 6 : day - 1;
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - diffToMonday);
-      return {
-        from: startOfDay(monday).toISOString(),
-        to: endOfDay(now).toISOString(),
-      };
-    }
-    case "this-month": {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      return {
-        from: startOfDay(first).toISOString(),
-        to: endOfDay(now).toISOString(),
-      };
-    }
-    case "last-month": {
-      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const last = new Date(now.getFullYear(), now.getMonth(), 0);
-      return {
-        from: startOfDay(first).toISOString(),
-        to: endOfDay(last).toISOString(),
-      };
-    }
-    default:
-      return { from: null, to: null };
-  }
+  const parse = (v: string | Date | null | undefined): Date | null => {
+    if (v == null || v === "") return null;
+    const d = v instanceof Date ? new Date(v) : new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const fromDate = parse(from);
+  const toDate = parse(to);
+
+  return {
+    from: fromDate ? startOfDay(fromDate).toISOString() : null,
+    to: toDate ? endOfDay(toDate).toISOString() : null,
+  };
 }
 
 /**
