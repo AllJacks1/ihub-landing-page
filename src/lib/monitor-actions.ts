@@ -138,7 +138,7 @@ export async function getMonitorData(
       `
       )
       .in("status", ["open", "in_progress", "ready"])
-      .in("order_source", ["pos", "qr"])
+      .in("order_source", ["pos", "qr", "manual"])
       .order("created_at", { ascending: true });
 
     if (ordersError) {
