@@ -146,6 +146,12 @@ const sidebarGroups: SidebarGroup[] = [
         href: "/admin/spaces",
       },
       {
+        id: "crm",
+        label: "Customers",
+        icon: Users,
+        href: "/admin/pos/crm",
+      },
+      {
         id: "sales",
         label: "Sales",
         icon: Tag,
@@ -233,7 +239,9 @@ function AdminSidebar() {
       overview: true,
     },
   );
-  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>(
+    {},
+  );
 
   const toggleGroup = (groupId: string) => {
     setExpandedGroups((prev) => ({

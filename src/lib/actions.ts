@@ -2,7 +2,7 @@
 
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, unstable_cache, updateTag } from "next/cache";
 import { z } from "zod";
 import { Event } from "./types/event";
 
@@ -136,7 +136,9 @@ export async function createPost(formData: {
       };
     }
 
-    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
     if (!authUser) {
       return {
         success: false,
@@ -2532,5 +2534,331 @@ export async function getActiveEvents() {
       error: "Failed to fetch active events",
       data: [] as Event[],
     };
+  }
+}
+
+// ==================== CRM — USERS (customers) ====================
+
+export type CrmUser = {
+  userId: string;
+  firstname: string;
+  birthday: string | null;
+  contactNumber: string | null;
+  email: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GetCrmUsersResult =
+  | {
+      success: true;
+      data: CrmUser[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+    }
+  | {
+      success: false;
+      error: string;
+      data: CrmUser[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+    };
+
+const crmUserSchema = z.object({
+  firstname: z
+    .string()
+    .min(1, "First name is required")
+    .max(100, "First name must be less than 100 characters")
+    .trim(),
+  birthday: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Birthday must be YYYY-MM-DD")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  contactNumber: z
+    .string()
+    .max(30, "Contact number is too long")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  email: z
+    .string()
+    .email("Invalid email")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+});
+
+function normalizeCrmPayload(data: z.infer<typeof crmUserSchema>) {
+  return {
+    firstname: data.firstname,
+    birthday: data.birthday ? data.birthday : null,
+    contactNumber: data.contactNumber?.trim()
+      ? data.contactNumber.trim()
+      : null,
+    email: data.email?.trim() ? data.email.trim() : null,
+  };
+}
+
+const DEFAULT_PAGE_SIZE = 20;
+
+const CRM_SELECT = `
+  userId,
+  firstname,
+  birthday,
+  contactNumber,
+  email,
+  created_at,
+  updated_at
+`;
+
+function invalidateCrmCache() {
+  // Prefer updateTag for immediate read-your-own-writes.
+  // If your Next version doesn't export updateTag, use:
+  //   revalidateTag("crm-users", { expire: 0 });
+  updateTag("crm-users");
+  revalidatePath("/admin/pos/crm");
+}
+
+export async function getCrmUsers(options?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}): Promise<GetCrmUsersResult> {
+  const page = Math.max(1, options?.page ?? 1);
+  const pageSize = Math.min(
+    100,
+    Math.max(1, options?.pageSize ?? DEFAULT_PAGE_SIZE),
+  );
+  const search = options?.search?.trim() ?? "";
+
+  try {
+    // cookies() lives here — outside any unstable_cache scope
+    const supabase = await createSupabaseClientForRead();
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
+      .from("users")
+      .select(CRM_SELECT, { count: "exact" })
+      .order("firstname", { ascending: true })
+      .range(from, to);
+
+    if (search) {
+      query = query.or(
+        `firstname.ilike.%${search}%,email.ilike.%${search}%,contactNumber.ilike.%${search}%`,
+      );
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      console.error("Fetch CRM users error:", error);
+      return {
+        success: false as const,
+        error: error.message,
+        data: [],
+        total: 0,
+        page,
+        pageSize,
+        totalPages: 1,
+      };
+    }
+
+    const total = count ?? 0;
+
+    return {
+      success: true as const,
+      data: (data ?? []) as CrmUser[],
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  } catch (error) {
+    console.error("Unexpected error in getCrmUsers:", error);
+    return {
+      success: false as const,
+      error:
+        error instanceof Error ? error.message : "Failed to fetch customers",
+      data: [],
+      total: 0,
+      page,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+}
+
+export async function getCrmUserById(id: string) {
+  try {
+    const supabase = await createSupabaseClientForRead();
+
+    const { data, error } = await supabase
+      .from("users")
+      .select(CRM_SELECT)
+      .eq("userId", id)
+      .single();
+
+    if (error || !data) {
+      return { success: false as const, error: "Customer not found" };
+    }
+
+    return { success: true as const, data: data as CrmUser };
+  } catch (error) {
+    console.error("getCrmUserById error:", error);
+    return { success: false as const, error: "Failed to load customer" };
+  }
+}
+
+export async function createCrmUser(formData: {
+  firstname: string;
+  birthday?: string | null;
+  contactNumber?: string | null;
+  email?: string | null;
+}) {
+  try {
+    const roleUser = await requireRole(["management", "cashier"]);
+    if (!roleUser) {
+      return { success: false as const, error: "Unauthorized" };
+    }
+
+    const validated = crmUserSchema.parse(formData);
+    const payload = {
+      userId: Date.now().toString(),
+      ...normalizeCrmPayload(validated),
+    };
+
+    const supabase = await createSupabaseClient();
+
+    const { data, error } = await supabase
+      .from("users")
+      .insert(payload)
+      .select(CRM_SELECT)
+      .single();
+
+    if (error) {
+      console.error("Create CRM user error:", error);
+      if (error.code === "23505") {
+        return {
+          success: false as const,
+          error: "A customer with this email already exists",
+        };
+      }
+      return { success: false as const, error: error.message };
+    }
+
+    invalidateCrmCache();
+    return { success: true as const, data: data as CrmUser };
+  } catch (error) {
+    console.error("createCrmUser error:", error);
+    if (error instanceof z.ZodError) {
+      return {
+        success: false as const,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+    return { success: false as const, error: "Failed to create customer" };
+  }
+}
+
+export async function updateCrmUser(
+  userId: string,
+  formData: {
+    firstname?: string;
+    birthday?: string | null;
+    contactNumber?: string | null;
+    email?: string | null;
+  },
+) {
+  try {
+    const roleUser = await requireRole(["management", "cashier"]);
+    if (!roleUser) {
+      return { success: false as const, error: "Unauthorized" };
+    }
+
+    const validated = crmUserSchema.partial().parse(formData);
+    const supabase = await createSupabaseClient();
+
+    const updatePayload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (validated.firstname !== undefined) {
+      updatePayload.firstname = validated.firstname;
+    }
+    if (validated.birthday !== undefined) {
+      updatePayload.birthday = validated.birthday ? validated.birthday : null;
+    }
+    if (validated.contactNumber !== undefined) {
+      updatePayload.contactNumber = validated.contactNumber?.trim()
+        ? validated.contactNumber.trim()
+        : null;
+    }
+    if (validated.email !== undefined) {
+      updatePayload.email = validated.email?.trim()
+        ? validated.email.trim()
+        : null;
+    }
+
+    const { data, error } = await supabase
+      .from("users")
+      .update(updatePayload)
+      .eq("userId", userId)
+      .select(CRM_SELECT)
+      .single();
+
+    if (error) {
+      console.error("Update CRM user error:", error);
+      if (error.code === "23505") {
+        return {
+          success: false as const,
+          error: "A customer with this email already exists",
+        };
+      }
+      return { success: false as const, error: error.message };
+    }
+
+    invalidateCrmCache();
+    return { success: true as const, data: data as CrmUser };
+  } catch (error) {
+    console.error("updateCrmUser error:", error);
+    if (error instanceof z.ZodError) {
+      return {
+        success: false as const,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+    return { success: false as const, error: "Failed to update customer" };
+  }
+}
+
+export async function deleteCrmUser(id: string) {
+  try {
+    const roleUser = await requireRole(["management"]);
+    if (!roleUser) {
+      return { success: false as const, error: "Unauthorized" };
+    }
+
+    const supabase = await createSupabaseClient();
+
+    const { error } = await supabase.from("users").delete().eq("userId", id);
+
+    if (error) {
+      console.error("Delete CRM user error:", error);
+      return { success: false as const, error: error.message };
+    }
+
+    invalidateCrmCache();
+    return { success: true as const };
+  } catch (error) {
+    console.error("deleteCrmUser error:", error);
+    return { success: false as const, error: "Failed to delete customer" };
   }
 }
