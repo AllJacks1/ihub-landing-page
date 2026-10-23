@@ -3,7 +3,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { z } from "zod";
-import { StockItem, MonitorData, MonitorItem, PreparationStatus } from "./monitor-types";
+import { StockItem, MonitorData, MonitorItem, PreparationStatus, DepartmentStatus } from "./monitor-types";
 import { createOrderAdminClient } from "./order-admin-client";
 import { requireRole } from "./actions";
 
@@ -118,6 +118,16 @@ export async function getMonitorData(
         status,
         created_at,
         order_source,
+        kitchen_status,
+        bar_status,
+        session_id,
+        pos_sessions (
+          id,
+          is_active,
+          tables ( table_number ),
+          rooms ( name ),
+          cubicles ( name )
+        ),
         pos_order_items (
           id,
           order_id,
@@ -129,11 +139,7 @@ export async function getMonitorData(
           line_total,
           area_id,
           area_code,
-          created_at,
-          order_number,
-          special_instructions,
-          preparation_status,
-          preparation_updated_at
+          created_at
         )
       `
       )
@@ -154,21 +160,55 @@ export async function getMonitorData(
     });
 
     const orderCards: any[] = [];
+    const orderItemMap = new Map();
+    const unassignedItems: MonitorItem[] = [];
 
     for (const o of orders || []) {
+      const session = (o as any).pos_sessions;
+      if (session && session.is_active === false) continue;
       const itemsRaw = (o as any).pos_order_items || [];
       for (const it of itemsRaw) {
         const classification = classifyItemForStation(it.area_id, areaIdToCode, station);
-        if (!classification.eligible) continue;
+        if (!classification.eligible) {
+          const isRecognizedArea =
+            classification.areaCode === "ieat" ||
+            classification.areaCode === "idrink" ||
+            classification.areaCode === "istudy";
+          if (isRecognizedArea) continue;
+          const mappedStatus = mapPreparationStatus(undefined);
+          const elapsed = it.created_at ? elapsedSecondsSince(it.created_at) : 0;
+          unassignedItems.push({
+            itemId: it.id,
+            orderId: (o as any).id,
+            orderNumber: (o as any).order_number ?? "",
+            orderTime: it.created_at || (o as any).created_at,
+            orderSource: (o as any).order_source ?? "pos",
+            location: session?.tables?.table_number ?? session?.rooms?.name ?? session?.cubicles?.name ?? null,
+            productName: it.product_name,
+            quantity: it.quantity,
+            unitPrice: it.unit_price,
+            lineTotal: it.line_total,
+            areaCode: classification.areaCode,
+            areaName: classification.areaName,
+            preparationStatus: mappedStatus.value,
+            preparationLabel: mappedStatus.label,
+            departmentStatus: ((o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"] ?? "order_placed") as DepartmentStatus,
+            specialInstructions: null,
+            elapsedSeconds: elapsed,
+            isNew: elapsed < 60,
+          });
+          continue;
+        }
 
-        const mappedStatus = mapPreparationStatus(it.preparation_status);
+        const mappedStatus = mapPreparationStatus(undefined);
         const elapsed = it.created_at ? elapsedSecondsSince(it.created_at) : 0;
         const monitorItem: MonitorItem = {
           itemId: it.id,
           orderId: (o as any).id,
-          orderNumber: (o as any).order_number ?? it.order_number ?? "",
+          orderNumber: (o as any).order_number ?? "",
           orderTime: it.created_at || (o as any).created_at,
           orderSource: (o as any).order_source ?? "pos",
+          location: session?.table_number ?? session?.room_name ?? session?.cubicle_name ?? null,
           productName: it.product_name,
           quantity: it.quantity,
           unitPrice: it.unit_price,
@@ -177,24 +217,33 @@ export async function getMonitorData(
           areaName: classification.areaName,
           preparationStatus: mappedStatus.value,
           preparationLabel: mappedStatus.label,
-          specialInstructions: it.special_instructions ?? null,
+            departmentStatus: ((o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"] ?? "order_placed") as DepartmentStatus,
+          specialInstructions: null,
           elapsedSeconds: elapsed,
           isNew: elapsed < 60,
         };
 
-        orderCards.push({
-          item: monitorItem,
-          orderId: (o as any).id,
-          orderNumber: (o as any).order_number ?? it.order_number ?? "",
-          orderTime: it.created_at || (o as any).created_at,
-          canShowOnMonitor: true,
-        });
+        if (!orderItemMap.has((o as any).id)) {
+          orderItemMap.set((o as any).id, {
+            orderId: (o as any).id,
+            orderNumber: (o as any).order_number ?? "",
+            orderTime: it.created_at || (o as any).created_at,
+            orderSource: (o as any).order_source ?? "pos",
+            location: session?.table_number ?? session?.room_name ?? session?.cubicle_name ?? null,
+            status: (o as any).status ?? "open",
+            items: [],
+          });
+        }
+        orderItemMap.get((o as any).id).items.push(monitorItem);
       }
     }
 
+    for (const card of orderItemMap.values()) {
+      orderCards.push(card);
+    }
     orderCards.sort((a, b) => {
-      const ae = a.item?.elapsedSeconds ?? 0;
-      const be = b.item?.elapsedSeconds ?? 0;
+      const ae = a.items?.[0]?.elapsedSeconds ?? 0;
+      const be = b.items?.[0]?.elapsedSeconds ?? 0;
       if (ae !== be) return ae - be;
       const an = a.orderTime || "";
       const bn = b.orderTime || "";
@@ -234,6 +283,7 @@ export async function getMonitorData(
 
     const data: MonitorData = {
       orders: orderCards,
+      unassignedItems,
       stockItems: lowStock,
       outOfStockItems: outOfStock,
       stockViewItems: [...lowStock, ...outOfStock].sort((a, b) => a.quantity - b.quantity),
@@ -280,7 +330,7 @@ export async function updateMonitorPrepStatus(
     const supabase = createOrderAdminClient();
     const { data: itemRow, error: fetchError } = await supabase
       .from("pos_order_items")
-      .select("id, order_id, preparation_status, preparation_updated_at")
+      .select("id, order_id")
       .eq("id", validated.itemId)
       .single();
 
@@ -305,27 +355,7 @@ export async function updateMonitorPrepStatus(
       };
     }
 
-    const currentStatus = itemRow.preparation_status ?? "new";
-    if (currentStatus === validated.preparationStatus) {
-      return { success: true, stale: true };
-    }
-
-    const { error: updateError } = await supabase
-      .from("pos_order_items")
-      .update({
-        preparation_status: validated.preparationStatus,
-        preparation_updated_at: utcNow(),
-        last_status_ack: validated.preparationStatus,
-      })
-      .eq("id", validated.itemId);
-
-    if (updateError) {
-      return { success: false, error: updateError.message };
-    }
-
-    await supabase.from("pos_orders").update({ updated_at: utcNow() }).eq("id", itemRow.order_id);
-
-    return { success: true };
+    return { success: false, error: "Preparation status persistence is not supported by the current schema" };
   } catch (err) {
     console.error("updateMonitorPrepStatus error:", err);
     return {
@@ -337,5 +367,22 @@ export async function updateMonitorPrepStatus(
           ? err.message
           : "Failed to update preparation status",
     };
+  }
+}
+
+export async function updateDepartmentStatus(input: { orderId: string; station: "kitchen" | "bar"; newStatus: DepartmentStatus }) {
+  try {
+    const user = await requireRole(input.station === "kitchen" ? ["management", "partner"] : ["management", "crew"]);
+    if (!user) return { success: false, error: "Unauthorized" };
+    const supabase = await currentSupabaseAdmin();
+    const { data, error } = await supabase.rpc("update_order_department_status", {
+      p_order_id: input.orderId,
+      p_department: input.station,
+      p_new_status: input.newStatus,
+    });
+    if (error) return { success: false, error: error.message };
+    return { success: true, data };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Failed" };
   }
 }

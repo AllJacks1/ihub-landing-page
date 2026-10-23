@@ -29,6 +29,8 @@ export interface MonitorItem {
   orderNumber: string;
   orderTime: string;
   orderSource: string;
+  location: string | null;
+  departmentStatus: DepartmentStatus;
   productName: string;
   quantity: number;
   unitPrice: number;
@@ -48,10 +50,12 @@ export interface MonitorItem {
   isNew: boolean;
 }
 
+export type DepartmentStatus = "order_placed" | "preparing" | "serving" | "served";
+
 export type PreparationStatus = "new" | "preparing" | "ready" | "completed" | "cancelled";
 
 export interface MonitorCard {
-  item: MonitorItem;
+  items: MonitorItem[];
   /** The original order identity shared by all items in the same order. */
   orderId: string;
   orderNumber: string;
@@ -78,6 +82,8 @@ export interface MonitorData {
   outOfStockItems: StockItem[];
   /** Combined (sorted) list used for display with stock coverage. */
   stockViewItems: StockItem[];
+  /** Items that could not be routed to this station because of missing or invalid area assignment. */
+  unassignedItems: MonitorItem[];
   /** Elapsed time buckets in seconds, shared by both monitors. */
   elapsedBuckets: number[];
 }
