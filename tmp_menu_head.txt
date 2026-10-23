@@ -1,0 +1,84 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  Search,
+  Plus,
+  Minus,
+  ShoppingCart,
+  Package,
+  Smartphone,
+  X,
+  Trash2,
+  QrCode,
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  Loader2,
+  Receipt,
+  RefreshCw,
+} from "lucide-react";
+import { toast } from "sonner";
+import { useSearchParams } from "next/navigation";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  getPosProducts,
+  getPosCategories,
+  getPosSessionByToken,
+  type PosProduct,
+} from "@/lib/pos-actions";
+import {
+  createQrOrder,
+  getOrdersBySessionToken,
+  type SessionOrder,
+} from "@/lib/order-actions";
+
+type CartItem = PosProduct & {
+  quantity: number;
+};
+
+const REQUIRED_CATEGORIES = [
+  "Food",
+  "Beverages",
+  "iSTUDY",
+  "iWORK",
+  "Equipment",
+  "Printing & Services",
+] as const;
+
+type Category = (typeof REQUIRED_CATEGORIES)[number];
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+  }).format(value);
+}
+
+function statusBadgeClass(status: string): string {
+  switch (status) {
+    case "completed":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "cancelled":
+      return "border-red-200 bg-red-50 text-red-700";
+    case "ready":
+      return "border-blue-200 bg-blue-50 text-blue-700";
+    case "in_progress":
+      return "border-amber-200 bg-amber-50 text-amber-800";
+    default: // open
+      return "border-stone-200 bg-stone-50 text-stone-700";
+  }
+}
+

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -123,9 +123,15 @@ const sidebarGroups: SidebarGroup[] = [
       },
       {
         id: "reservations",
-        label: "Reservations",
+        label: "Reservation Terminal",
         icon: CalendarCheck,
         href: "/admin/pos/terminal/reservation",
+      },
+      {
+        id: "reservation-monitor",
+        label: "Reservation Monitor",
+        icon: CalendarCheck,
+        href: "/admin/pos/terminal/reservation-monitor",
       },
       {
         id: "calendar",
@@ -157,26 +163,6 @@ const sidebarGroups: SidebarGroup[] = [
             icon: Warehouse,
             href: "/admin/pos/inventory",
           },
-          {
-            id: "monitor",
-            label: "Monitor",
-            icon: Monitor,
-            href: "/admin/pos/monitor",
-            items: [
-              {
-                id: "monitor-kitchen",
-                label: "Kitchen Monitor",
-                icon: ChefHat,
-                href: "/admin/pos/monitor/kitchen",
-              },
-              {
-                id: "monitor-bar",
-                label: "Bar Monitor",
-                icon: Coffee,
-                href: "/admin/pos/monitor/bar",
-              },
-            ],
-          },
         ],
       },
       {
@@ -184,6 +170,26 @@ const sidebarGroups: SidebarGroup[] = [
         label: "Reports",
         icon: FileText,
         href: "/admin/pos/monitoring/reports",
+      },
+      {
+        id: "monitor",
+        label: "Monitor",
+        icon: Monitor,
+        href: "/admin/pos/monitor",
+        items: [
+          {
+            id: "monitor-kitchen",
+            label: "Kitchen Monitor",
+            icon: ChefHat,
+            href: "/admin/pos/monitor/kitchen",
+          },
+          {
+            id: "monitor-bar",
+            label: "Bar Monitor",
+            icon: Coffee,
+            href: "/admin/pos/monitor/bar",
+          },
+        ],
       },
     ],
   },
@@ -220,12 +226,14 @@ const sidebarGroups: SidebarGroup[] = [
 ];
 
 function AdminSidebar() {
+  const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
     {
       overview: true,
     },
   );
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
 
   const toggleGroup = (groupId: string) => {
     setExpandedGroups((prev) => ({
@@ -233,6 +241,22 @@ function AdminSidebar() {
       [groupId]: !prev[groupId],
     }));
   };
+
+  const toggleItem = (itemId: string) => {
+    setExpandedItems((prev) => ({
+      ...prev,
+      [itemId]: !prev[itemId],
+    }));
+  };
+
+  useEffect(() => {
+    if (
+      pathname.startsWith("/admin/pos/monitor/kitchen") ||
+      pathname.startsWith("/admin/pos/monitor/bar")
+    ) {
+      setExpandedItems((prev) => ({ ...prev, monitor: true }));
+    }
+  }, [pathname]);
 
   return (
     <aside
@@ -269,13 +293,12 @@ function AdminSidebar() {
                 }`}
               >
                 {group.items.map((item) => (
-                  <SidebarLink
+                  <SidebarNavItem
                     key={item.id}
-                    icon={item.icon}
-                    label={item.label}
-                    href={item.href}
-                    badge={item.badge}
+                    item={item}
                     collapsed={sidebarCollapsed}
+                    expandedItems={expandedItems}
+                    toggleItem={toggleItem}
                   />
                 ))}
               </div>
@@ -296,48 +319,92 @@ function AdminSidebar() {
   );
 }
 
-function SidebarLink({
-  icon: Icon,
-  label,
-  href,
-  badge,
+function SidebarNavItem({
+  item,
   collapsed,
+  expandedItems,
+  toggleItem,
 }: {
-  icon: React.ElementType;
-  label: string;
-  href: string;
-  badge?: string;
+  item: SidebarItem;
   collapsed: boolean;
+  expandedItems: Record<string, boolean>;
+  toggleItem: (id: string) => void;
 }) {
   const pathname = usePathname();
-
+  const hasChildren = !!item.items && item.items.length > 0;
+  const isExpanded = !!expandedItems[item.id];
   const isActive =
-    pathname === href ||
-    (href !== "/admin/pos" && pathname.startsWith(`${href}/`));
+    pathname === item.href ||
+    (item.href !== "/admin/pos" && pathname.startsWith(`${item.href}/`));
 
+  if (!hasChildren) {
+    const Icon = item.icon;
+    return (
+      <Link
+        href={item.href}
+        className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all ${
+          isActive
+            ? "bg-[#F36509]/10 font-medium text-[#F36509]"
+            : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+        }`}
+      >
+        <Icon className="h-5 w-5 shrink-0" />
+
+        {!collapsed && (
+          <>
+            <span className="flex-1 text-sm">{item.label}</span>
+
+            {item.badge && (
+              <Badge className="h-5 min-w-5 bg-[#F36509] px-1.5 text-[10px] text-white hover:bg-[#F36509]">
+                {item.badge}
+              </Badge>
+            )}
+          </>
+        )}
+      </Link>
+    );
+  }
+
+  const Icon = item.icon;
   return (
-    <Link
-      href={href}
-      className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all ${
-        isActive
-          ? "bg-[#F36509]/10 font-medium text-[#F36509]"
-          : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
-      }`}
-    >
-      <Icon className="h-5 w-5 shrink-0" />
+    <div>
+      <button
+        type="button"
+        onClick={() => toggleItem(item.id)}
+        className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-all ${
+          isActive
+            ? "bg-[#F36509]/10 font-medium text-[#F36509]"
+            : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+        }`}
+      >
+        <Icon className="h-5 w-5 shrink-0" />
 
-      {!collapsed && (
-        <>
-          <span className="flex-1 text-sm">{label}</span>
+        {!collapsed && (
+          <>
+            <span className="flex-1 text-left text-sm">{item.label}</span>
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </>
+        )}
+      </button>
 
-          {badge && (
-            <Badge className="h-5 min-w-5 bg-[#F36509] px-1.5 text-[10px] text-white hover:bg-[#F36509]">
-              {badge}
-            </Badge>
-          )}
-        </>
+      {!collapsed && isExpanded && (
+        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-stone-200 pl-2">
+          {item.items!.map((child) => (
+            <SidebarNavItem
+              key={child.id}
+              item={child as SidebarItem}
+              collapsed={collapsed}
+              expandedItems={expandedItems}
+              toggleItem={toggleItem}
+            />
+          ))}
+        </div>
       )}
-    </Link>
+    </div>
   );
 }
 
