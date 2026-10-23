@@ -50,7 +50,14 @@ import {
   cancelOrder,
   createQrOrder,
 } from "@/lib/order-actions";
-import { getCurrentUser, getRooms, getTables } from "@/lib/actions";
+import {
+  createCrmUser,
+  CrmUser,
+  getCrmUsers,
+  getCurrentUser,
+  getRooms,
+  getTables,
+} from "@/lib/actions";
 import { computeScPwdDiscount } from "@/lib/utils";
 
 type CartItem = PosProduct & {
@@ -128,6 +135,21 @@ export default function PrimaryTerminalPage() {
 
   const [showCreateSessionDialog, setShowCreateSessionDialog] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+
+  const [crmUsers, setCrmUsers] = useState<CrmUser[]>([]);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(
+    null,
+  );
+
+  const [showNewCustomer, setShowNewCustomer] = useState(false);
+  const [newCustomerForm, setNewCustomerForm] = useState({
+    first_name: "",
+    birthday: "",
+    contact_number: "",
+    email: "",
+  });
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
 
   const [createSessionForm, setCreateSessionForm] = useState<{
     type: LocationType;
@@ -245,6 +267,12 @@ export default function PrimaryTerminalPage() {
         setBranchName(branch.name);
         setTerminalName(terminal.name);
         setContextReady(true);
+
+        const usersRes = await getCrmUsers();
+        if (!cancelled && usersRes.success) {
+          setCrmUsers(usersRes.data);
+        }
+
         setContextError(null);
 
         setCreateSessionForm((prev) => ({
@@ -525,11 +553,22 @@ export default function PrimaryTerminalPage() {
     setSeniorCount(0);
     setPwdCount(0);
     setOtherGuestCount(1);
-    // Prefer branch billing: VAT-inclusive prices mean the bill already includes VAT
     setDiscountVatIncluded(
       billingSettings?.price_mode === "inclusive" ||
         billingSettings?.vat_enabled === true,
     );
+
+    // reset optional customer
+    setSelectedCustomerId(null);
+    setCustomerSearch("");
+    setShowNewCustomer(false);
+    setNewCustomerForm({
+      first_name: "",
+      birthday: "",
+      contact_number: "",
+      email: "",
+    });
+
     setShowPaymentDialog(true);
   }
 
@@ -546,6 +585,7 @@ export default function PrimaryTerminalPage() {
         shift_id: shiftId,
         order_type: "walk_in",
         order_source: "manual",
+        client_id: selectedCustomerId ?? undefined,
       });
 
       if (!orderResult.success || !orderResult.data) {
@@ -791,6 +831,66 @@ export default function PrimaryTerminalPage() {
       toast.error(err instanceof Error ? err.message : "Failed to hold order");
     } finally {
       setIsCreatingSession(false);
+    }
+  }
+
+  const filteredCrmUsers = useMemo(() => {
+    const q = customerSearch.trim().toLowerCase();
+    if (!q) return crmUsers.slice(0, 20);
+    return crmUsers
+      .filter(
+        (u) =>
+          u.firstname.toLowerCase().includes(q) ||
+          (u.email ?? "").toLowerCase().includes(q) ||
+          (u.contactNumber ?? "").includes(q),
+      )
+      .slice(0, 20);
+  }, [crmUsers, customerSearch]);
+
+  const selectedCustomer = useMemo(
+    () => crmUsers.find((u) => u.userId === selectedCustomerId) ?? null,
+    [crmUsers, selectedCustomerId],
+  );
+
+  async function handleCreateCustomerFromPayment() {
+    if (!newCustomerForm.first_name.trim()) {
+      toast.error("First name is required");
+      return;
+    }
+
+    setIsSavingCustomer(true);
+    try {
+      const result = await createCrmUser({
+        firstname: newCustomerForm.first_name.trim(),
+        birthday: newCustomerForm.birthday || null,
+        contactNumber: newCustomerForm.contact_number.trim() || null,
+        email: newCustomerForm.email.trim() || null,
+      });
+
+      if (!result.success || !result.data) {
+        toast.error(result.error ?? "Failed to create customer");
+        return;
+      }
+
+      setCrmUsers((prev) =>
+        [...prev, result.data].sort((a, b) =>
+          a.firstname.localeCompare(b.firstname),
+        ),
+      );
+      setSelectedCustomerId(result.data.userId);
+      setShowNewCustomer(false);
+      setNewCustomerForm({
+        first_name: "",
+        birthday: "",
+        contact_number: "",
+        email: "",
+      });
+      setCustomerSearch("");
+      toast.success("Customer added");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create customer");
+    } finally {
+      setIsSavingCustomer(false);
     }
   }
 
@@ -1247,6 +1347,179 @@ export default function PrimaryTerminalPage() {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
+            {/* Optional regular customer */}
+            <div className="space-y-2 rounded-xl border border-stone-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-stone-700">
+                  Customer{" "}
+                  <span className="font-normal text-stone-400">(optional)</span>
+                </p>
+                {!showNewCustomer && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-xs text-[#F36509]"
+                    onClick={() => setShowNewCustomer(true)}
+                  >
+                    <Plus className="mr-1 h-3.5 w-3.5" />
+                    New
+                  </Button>
+                )}
+              </div>
+
+              {selectedCustomer ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-stone-900">
+                      {selectedCustomer.firstname}
+                    </p>
+                    <p className="truncate text-xs text-stone-500">
+                      {[selectedCustomer.contactNumber, selectedCustomer.email]
+                        .filter(Boolean)
+                        .join(" · ") || "No contact info"}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 text-xs text-stone-500"
+                    onClick={() => setSelectedCustomerId(null)}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              ) : showNewCustomer ? (
+                <div className="space-y-2">
+                  <Input
+                    placeholder="First name *"
+                    value={newCustomerForm.first_name}
+                    onChange={(e) =>
+                      setNewCustomerForm((f) => ({
+                        ...f,
+                        first_name: e.target.value,
+                      }))
+                    }
+                    className="h-9 rounded-lg border-stone-200"
+                  />
+                  <Input
+                    type="date"
+                    placeholder="Birthday"
+                    value={newCustomerForm.birthday}
+                    onChange={(e) =>
+                      setNewCustomerForm((f) => ({
+                        ...f,
+                        birthday: e.target.value,
+                      }))
+                    }
+                    className="h-9 rounded-lg border-stone-200"
+                  />
+                  <Input
+                    type="tel"
+                    placeholder="Contact number"
+                    value={newCustomerForm.contact_number}
+                    onChange={(e) =>
+                      setNewCustomerForm((f) => ({
+                        ...f,
+                        contact_number: e.target.value,
+                      }))
+                    }
+                    className="h-9 rounded-lg border-stone-200"
+                  />
+                  <Input
+                    type="email"
+                    placeholder="Email"
+                    value={newCustomerForm.email}
+                    onChange={(e) =>
+                      setNewCustomerForm((f) => ({
+                        ...f,
+                        email: e.target.value,
+                      }))
+                    }
+                    className="h-9 rounded-lg border-stone-200"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      disabled={isSavingCustomer}
+                      onClick={() => {
+                        setShowNewCustomer(false);
+                        setNewCustomerForm({
+                          first_name: "",
+                          birthday: "",
+                          contact_number: "",
+                          email: "",
+                        });
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="flex-1 bg-[#F36509] text-white hover:bg-[#d95a08]"
+                      disabled={
+                        isSavingCustomer || !newCustomerForm.first_name.trim()
+                      }
+                      onClick={handleCreateCustomerFromPayment}
+                    >
+                      {isSavingCustomer ? "Saving…" : "Add customer"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Input
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    placeholder="Search name, phone, or email…"
+                    className="h-9 rounded-lg border-stone-200"
+                  />
+                  {customerSearch.trim() && (
+                    <ul className="max-h-36 overflow-y-auto rounded-lg border border-stone-200">
+                      {filteredCrmUsers.length === 0 ? (
+                        <li className="px-3 py-2 text-xs text-stone-500">
+                          No matches. Use “New” to add them.
+                        </li>
+                      ) : (
+                        filteredCrmUsers.map((u) => (
+                          <li key={u.userId}>
+                            <button
+                              type="button"
+                              className="flex w-full flex-col items-start px-3 py-2 text-left text-sm hover:bg-stone-50"
+                              onClick={() => {
+                                setSelectedCustomerId(u.userId);
+                                setCustomerSearch("");
+                              }}
+                            >
+                              <span className="font-medium text-stone-900">
+                                {u.firstname}
+                              </span>
+                              <span className="text-xs text-stone-500">
+                                {[u.contactNumber, u.email]
+                                  .filter(Boolean)
+                                  .join(" · ") || "—"}
+                              </span>
+                            </button>
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  )}
+                  {!customerSearch.trim() && (
+                    <p className="text-[11px] text-stone-400">
+                      Leave empty for walk-in with no account, or search / add a
+                      regular.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="space-y-2">
               <Label className="text-sm font-medium text-stone-700">
                 Payment method
