@@ -1956,3 +1956,175 @@ export async function updateOrderItemDiscount(
     return { success: false, error: zodErrorMessage(error) };
   }
 }
+
+// =============================================================================
+// Get Orders by Client (staff)
+// =============================================================================
+
+/**
+ * Returns all orders belonging to a specific client.
+ * client_id on pos_orders maps to users.userId (text, not a real FK).
+ */
+export async function getOrdersByClientId(clientId: string): Promise<{
+  success: boolean;
+  data: SessionOrder[];
+  error?: string;
+}> {
+  try {
+    if (!clientId?.trim()) {
+      return { success: false, data: [], error: "Missing client ID" };
+    }
+
+    const staff = await requireOrderStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
+
+    const supabase = createOrderAdminClient();
+
+    const { data: orders, error } = await supabase
+      .from("pos_orders")
+      .select(
+        `
+        id,
+        order_number,
+        status,
+        subtotal,
+        discount_amount,
+        tax_amount,
+        service_charge_amount,
+        total_amount,
+        created_at,
+        pos_order_items (
+          id,
+          product_name,
+          quantity,
+          unit_price,
+          line_total,
+          area_code,
+          service_charge,
+          vat_amount
+        ),
+        pos_payments (
+          payment_method,
+          amount,
+          paid_at
+        )
+      `,
+      )
+      .eq("client_id", clientId.trim())
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return { success: false, data: [], error: error.message };
+    }
+
+    const mapped: SessionOrder[] = (orders ?? []).map((o: any) => {
+      const payments = o.pos_payments ?? [];
+      const primaryPayment =
+        payments.length > 0
+          ? [...payments].sort(
+              (a: any, b: any) =>
+                new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime(),
+            )[0]
+          : null;
+
+      return {
+        id: o.id,
+        order_number: o.order_number,
+        status: o.status,
+        subtotal: toNumber(o.subtotal),
+        discount_amount: toNumber(o.discount_amount),
+        tax_amount: toNumber(o.tax_amount),
+        service_charge: toNumber(o.service_charge_amount),
+        total_amount: toNumber(o.total_amount),
+        created_at: o.created_at,
+        payment_method: primaryPayment?.payment_method ?? null,
+        item_count: o.pos_order_items?.length ?? 0,
+        items: (o.pos_order_items ?? []).map((item: any) => ({
+          id: item.id,
+          product_name: item.product_name,
+          quantity: toNumber(item.quantity),
+          unit_price: toNumber(item.unit_price),
+          line_total: toNumber(item.line_total),
+          area_code: item.area_code ?? null,
+          service_charge: toNumber(item.service_charge ?? 0),
+          vat_amount: toNumber(item.vat_amount ?? 0),
+        })),
+      };
+    });
+
+    return { success: true, data: mapped };
+  } catch (err) {
+    console.error("getOrdersByClientId error:", err);
+    return {
+      success: false,
+      data: [],
+      error:
+        err instanceof Error ? err.message : "Failed to load client orders",
+    };
+  }
+}
+
+export async function getCrmUser(userId: string) {
+  try {
+    if (!userId?.trim()) {
+      return {
+        success: false,
+        data: null,
+        error: "Missing client ID",
+      };
+    }
+
+    const staff = await requireOrderStaff();
+
+    if (!staff.authorized) {
+      return {
+        success: false,
+        data: null,
+        error: staff.error,
+      };
+    }
+
+    const supabase = createOrderAdminClient();
+
+    const { data, error } = await supabase
+      .from("users")
+      .select("userId, firstname, surname, email")
+      .eq("userId", userId.trim())
+      .maybeSingle();
+
+    if (error) {
+      console.error("Failed to fetch CRM user:", error);
+
+      return {
+        success: false,
+        data: null,
+        error: error.message,
+      };
+    }
+
+    if (!data) {
+      return {
+        success: false,
+        data: null,
+        error: "User not found",
+      };
+    }
+
+    return {
+      success: true,
+      data,
+      error: null,
+    };
+  } catch (err: unknown) {
+    console.error("Unexpected error in getCrmUser:", err);
+
+    return {
+      success: false,
+      data: null,
+      error:
+        err instanceof Error ? err.message : "An unexpected error occurred",
+    };
+  }
+}

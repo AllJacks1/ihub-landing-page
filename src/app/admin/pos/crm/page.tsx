@@ -13,6 +13,7 @@ import {
   Cake,
   ChevronLeft,
   ChevronRight,
+  Receipt,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -36,6 +37,7 @@ import {
   deleteCrmUser,
   type CrmUser,
 } from "@/lib/actions";
+import { useRouter } from "next/navigation";
 
 const PAGE_SIZE = 20;
 
@@ -69,6 +71,8 @@ const emptyForm: FormState = {
 };
 
 export default function CrmPage() {
+  const router = useRouter();
+
   const [customers, setCustomers] = useState<CrmUser[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -310,7 +314,7 @@ export default function CrmPage() {
           ) : (
             <>
               <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white">
-                <div className="hidden grid-cols-[1fr_120px_140px_1fr_100px] gap-3 border-b border-stone-100 bg-stone-50/80 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-stone-400 sm:grid">
+                <div className="hidden sm:grid-cols-[1fr_120px_140px_1fr_130px] gap-3 border-b border-stone-100 bg-stone-50/80 px-4 py-2.5 text-xs font-medium uppercase tracking-wider text-stone-400 sm:grid">
                   <span>Name</span>
                   <span>Birthday</span>
                   <span>Phone</span>
@@ -322,7 +326,7 @@ export default function CrmPage() {
                   {customers.map((c) => (
                     <li
                       key={c.userId}
-                      className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[1fr_120px_140px_1fr_100px] sm:items-center sm:gap-3"
+                      className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[1fr_120px_140px_1fr_130px] sm:items-center sm:gap-3"
                     >
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F36509]/10 text-sm font-semibold text-[#F36509]">
@@ -349,6 +353,17 @@ export default function CrmPage() {
                       </div>
 
                       <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-stone-500 hover:text-[#F36509]"
+                          onClick={() => router.push(`/admin/pos/crm/${c.userId}/orders`)}
+                          aria-label={`View transactions for ${c.firstname}`}
+                          title="View transactions"
+                        >
+                          <Receipt className="h-4 w-4" />
+                        </Button>
                         <Button
                           type="button"
                           variant="ghost"
