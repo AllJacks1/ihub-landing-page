@@ -57,8 +57,10 @@ import {
   getCurrentUser,
   getRooms,
   getTables,
+  isIaccessMember as checkIsIaccessMember,
 } from "@/lib/actions";
 import { computeScPwdDiscount } from "@/lib/utils";
+import { addPoints } from "@/app/actions/points";
 
 type CartItem = PosProduct & {
   quantity: number;
@@ -186,6 +188,37 @@ export default function PrimaryTerminalPage() {
       setActiveCount(count);
     }
   }
+
+  const [isIaccessMemberFlag, setIsIaccessMemberFlag] = useState(false);
+  const [checkingIaccess, setCheckingIaccess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkMember() {
+      if (!selectedCustomerId) {
+        setIsIaccessMemberFlag(false);
+        return;
+      }
+
+      setCheckingIaccess(true);
+      try {
+        const res = await checkIsIaccessMember(selectedCustomerId);
+        if (!cancelled) {
+          setIsIaccessMemberFlag(res.success && res.isMember);
+        }
+      } catch {
+        if (!cancelled) setIsIaccessMemberFlag(false);
+      } finally {
+        if (!cancelled) setCheckingIaccess(false);
+      }
+    }
+
+    checkMember();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCustomerId]);
 
   async function loadProducts() {
     setIsLoading(true);
@@ -432,24 +465,32 @@ export default function PrimaryTerminalPage() {
     vatIncluded: discountVatIncluded,
   });
 
+  const isIaccessMember = isIaccessMemberFlag;
+
+  const iaccessDiscount = useMemo(() => {
+    if (!isIaccessMember || eligibleSubtotal <= 0) return 0;
+    return Math.round(eligibleSubtotal * 0.1);
+  }, [isIaccessMember, eligibleSubtotal]);
+
+  const totalEligibleSavings = useMemo(() => {
+    const raw = (discountResult.totalSavings || 0) + (iaccessDiscount || 0);
+    return Math.min(Math.round(raw), Math.round(eligibleSubtotal));
+  }, [discountResult.totalSavings, iaccessDiscount, eligibleSubtotal]);
+
   const { taxAmount, serviceChargeAmount, finalTotal } = useMemo(() => {
     const vatRate = billingSettings?.vat_enabled ? billingSettings.vat_rate : 0;
-
     const scRate = billingSettings?.service_charge_enabled
       ? billingSettings.service_charge_rate
       : 0;
-
     const priceMode = billingSettings?.price_mode ?? "exclusive";
 
     const afterDiscountEligible = Math.max(
       0,
-      eligibleSubtotal - (discountResult.totalSavings || 0),
+      eligibleSubtotal - totalEligibleSavings,
     );
-
     const netSelling = nonEligibleSubtotal + afterDiscountEligible;
 
     let tax = 0;
-
     if (vatRate > 0) {
       tax =
         priceMode === "inclusive"
@@ -473,7 +514,7 @@ export default function PrimaryTerminalPage() {
   }, [
     eligibleSubtotal,
     nonEligibleSubtotal,
-    discountResult.totalSavings,
+    totalEligibleSavings,
     billingSettings,
   ]);
 
@@ -481,42 +522,33 @@ export default function PrimaryTerminalPage() {
     const scRate = billingSettings?.service_charge_enabled
       ? billingSettings.service_charge_rate
       : 0;
-
     if (scRate <= 0 || eligibleSubtotal <= 0) return 0;
 
-    // After discount, the remaining eligible base
     const discountedEligible = Math.max(
       0,
-      eligibleSubtotal - (discountResult.totalSavings || 0),
+      eligibleSubtotal - totalEligibleSavings,
     );
-
     return Math.round(discountedEligible * (scRate / 100));
-  }, [eligibleSubtotal, discountResult.totalSavings, billingSettings]);
+  }, [eligibleSubtotal, totalEligibleSavings, billingSettings]);
 
   const amountDue = useMemo(() => {
     const priceMode = billingSettings?.price_mode ?? "exclusive";
 
-    // non-eligible stays full price
-    // eligible becomes (eligible - discount)
-    // then add the *adjusted* service charge
-    // tax stays as previously calculated (or adjust if you want tax only on non-eligible)
-
     const afterDiscount =
       nonEligibleSubtotal +
-      Math.max(0, eligibleSubtotal - (discountResult.totalSavings || 0));
+      Math.max(0, eligibleSubtotal - totalEligibleSavings);
 
     if (priceMode === "inclusive") {
       return Number((afterDiscount + adjustedServiceCharge).toFixed(2));
     }
 
-    // exclusive: add the original tax + new SC
     return Number(
       (afterDiscount + taxAmount + adjustedServiceCharge).toFixed(2),
     );
   }, [
     nonEligibleSubtotal,
     eligibleSubtotal,
-    discountResult.totalSavings,
+    totalEligibleSavings,
     adjustedServiceCharge,
     taxAmount,
     billingSettings,
@@ -568,7 +600,7 @@ export default function PrimaryTerminalPage() {
       contact_number: "",
       email: "",
     });
-
+    setIsIaccessMemberFlag(false);
     setShowPaymentDialog(true);
   }
 
@@ -599,8 +631,9 @@ export default function PrimaryTerminalPage() {
         const c = (i.area_code ?? "").toLowerCase();
         return c === "ieat" || c === "idrink";
       });
-      const totalSavings = Math.round(discountResult.totalSavings || 0);
-      const discountMap = allocateDiscount(eligible, totalSavings); // helper
+      // was: discountResult.totalSavings only
+      const totalSavings = totalEligibleSavings;
+      const discountMap = allocateDiscount(eligible, totalSavings);
 
       const items = cart.map((item) => ({
         product_id: item.id,
@@ -644,6 +677,28 @@ export default function PrimaryTerminalPage() {
             ? `Paid · Change ${formatCurrency(changeDue)}`
             : "Payment successful",
         );
+      }
+
+      if (isIaccessMemberFlag && selectedCustomerId && amountDue > 0) {
+        const orderNumber = orderResult.data?.order_number ?? orderId;
+        const pointsResult = await addPoints({
+          userId: selectedCustomerId,
+          amount: amountDue,
+          receiptNumber: orderNumber,
+          description: `POS sale ${orderNumber}`,
+          adminEmail: cashierFullname || null,
+        });
+        if (pointsResult.success) {
+          const pts =
+            (pointsResult.data as { pointsAdded?: number })?.pointsAdded ??
+            amountDue / 150;
+          toast.success(`iAccess: +${Number(pts).toFixed(2)} points`);
+        } else {
+          console.error("addPoints failed:", pointsResult.error);
+          toast.message(
+            pointsResult.error ?? "Payment OK, but points could not be added",
+          );
+        }
       }
 
       clearCart();
@@ -1276,9 +1331,14 @@ export default function PrimaryTerminalPage() {
               <span className="font-semibold text-stone-900">
                 {formatCurrency(amountDue)}
               </span>
-              {discountResult.totalSavings > 0 && (
+              {(discountResult.totalSavings > 0 || iaccessDiscount > 0) && (
                 <span className="ml-1 text-stone-500">
-                  (was {formatCurrency(finalTotal)})
+                  (was{" "}
+                  {formatCurrency(
+                    // pre-discount style total; or keep finalTotal if you prefer
+                    subtotal /* or a dedicated preDiscountTotal */,
+                  )}
+                  )
                 </span>
               )}
             </DialogDescription>
@@ -1317,6 +1377,19 @@ export default function PrimaryTerminalPage() {
                         .filter(Boolean)
                         .join(" · ") || "No contact info"}
                     </p>
+                    {checkingIaccess ? (
+                      <p className="mt-1.5 text-[11px] text-stone-400">
+                        Checking iAccess…
+                      </p>
+                    ) : isIaccessMemberFlag ? (
+                      <p className="mt-1.5 text-[11px] font-medium text-emerald-700">
+                        iAccess member · 10% off Food &amp; Drinks
+                      </p>
+                    ) : selectedCustomerId ? (
+                      <p className="mt-1.5 text-[11px] text-stone-400">
+                        Not an iAccess member
+                      </p>
+                    ) : null}
                   </div>
                   <Button
                     type="button"
@@ -1609,6 +1682,14 @@ export default function PrimaryTerminalPage() {
                   </div>
                 </div>
               )}
+              {iaccessDiscount > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>iAccess 10%</span>
+                  <span className="tabular-nums">
+                    −{formatCurrency(iaccessDiscount)}
+                  </span>
+                </div>
+              )}
               <p className="text-[10px] leading-4 text-stone-400">
                 Equal-share estimate. Count each person once (even if both
                 senior &amp; PWD). Actual discount depends on eligible
@@ -1650,6 +1731,14 @@ export default function PrimaryTerminalPage() {
                     </span>
                   </div>
                 )}
+              {iaccessDiscount > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>iAccess 10%</span>
+                  <span className="tabular-nums">
+                    −{formatCurrency(iaccessDiscount)}
+                  </span>
+                </div>
+              )}
               {discountResult.totalSavings > 0 && (
                 <div className="flex justify-between text-emerald-700">
                   <span>SC/PWD savings</span>
@@ -1666,7 +1755,7 @@ export default function PrimaryTerminalPage() {
               </div>
               {nonEligibleSubtotal > 0 && (
                 <p className="mt-1 text-[11px] text-stone-400">
-                  Service charge & SC/PWD discount apply only to Food & Drinks
+                  Service charge, SC/PWD & iAccess apply only to Food & Drinks
                 </p>
               )}
             </div>

@@ -34,6 +34,7 @@ export type SessionOrder = {
   subtotal?: number;
   total_amount: number;
   service_charge?: number;
+  discount_amount?: number;
   tax_amount?: number;
   created_at: string;
   item_count?: number;

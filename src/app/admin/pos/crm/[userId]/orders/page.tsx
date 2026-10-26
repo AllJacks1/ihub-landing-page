@@ -348,6 +348,12 @@ export default function ClientOrdersPage() {
                                   Subtotal {formatMoney(order.subtotal)}
                                 </span>
                               )}
+                              {(order.discount_amount ?? 0) > 0 && (
+                                <span className="text-emerald-700">
+                                  Discount −
+                                  {formatMoney(order.discount_amount!)}
+                                </span>
+                              )}
                               {order.service_charge != null &&
                                 order.service_charge > 0 && (
                                   <span>

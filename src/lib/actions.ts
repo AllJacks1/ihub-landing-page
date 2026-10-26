@@ -2862,3 +2862,46 @@ export async function deleteCrmUser(id: string) {
     return { success: false as const, error: "Failed to delete customer" };
   }
 }
+
+export async function isIaccessMember(userId: string): Promise<{
+  success: boolean;
+  isMember: boolean;
+  error?: string;
+}> {
+  try {
+    if (!userId?.trim()) {
+      return { success: true, isMember: false };
+    }
+
+    const roleUser = await requireRole(["management", "cashier"]);
+    if (!roleUser) {
+      return { success: false, isMember: false, error: "Unauthorized" };
+    }
+
+    const supabase = await createSupabaseClientForRead();
+
+    const { data, error } = await supabase
+      .from("users")
+      .select("secret")
+      .eq("userId", userId.trim())
+      .maybeSingle();
+
+    if (error) {
+      console.error("isIaccessMember error:", error);
+      return { success: false, isMember: false, error: error.message };
+    }
+
+    // Member only when secret is present (not null / not empty string)
+    const secret = data?.secret;
+    const isMember = secret != null && String(secret).trim() !== "";
+
+    return { success: true, isMember };
+  } catch (err) {
+    console.error("isIaccessMember unexpected:", err);
+    return {
+      success: false,
+      isMember: false,
+      error: err instanceof Error ? err.message : "Failed to check membership",
+    };
+  }
+}
