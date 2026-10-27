@@ -1767,6 +1767,7 @@ const updatePosOrderSchema = z.object({
   cashier_user_id: z.string().uuid().optional().nullable(),
   total_amount: z.coerce.number().min(0).optional(),
   service_charge_amount: z.coerce.number().min(0).optional(),
+  client_id: z.string().optional().nullable(),
 });
 
 const updateOrderItemDiscountSchema = z.object({
@@ -1832,6 +1833,10 @@ export async function updatePosOrder(
     }
     if (validated.service_charge_amount !== undefined) {
       patch.service_charge_amount = validated.service_charge_amount;
+    }
+
+    if (validated.client_id !== undefined) {
+      patch.client_id = validated.client_id;
     }
 
     // Nothing to update

@@ -456,7 +456,7 @@ export default function PrimaryTerminalPage() {
     setCart([]);
   }
 
-  // SC/PWD discount applied on top of finalTotal (VAT + service charge included)
+  // SC/PWD first, then iAccess 10% on the remaining eligible amount
   const discountResult = computeScPwdDiscount({
     totalBill: eligibleSubtotal,
     seniors: seniorCount,
@@ -467,10 +467,24 @@ export default function PrimaryTerminalPage() {
 
   const isIaccessMember = isIaccessMemberFlag;
 
+  // Apply iAccess only after SC/PWD (matches QR Sessions page)
   const iaccessDiscount = useMemo(() => {
     if (!isIaccessMember || eligibleSubtotal <= 0) return 0;
-    return Math.round(eligibleSubtotal * 0.1);
-  }, [isIaccessMember, eligibleSubtotal]);
+    const hasScPwd =
+      discountResult.valid &&
+      discountResult.eligibleGuests > 0 &&
+      (seniorCount > 0 || pwdCount > 0);
+    const afterScPwd = hasScPwd ? discountResult.amountDue : eligibleSubtotal;
+    return Math.round(afterScPwd * 0.1);
+  }, [
+    isIaccessMember,
+    eligibleSubtotal,
+    discountResult.valid,
+    discountResult.eligibleGuests,
+    discountResult.amountDue,
+    seniorCount,
+    pwdCount,
+  ]);
 
   const totalEligibleSavings = useMemo(() => {
     const raw = (discountResult.totalSavings || 0) + (iaccessDiscount || 0);

@@ -20,10 +20,10 @@ import {
   PosLocation,
 } from "@/lib/pos-locations";
 import {
-  createQrOrder,
   getOrdersBySessionId,
   SessionOrder,
 } from "@/lib/order-actions";
+import { CrmUser, getCrmUsers } from "@/lib/actions";
 
 /** Minimal branch shape for the create-session picker */
 export type PosBranchOption = {
@@ -101,6 +101,9 @@ export function useQrSessions() {
   const [removingLocationId, setRemovingLocationId] = useState<string | null>(
     null,
   );
+
+  const [crmUsers, setCrmUsers] = useState<CrmUser[]>([]);
+  const [isLoadingCrmUsers, setIsLoadingCrmUsers] = useState(false);
 
   // ── Loaders ───────────────────────────────────────────────────────────────
   const loadSessions = useCallback(async () => {
@@ -421,6 +424,37 @@ export function useQrSessions() {
     }
   }
 
+  const searchCrmUsers = useCallback(async (query: string) => {
+    setIsLoadingCrmUsers(true);
+    try {
+      const result = await getCrmUsers();
+      if (!result?.success || !Array.isArray(result.data)) {
+        setCrmUsers([]);
+        return;
+      }
+
+      const q = query.trim().toLowerCase();
+      if (!q) {
+        setCrmUsers(result.data);
+        return;
+      }
+
+      setCrmUsers(
+        result.data.filter(
+          (u) =>
+            u.firstname.toLowerCase().includes(q) ||
+            (u.email ?? "").toLowerCase().includes(q) ||
+            (u.contactNumber ?? "").includes(q),
+        ),
+      );
+    } catch (e) {
+      console.error("Failed to load CRM users:", e);
+      setCrmUsers([]);
+    } finally {
+      setIsLoadingCrmUsers(false);
+    }
+  }, []);
+
   return {
     // Sessions
     sessions,
@@ -471,5 +505,9 @@ export function useQrSessions() {
     handleSaveLocation,
     handleToggleLocation,
     handleDeleteLocation,
+
+    crmUsersList: crmUsers,
+    onSearchCrmUsers: searchCrmUsers,
+    isLoadingCrmUsers,
   };
 }

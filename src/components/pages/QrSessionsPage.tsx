@@ -59,6 +59,13 @@ import {
   SessionOrder,
 } from "@/lib/order-actions";
 import { ensureTerminalContext } from "@/lib/pos-actions";
+import {
+  createCrmUser,
+  CrmUser,
+  isIaccessMember as checkIsIaccessMember,
+  getCurrentUser,
+} from "@/lib/actions";
+import { addPoints } from "@/app/actions/points";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
 
@@ -70,6 +77,10 @@ type QrSessionsPageProps = QrSessionsReturn & {
   isLoadingSessionOrders?: boolean;
   /** Optional: call this when the user opens the orders modal for a session */
   onLoadSessionOrders?: (sessionId: string) => void;
+  /** Optional: initial / live CRM user list for payment dialog search */
+  crmUsersList?: CrmUser[];
+  /** Optional: trigger a CRM search/load when the query changes */
+  onSearchCrmUsers?: (query: string) => void;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -289,6 +300,9 @@ export default function QrSessionsPage({
   sessionOrders = {},
   isLoadingSessionOrders = false,
   onLoadSessionOrders,
+
+  crmUsersList,
+  onSearchCrmUsers,
 }: QrSessionsPageProps) {
   // Local UI state for QR viewer + Orders modal
   const [viewQrSession, setViewQrSession] = useState<{
@@ -330,6 +344,8 @@ export default function QrSessionsPage({
   const [amountTendered, setAmountTendered] = useState("");
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
+  const [cashierFullname, setCashierFullname] = useState("");
+
   // Senior Citizen / PWD discount (payment dialog)
   const [seniorCount, setSeniorCount] = useState(0);
   const [pwdCount, setPwdCount] = useState(0);
@@ -345,6 +361,10 @@ export default function QrSessionsPage({
 
     async function bootstrap() {
       try {
+        const user = await getCurrentUser();
+        if (cancelled) return;
+        setCashierFullname(user?.full_name ?? "Unknown Cashier");
+
         const ctx = await ensureTerminalContext();
         if (cancelled) return;
 
@@ -365,6 +385,36 @@ export default function QrSessionsPage({
       cancelled = true;
     };
   }, []);
+
+  const [localCrmUsers, setLocalCrmUsers] = useState<CrmUser[]>([]);
+  const crmUsers = useMemo(() => {
+    const map = new Map<string, CrmUser>();
+    for (const u of crmUsersList ?? []) map.set(u.userId, u);
+    for (const u of localCrmUsers) map.set(u.userId, u);
+    return Array.from(map.values());
+  }, [crmUsersList, localCrmUsers]);
+
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(
+    null,
+  );
+
+  const [showNewCustomer, setShowNewCustomer] = useState(false);
+  const [newCustomerForm, setNewCustomerForm] = useState({
+    first_name: "",
+    birthday: "",
+    contact_number: "",
+    email: "",
+  });
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
+
+  const [isIaccessMemberFlag, setIsIaccessMemberFlag] = useState(false);
+  const [checkingIaccess, setCheckingIaccess] = useState(false);
+
+  // Notify parent of search so it can load remote CRM users.
+  useEffect(() => {
+    onSearchCrmUsers?.(customerSearch.trim());
+  }, [customerSearch, onSearchCrmUsers]);
 
   const discountResult = useMemo(() => {
     const items = payOrder?.items ?? [];
@@ -395,8 +445,29 @@ export default function QrSessionsPage({
       vatIncluded: discountVatIncluded,
     });
 
+    const hasScPwdGuests = seniorCount > 0 || pwdCount > 0;
+    const hasScPwdDiscount =
+      hasScPwdGuests && scPwd.valid && scPwd.eligibleGuests > 0;
+
+    // Step 1: Apply Senior/PWD first.
+    const scPwdSavings = hasScPwdDiscount
+      ? Math.round(eligibleSubtotal - scPwd.amountDue)
+      : 0;
+
+    const afterScPwd = hasScPwdDiscount ? scPwd.amountDue : eligibleSubtotal;
+
+    // Step 2: Apply iAccess 10% to the remaining eligible amount.
+    const iaccessDiscountRate = isIaccessMemberFlag ? 0.1 : 0;
+
+    const iaccessSavings = Math.round(afterScPwd * iaccessDiscountRate);
+
+    const discountedEligibleSubtotal = Math.max(0, afterScPwd - iaccessSavings);
+
+    // Combined discount factor for order items and service charge.
     const discountFactor =
-      eligibleSubtotal > 0 ? scPwd.amountDue / eligibleSubtotal : 1;
+      eligibleSubtotal > 0 ? discountedEligibleSubtotal / eligibleSubtotal : 1;
+
+    const totalSavings = scPwdSavings + iaccessSavings;
 
     const scRate =
       payOrder?.service_charge_rate != null
@@ -413,10 +484,9 @@ export default function QrSessionsPage({
       const isEligible =
         item.area_code === "ieat" || item.area_code === "idrink";
 
-      if (isEligible) {
+      if (isEligible && (hasScPwdDiscount || iaccessDiscountRate > 0)) {
         if (scRate != null) {
-          const discountedLine = lineAmount * discountFactor;
-          recalculatedServiceCharge += discountedLine * scRate;
+          recalculatedServiceCharge += lineAmount * discountFactor * scRate;
         } else {
           recalculatedServiceCharge += originalSc * discountFactor;
         }
@@ -425,14 +495,17 @@ export default function QrSessionsPage({
       }
     }
 
-    // Round the total service charge up to the next whole peso.
     recalculatedServiceCharge = Math.ceil(recalculatedServiceCharge);
 
-    // When no SC/PWD guests are entered, keep the order's existing total so
-    // payment matches what the kitchen/receipt already shows.
-    const hasScPwdGuests = seniorCount > 0 || pwdCount > 0;
-    const amountDue = hasScPwdGuests
-      ? scPwd.amountDue + nonEligibleSubtotal + recalculatedServiceCharge
+    const hasAnyDiscount = hasScPwdDiscount || iaccessDiscountRate > 0;
+
+    const amountDue = hasAnyDiscount
+      ? Math.max(
+          0,
+          discountedEligibleSubtotal +
+            nonEligibleSubtotal +
+            recalculatedServiceCharge,
+        )
       : Number(payOrder?.total_amount) ||
         eligibleSubtotal + nonEligibleSubtotal + recalculatedServiceCharge;
 
@@ -442,12 +515,25 @@ export default function QrSessionsPage({
       eligibleSubtotal,
       nonEligibleSubtotal,
       originalServiceCharge,
-      recalculatedServiceCharge: hasScPwdGuests
+      recalculatedServiceCharge: hasAnyDiscount
         ? recalculatedServiceCharge
         : Number(payOrder?.service_charge) || recalculatedServiceCharge,
       discountFactor,
+      totalSavings,
+      scPwdSavings,
+      iaccessSavings,
+      iaccessDiscountRate,
+      hasScPwdDiscount,
+      hasAnyDiscount,
     };
-  }, [payOrder, seniorCount, pwdCount, otherGuestCount, discountVatIncluded]);
+  }, [
+    payOrder,
+    seniorCount,
+    pwdCount,
+    otherGuestCount,
+    discountVatIncluded,
+    isIaccessMemberFlag,
+  ]);
 
   const amountDue = discountResult.amountDue;
 
@@ -484,6 +570,10 @@ export default function QrSessionsPage({
     setPwdCount(0);
     setOtherGuestCount(1);
     setDiscountVatIncluded(true);
+    setSelectedCustomerId(null);
+    setCustomerSearch("");
+    setIsIaccessMemberFlag(false);
+    setCheckingIaccess(false);
   }
 
   function isOrderPayable(status: string) {
@@ -497,9 +587,64 @@ export default function QrSessionsPage({
     setIsProcessingPayment(true);
 
     try {
-      const hasDiscount =
-        discountResult.valid && (seniorCount > 0 || pwdCount > 0);
+      // 1. Validate the selected customer before proceeding.
+      const customerId = selectedCustomerId?.trim() || null;
+
+      if (selectedCustomerId && !customerId) {
+        toast.error("Invalid customer ID. Please select the customer again.");
+        return;
+      }
+
+      if (customerId) {
+        // Confirm the selected customer still exists in the loaded CRM list.
+        const customerExists = crmUsers.some(
+          (customer) => customer.userId === customerId,
+        );
+
+        if (!customerExists) {
+          toast.error(
+            "Selected customer could not be verified. Please select the customer again.",
+          );
+          return;
+        }
+      }
+
+      // 2. Require a valid order ID.
+      if (!payOrder.id?.trim()) {
+        toast.error("Invalid order ID. Payment cannot proceed.");
+        return;
+      }
+
+      // 3. Ensure terminal context is available before updating the order.
+      if (!terminalId || !shiftId) {
+        toast.error("Terminal context not ready. Please try again.");
+        return;
+      }
+
+      const hasDiscount = discountResult.hasAnyDiscount;
       const items = payOrder.items ?? [];
+
+      // 4. Update the order's customer and payment context BEFORE payment.
+      const orderUpdate = await updatePosOrder({
+        order_id: payOrder.id,
+        terminal_id: terminalId,
+        shift_id: shiftId,
+        client_id: customerId,
+        ...(hasDiscount
+          ? {
+              total_amount: amountDue,
+              service_charge_amount: discountResult.recalculatedServiceCharge,
+            }
+          : {}),
+      });
+
+      if (!orderUpdate.success) {
+        toast.error(
+          orderUpdate.error ??
+            "Failed to update order/customer. Payment was not processed.",
+        );
+        return;
+      }
 
       // ── 1. Apply SC / PWD discounts to line items ──────────────────────────
       if (hasDiscount) {
@@ -511,10 +656,16 @@ export default function QrSessionsPage({
         }
 
         const reasonParts: string[] = [];
-        if (seniorCount > 0) reasonParts.push(`${seniorCount} Senior`);
-        if (pwdCount > 0) reasonParts.push(`${pwdCount} PWD`);
-        const discountReason = `SC/PWD: ${reasonParts.join(", ")} (${otherGuestCount} other guest${otherGuestCount === 1 ? "" : "s"})`;
+        if (discountResult.hasScPwdDiscount) {
+          if (seniorCount > 0) reasonParts.push(`${seniorCount} Senior`);
+          if (pwdCount > 0) reasonParts.push(`${pwdCount} PWD`);
+        }
 
+        if (discountResult.iaccessDiscountRate > 0) {
+          reasonParts.push("iAccess Member 10%");
+        }
+
+        const discountReason = reasonParts.join(", ");
         const scRate =
           payOrder.service_charge_rate != null
             ? Number(payOrder.service_charge_rate) / 100
@@ -533,17 +684,15 @@ export default function QrSessionsPage({
           let serviceCharge = originalSc;
 
           if (isEligible) {
-            // Proportional share of the SC/PWD discount
             discountAmount = Math.round(
               lineAmount * (1 - discountResult.discountFactor),
             );
+
             lineTotal = Math.max(0, lineAmount - discountAmount);
 
             if (scRate != null) {
-              // SC on the discounted net (matches discountResult when rate is known)
               serviceCharge = Math.round(lineTotal * scRate);
             } else {
-              // Scale the original SC by the same factor
               serviceCharge = Math.round(
                 originalSc * discountResult.discountFactor,
               );
@@ -575,6 +724,7 @@ export default function QrSessionsPage({
           shift_id: shiftId,
           total_amount: amountDue,
           service_charge_amount: discountResult.recalculatedServiceCharge,
+          client_id: selectedCustomerId,
         });
 
         if (!orderUpdate.success) {
@@ -618,6 +768,28 @@ export default function QrSessionsPage({
         );
       }
 
+      if (isIaccessMemberFlag && selectedCustomerId && amountDue > 0) {
+        const orderNumber = payOrder.order_number;
+        const pointsResult = await addPoints({
+          userId: selectedCustomerId,
+          amount: amountDue,
+          receiptNumber: orderNumber,
+          description: `POS sale ${orderNumber}`,
+          adminEmail: cashierFullname || null,
+        });
+        if (pointsResult.success) {
+          const pts =
+            (pointsResult.data as { pointsAdded?: number })?.pointsAdded ??
+            amountDue / 150;
+          toast.success(`iAccess: +${Number(pts).toFixed(2)} points`);
+        } else {
+          console.error("addPoints failed:", pointsResult.error);
+          toast.message(
+            pointsResult.error ?? "Payment OK, but points could not be added",
+          );
+        }
+      }
+
       setPayOrder(null);
       setAmountTendered("");
       setSeniorCount(0);
@@ -630,6 +802,94 @@ export default function QrSessionsPage({
       setIsProcessingPayment(false);
     }
   }
+
+  const filteredCrmUsers = useMemo(() => {
+    const q = customerSearch.trim().toLowerCase();
+    if (!q) return crmUsers.slice(0, 20);
+    return crmUsers
+      .filter(
+        (u) =>
+          u.firstname.toLowerCase().includes(q) ||
+          (u.email ?? "").toLowerCase().includes(q) ||
+          (u.contactNumber ?? "").includes(q),
+      )
+      .slice(0, 20);
+  }, [crmUsers, customerSearch]);
+
+  const selectedCustomer = useMemo(
+    () => crmUsers.find((u) => u.userId === selectedCustomerId) ?? null,
+    [crmUsers, selectedCustomerId],
+  );
+
+  async function handleCreateCustomerFromPayment() {
+    if (!newCustomerForm.first_name.trim()) {
+      toast.error("First name is required");
+      return;
+    }
+
+    setIsSavingCustomer(true);
+    try {
+      const result = await createCrmUser({
+        firstname: newCustomerForm.first_name.trim(),
+        birthday: newCustomerForm.birthday || null,
+        contactNumber: newCustomerForm.contact_number.trim() || null,
+        email: newCustomerForm.email.trim() || null,
+      });
+
+      if (!result.success || !result.data) {
+        toast.error(result.error ?? "Failed to create customer");
+        return;
+      }
+
+      setLocalCrmUsers((prev) =>
+        [...prev, result.data].sort((a, b) =>
+          a.firstname.localeCompare(b.firstname),
+        ),
+      );
+      setSelectedCustomerId(result.data.userId);
+      setShowNewCustomer(false);
+      setNewCustomerForm({
+        first_name: "",
+        birthday: "",
+        contact_number: "",
+        email: "",
+      });
+      setCustomerSearch("");
+      toast.success("Customer added");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create customer");
+    } finally {
+      setIsSavingCustomer(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkMember() {
+      if (!selectedCustomerId) {
+        setIsIaccessMemberFlag(false);
+        return;
+      }
+
+      setCheckingIaccess(true);
+      try {
+        const res = await checkIsIaccessMember(selectedCustomerId);
+        if (!cancelled) {
+          setIsIaccessMemberFlag(!!(res.success && res.isMember));
+        }
+      } catch {
+        if (!cancelled) setIsIaccessMemberFlag(false);
+      } finally {
+        if (!cancelled) setCheckingIaccess(false);
+      }
+    }
+
+    checkMember();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCustomerId]);
 
   return (
     <main className="min-h-[calc(100vh-4rem)] flex-1 bg-stone-50/50">
@@ -1623,6 +1883,196 @@ export default function QrSessionsPage({
 
           {payOrder && (
             <div className="space-y-4 py-2">
+              {/* Optional regular customer */}
+              <div className="space-y-2 rounded-xl border border-stone-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-stone-700">
+                    Customer{" "}
+                    <span className="font-normal text-stone-400">
+                      (optional)
+                    </span>
+                  </p>
+                  {!showNewCustomer && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-xs text-[#F36509]"
+                      onClick={() => setShowNewCustomer(true)}
+                    >
+                      <Plus className="mr-1 h-3.5 w-3.5" />
+                      New
+                    </Button>
+                  )}
+                </div>
+
+                {selectedCustomer ? (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-stone-900">
+                        {selectedCustomer.firstname}
+                      </p>
+                      <p className="truncate text-xs text-stone-500">
+                        {[
+                          selectedCustomer.contactNumber,
+                          selectedCustomer.email,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "No contact info"}
+                      </p>
+                      {checkingIaccess ? (
+                        <p className="mt-1.5 text-[11px] text-stone-400">
+                          Checking iAccess…
+                        </p>
+                      ) : isIaccessMemberFlag ? (
+                        <p className="mt-1.5 text-[11px] font-medium text-emerald-700">
+                          iAccess member · 10% off Food &amp; Drinks
+                        </p>
+                      ) : selectedCustomerId ? (
+                        <p className="mt-1.5 text-[11px] text-stone-400">
+                          Not an iAccess member
+                        </p>
+                      ) : null}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 text-xs text-stone-500"
+                      onClick={() => setSelectedCustomerId(null)}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                ) : showNewCustomer ? (
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="First name *"
+                      value={newCustomerForm.first_name}
+                      onChange={(e) =>
+                        setNewCustomerForm((f) => ({
+                          ...f,
+                          first_name: e.target.value,
+                        }))
+                      }
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                    <Input
+                      type="date"
+                      placeholder="Birthday"
+                      value={newCustomerForm.birthday}
+                      onChange={(e) =>
+                        setNewCustomerForm((f) => ({
+                          ...f,
+                          birthday: e.target.value,
+                        }))
+                      }
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                    <Input
+                      type="tel"
+                      placeholder="Contact number"
+                      value={newCustomerForm.contact_number}
+                      onChange={(e) =>
+                        setNewCustomerForm((f) => ({
+                          ...f,
+                          contact_number: e.target.value,
+                        }))
+                      }
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                    <Input
+                      type="email"
+                      placeholder="Email"
+                      value={newCustomerForm.email}
+                      onChange={(e) =>
+                        setNewCustomerForm((f) => ({
+                          ...f,
+                          email: e.target.value,
+                        }))
+                      }
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        disabled={isSavingCustomer}
+                        onClick={() => {
+                          setShowNewCustomer(false);
+                          setNewCustomerForm({
+                            first_name: "",
+                            birthday: "",
+                            contact_number: "",
+                            email: "",
+                          });
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="flex-1 bg-[#F36509] text-white hover:bg-[#d95a08]"
+                        disabled={
+                          isSavingCustomer || !newCustomerForm.first_name.trim()
+                        }
+                        onClick={handleCreateCustomerFromPayment}
+                      >
+                        {isSavingCustomer ? "Saving…" : "Add customer"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Input
+                      value={customerSearch}
+                      onChange={(e) => setCustomerSearch(e.target.value)}
+                      placeholder="Search name, phone, or email…"
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                    {customerSearch.trim() && (
+                      <ul className="max-h-36 overflow-y-auto rounded-lg border border-stone-200">
+                        {filteredCrmUsers.length === 0 ? (
+                          <li className="px-3 py-2 text-xs text-stone-500">
+                            No matches. Use “New” to add them.
+                          </li>
+                        ) : (
+                          filteredCrmUsers.map((u) => (
+                            <li key={u.userId}>
+                              <button
+                                type="button"
+                                className="flex w-full flex-col items-start px-3 py-2 text-left text-sm hover:bg-stone-50"
+                                onClick={() => {
+                                  setSelectedCustomerId(u.userId);
+                                  setCustomerSearch("");
+                                }}
+                              >
+                                <span className="font-medium text-stone-900">
+                                  {u.firstname}
+                                </span>
+                                <span className="text-xs text-stone-500">
+                                  {[u.contactNumber, u.email]
+                                    .filter(Boolean)
+                                    .join(" · ") || "—"}
+                                </span>
+                              </button>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    )}
+                    {!customerSearch.trim() && (
+                      <p className="text-[11px] text-stone-400">
+                        Leave empty for walk-in with no account, or search / add
+                        a regular.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-stone-700">
                   Payment method
@@ -1828,11 +2278,19 @@ export default function QrSessionsPage({
                     </span>
                   </div>
                 ) : null}
-                {discountResult.totalSavings > 0 && (
+                {discountResult.scPwdSavings > 0 && (
                   <div className="flex justify-between text-emerald-700">
-                    <span>SC/PWD savings</span>
+                    <span>SC/PWD discount savings</span>
                     <span className="tabular-nums">
-                      −{formatCurrency(discountResult.totalSavings)}
+                      −{formatCurrency(discountResult.scPwdSavings)}
+                    </span>
+                  </div>
+                )}
+                {discountResult.iaccessSavings > 0 && (
+                  <div className="flex justify-between text-emerald-700">
+                    <span>iAccess member discount (10%)</span>
+                    <span className="tabular-nums">
+                      −{formatCurrency(discountResult.iaccessSavings)}
                     </span>
                   </div>
                 )}
