@@ -31,11 +31,12 @@ export type SessionOrder = {
   id: string;
   order_number?: string;
   status: string;
-  subtotal?: number;
+  subtotal?: number | null | undefined;
   total_amount: number;
   service_charge?: number;
   discount_amount?: number;
   tax_amount?: number;
+  vat_rate?: number;
   created_at: string;
   item_count?: number;
   items?: {
@@ -45,8 +46,11 @@ export type SessionOrder = {
     unit_price: number;
     line_total: number;
     area_code?: string | null;
+    service_charge?: number;
+    discount_amount?: number;
   }[];
   payment_method?: string | null;
+  service_charge_rate?: number;
 };
 
 export type PosOrder = {

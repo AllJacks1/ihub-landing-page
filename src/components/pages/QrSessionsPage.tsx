@@ -50,12 +50,13 @@ import {
   getLocationLabel,
   LocationType,
 } from "@/lib/pos-locations";
-import type { SessionOrder, useQrSessions } from "@/hooks/useQrSessions";
+import type { useQrSessions } from "@/hooks/useQrSessions";
 import {
   recordPayment,
   completeOrder,
   updateOrderItemDiscount,
   updatePosOrder,
+  SessionOrder,
 } from "@/lib/order-actions";
 import { ensureTerminalContext } from "@/lib/pos-actions";
 
@@ -443,7 +444,7 @@ export default function QrSessionsPage({
       originalServiceCharge,
       recalculatedServiceCharge: hasScPwdGuests
         ? recalculatedServiceCharge
-        : Number(payOrder?.service_charge_amount) || recalculatedServiceCharge,
+        : Number(payOrder?.service_charge) || recalculatedServiceCharge,
       discountFactor,
     };
   }, [payOrder, seniorCount, pwdCount, otherGuestCount, discountVatIncluded]);
@@ -1202,8 +1203,8 @@ export default function QrSessionsPage({
                     {/* VAT / service charge breakdown when present */}
                     {(order.subtotal != null ||
                       (order.tax_amount != null && order.tax_amount > 0) ||
-                      (order.service_charge_amount != null &&
-                        order.service_charge_amount > 0)) && (
+                      (order.service_charge != null &&
+                        order.service_charge > 0)) && (
                       <div className="mt-2 space-y-0.5 border-t border-stone-200 pt-2 text-xs text-stone-500">
                         {order.subtotal != null && (
                           <div className="flex justify-between gap-2">
@@ -1226,8 +1227,8 @@ export default function QrSessionsPage({
                             </span>
                           </div>
                         )}
-                        {order.service_charge_amount != null &&
-                          order.service_charge_amount > 0 && (
+                        {order.service_charge != null &&
+                          order.service_charge > 0 && (
                             <div className="flex justify-between gap-2">
                               <span>
                                 Service charge
@@ -1236,7 +1237,7 @@ export default function QrSessionsPage({
                                   : ""}
                               </span>
                               <span className="tabular-nums">
-                                {formatCurrency(order.service_charge_amount)}
+                                {formatCurrency(order.service_charge)}
                               </span>
                             </div>
                           )}
@@ -1812,8 +1813,8 @@ export default function QrSessionsPage({
                   </div>
                 )}
                 {/* Service charge – show recalculated when discount is applied */}
-                {(payOrder.service_charge_amount != null &&
-                  payOrder.service_charge_amount > 0) ||
+                {(payOrder.service_charge != null &&
+                  payOrder.service_charge > 0) ||
                 discountResult.recalculatedServiceCharge > 0 ? (
                   <div className="flex justify-between text-stone-500">
                     <span>

@@ -19,7 +19,11 @@ import {
   LocationType,
   PosLocation,
 } from "@/lib/pos-locations";
-import { createQrOrder, getOrdersBySessionId } from "@/lib/order-actions";
+import {
+  createQrOrder,
+  getOrdersBySessionId,
+  SessionOrder,
+} from "@/lib/order-actions";
 
 /** Minimal branch shape for the create-session picker */
 export type PosBranchOption = {
@@ -40,31 +44,6 @@ const DEFAULT_LOCATION_FORM: LocationFormState = {
   seats: 4,
   zone: "bistro",
   description: "",
-};
-
-/** Shape returned by getOrdersBySessionId – keep in sync with the page */
-export type SessionOrder = {
-  id: string;
-  status: string;
-  total_amount: number;
-  created_at: string;
-  item_count?: number;
-  items?: {
-    id: string;
-    product_name: string;
-    quantity: number;
-    unit_price: number;
-    service_charge?: number;
-    discount_amount?: number;
-    line_total: number;
-    area_code?: string | null;
-  }[];
-  payment_method?: string | null;
-  subtotal?: number | null;
-  tax_amount?: number | null;
-  service_charge_amount?: number | null;
-  vat_rate?: number | null;
-  service_charge_rate?: number | null;
 };
 
 export function useQrSessions() {
