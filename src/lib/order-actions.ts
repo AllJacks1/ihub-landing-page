@@ -907,6 +907,7 @@ const paymentSchema = z.object({
     "maya",
     "bank_transfer",
     "other",
+    "employee_charge",
   ]),
   amount: z.coerce.number().positive(),
   received_amount: z.coerce.number().min(0).optional().nullable(),

@@ -152,6 +152,12 @@ const sidebarGroups: SidebarGroup[] = [
         href: "/admin/pos/crm",
       },
       {
+        id: "employees",
+        label: "Employees",
+        icon: Users,
+        href: "/admin/pos/employee-credit",
+      },
+      {
         id: "sales",
         label: "Sales",
         icon: Tag,

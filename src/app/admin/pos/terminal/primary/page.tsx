@@ -61,6 +61,13 @@ import {
 } from "@/lib/actions";
 import { computeScPwdDiscount } from "@/lib/utils";
 import { addPoints } from "@/app/actions/points";
+import {
+  createEmployeeCharge,
+  Employee,
+  EmployeeCreditAccount,
+  getEmployeeCreditAccounts,
+  getEmployees,
+} from "@/lib/employee-charges";
 
 type CartItem = PosProduct & {
   quantity: number;
@@ -113,7 +120,7 @@ export default function PrimaryTerminalPage() {
   const [branchName, setBranchName] = useState("");
   const [terminalName, setTerminalName] = useState("");
 
-  type PaymentMethod = "cash" | "card" | "gcash" | "maya";
+  type PaymentMethod = "cash" | "card" | "gcash" | "maya" | "employee_charge";
 
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
@@ -143,6 +150,15 @@ export default function PrimaryTerminalPage() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(
     null,
   );
+
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [creditAccounts, setCreditAccounts] = useState<EmployeeCreditAccount[]>(
+    [],
+  );
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(
+    null,
+  );
+  const [employeeSearch, setEmployeeSearch] = useState("");
 
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCustomerForm, setNewCustomerForm] = useState({
@@ -273,6 +289,16 @@ export default function PrimaryTerminalPage() {
           ]);
           // set them if success...
           return;
+        }
+
+        const [empRes, accRes] = await Promise.all([
+          getEmployees(),
+          getEmployeeCreditAccounts(),
+        ]);
+
+        if (!cancelled) {
+          if (empRes.success) setEmployees(empRes.data);
+          if (accRes.success) setCreditAccounts(accRes.data);
         }
 
         if (!ctx.success || !ctx.data) {
@@ -568,6 +594,40 @@ export default function PrimaryTerminalPage() {
     billingSettings,
   ]);
 
+  const enabledCreditAccounts = useMemo(() => {
+    return creditAccounts.filter((a) => a.is_enabled);
+  }, [creditAccounts]);
+
+  const employeesWithCredit = useMemo(() => {
+    const enabledIds = new Set(enabledCreditAccounts.map((a) => a.employee_id));
+    return employees.filter((e) => e.is_active && enabledIds.has(e.id));
+  }, [employees, enabledCreditAccounts]);
+
+  const filteredEmployeesForCharge = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase();
+    if (!q) return employeesWithCredit.slice(0, 20);
+    return employeesWithCredit
+      .filter(
+        (e) =>
+          employeeDisplayName(e).toLowerCase().includes(q) ||
+          (e.employee_code ?? "").toLowerCase().includes(q),
+      )
+      .slice(0, 20);
+  }, [employeesWithCredit, employeeSearch]);
+
+  const selectedEmployee = useMemo(
+    () => employees.find((e) => e.id === selectedEmployeeId) ?? null,
+    [employees, selectedEmployeeId],
+  );
+
+  const selectedCreditAccount = useMemo(
+    () =>
+      creditAccounts.find(
+        (a) => a.employee_id === selectedEmployeeId && a.is_enabled,
+      ) ?? null,
+    [creditAccounts, selectedEmployeeId],
+  );
+
   const changeDue = useMemo(() => {
     if (paymentMethod !== "cash") return 0;
     const tendered = parseFloat(amountTendered) || 0;
@@ -578,9 +638,16 @@ export default function PrimaryTerminalPage() {
     if (cart.length === 0 || isProcessingPayment) return false;
     if (!discountResult.valid && (seniorCount > 0 || pwdCount > 0))
       return false;
+
     if (paymentMethod === "cash") {
       return (parseFloat(amountTendered) || 0) >= amountDue;
     }
+
+    if (paymentMethod === "employee_charge") {
+      return !!selectedEmployeeId && !!selectedCreditAccount;
+      // Optional: also check remaining credit later
+    }
+
     return true;
   }, [
     cart.length,
@@ -591,6 +658,8 @@ export default function PrimaryTerminalPage() {
     discountResult.valid,
     seniorCount,
     pwdCount,
+    selectedEmployeeId,
+    selectedCreditAccount,
   ]);
 
   function openPaymentDialog() {
@@ -603,8 +672,8 @@ export default function PrimaryTerminalPage() {
       billingSettings?.price_mode === "inclusive" ||
         billingSettings?.vat_enabled === true,
     );
-
-    // reset optional customer
+    setSelectedEmployeeId(null);
+    setEmployeeSearch("");
     setSelectedCustomerId(null);
     setCustomerSearch("");
     setShowNewCustomer(false);
@@ -677,6 +746,28 @@ export default function PrimaryTerminalPage() {
       if (!payResult.success) {
         toast.error(payResult.error ?? "Payment failed");
         return; // items + open order remain; operator can complete later
+      }
+
+      if (
+        paymentMethod === "employee_charge" &&
+        selectedEmployeeId &&
+        orderId
+      ) {
+        const chargeResult = await createEmployeeCharge({
+          employee_id: selectedEmployeeId,
+          order_id: orderId,
+          amount: amountDue,
+          status: "outstanding",
+          notes: `POS ${orderResult.data?.order_number ?? orderId}`,
+        });
+
+        if (!chargeResult.success) {
+          toast.error(
+            chargeResult.error ??
+              "Payment recorded but failed to create employee charge",
+          );
+          // You can still complete the order or leave it open – your choice
+        }
       }
 
       const completeResult = await completeOrder(orderId);
@@ -899,6 +990,12 @@ export default function PrimaryTerminalPage() {
     } finally {
       setIsSavingCustomer(false);
     }
+  }
+
+  function employeeDisplayName(e?: Employee | null) {
+    if (!e) return "—";
+    const name = [e.first_name, e.last_name].filter(Boolean).join(" ");
+    return name || e.employee_code || e.id.slice(0, 8);
   }
 
   const canPay =
@@ -1328,7 +1425,7 @@ export default function PrimaryTerminalPage() {
 
             <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-stone-400">
               <Banknote className="h-3.5 w-3.5" />
-              Cash, card, GCash &amp; Maya
+              Cash, card, GCash, Maya &amp; Employee Charge
             </p>
           </div>
         </aside>
@@ -1556,6 +1653,11 @@ export default function PrimaryTerminalPage() {
                     { id: "card" as const, label: "Card", icon: CreditCard },
                     { id: "gcash" as const, label: "GCash", icon: CreditCard },
                     { id: "maya" as const, label: "Maya", icon: CreditCard },
+                    {
+                      id: "employee_charge" as const,
+                      label: "Employee Charge",
+                      icon: User,
+                    },
                   ] as const
                 ).map(({ id, label, icon: Icon }) => (
                   <button
@@ -1564,6 +1666,10 @@ export default function PrimaryTerminalPage() {
                     onClick={() => {
                       setPaymentMethod(id);
                       if (id !== "cash") setAmountTendered("");
+                      if (id !== "employee_charge") {
+                        setSelectedEmployeeId(null);
+                        setEmployeeSearch("");
+                      }
                     }}
                     className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors ${
                       paymentMethod === id
@@ -1604,6 +1710,82 @@ export default function PrimaryTerminalPage() {
                     {formatCurrency(changeDue)}
                   </span>
                 </div>
+              </div>
+            )}
+
+            {paymentMethod === "employee_charge" && (
+              <div className="space-y-2 rounded-xl border border-stone-200 bg-white p-3">
+                <p className="text-sm font-medium text-stone-700">
+                  Charge to employee
+                </p>
+
+                {selectedEmployee ? (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-stone-900">
+                        {employeeDisplayName(selectedEmployee)}
+                      </p>
+                      <p className="text-xs text-stone-500">
+                        {selectedEmployee.employee_code ?? "No code"}
+                        {selectedCreditAccount && (
+                          <>
+                            {" "}
+                            · Limit{" "}
+                            {formatCurrency(selectedCreditAccount.credit_limit)}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 text-xs text-stone-500"
+                      onClick={() => {
+                        setSelectedEmployeeId(null);
+                        setEmployeeSearch("");
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Input
+                      value={employeeSearch}
+                      onChange={(e) => setEmployeeSearch(e.target.value)}
+                      placeholder="Search employee name or code…"
+                      className="h-9 rounded-lg border-stone-200"
+                    />
+                    <ul className="max-h-40 overflow-y-auto rounded-lg border border-stone-200">
+                      {filteredEmployeesForCharge.length === 0 ? (
+                        <li className="px-3 py-2 text-xs text-stone-500">
+                          No employees with an enabled credit account.
+                        </li>
+                      ) : (
+                        filteredEmployeesForCharge.map((e) => (
+                          <li key={e.id}>
+                            <button
+                              type="button"
+                              className="flex w-full flex-col items-start px-3 py-2 text-left text-sm hover:bg-stone-50"
+                              onClick={() => {
+                                setSelectedEmployeeId(e.id);
+                                setEmployeeSearch("");
+                              }}
+                            >
+                              <span className="font-medium text-stone-900">
+                                {employeeDisplayName(e)}
+                              </span>
+                              <span className="text-xs text-stone-500">
+                                {e.employee_code ?? "—"}
+                              </span>
+                            </button>
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
 
