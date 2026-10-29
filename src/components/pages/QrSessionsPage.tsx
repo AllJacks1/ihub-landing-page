@@ -18,6 +18,7 @@ import {
   Receipt,
   Banknote,
   CreditCard,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
@@ -66,6 +67,13 @@ import {
   getCurrentUser,
 } from "@/lib/actions";
 import { addPoints } from "@/app/actions/points";
+import {
+  createEmployeeCharge,
+  Employee,
+  EmployeeCreditAccount,
+  getEmployeeCreditAccounts,
+  getEmployees,
+} from "@/lib/employee-charges";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
 
@@ -337,7 +345,7 @@ export default function QrSessionsPage({
     toast.success("URL copied");
   };
 
-  type PaymentMethod = "cash" | "card" | "gcash" | "maya";
+  type PaymentMethod = "cash" | "card" | "gcash" | "maya" | "employee_charge";
 
   const [payOrder, setPayOrder] = useState<SessionOrder | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
@@ -351,6 +359,15 @@ export default function QrSessionsPage({
   const [pwdCount, setPwdCount] = useState(0);
   const [otherGuestCount, setOtherGuestCount] = useState(1);
   const [discountVatIncluded, setDiscountVatIncluded] = useState(true);
+
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [creditAccounts, setCreditAccounts] = useState<EmployeeCreditAccount[]>(
+    [],
+  );
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(
+    null,
+  );
+  const [employeeSearch, setEmployeeSearch] = useState("");
 
   const [terminalId, setTerminalId] = useState<string | null>(null);
   const [shiftId, setShiftId] = useState<string | null>(null);
@@ -367,6 +384,16 @@ export default function QrSessionsPage({
 
         const ctx = await ensureTerminalContext();
         if (cancelled) return;
+
+        const [empRes, accRes] = await Promise.all([
+          getEmployees(),
+          getEmployeeCreditAccounts(),
+        ]);
+
+        if (!cancelled) {
+          if (empRes.success) setEmployees(empRes.data);
+          if (accRes.success) setCreditAccounts(accRes.data);
+        }
 
         if (!ctx.success || !ctx.data) {
           console.error(ctx.error ?? "Terminal context unavailable");
@@ -536,6 +563,40 @@ export default function QrSessionsPage({
   ]);
 
   const amountDue = discountResult.amountDue;
+
+  const enabledCreditAccounts = useMemo(() => {
+    return creditAccounts.filter((a) => a.is_enabled);
+  }, [creditAccounts]);
+
+  const employeesWithCredit = useMemo(() => {
+    const enabledIds = new Set(enabledCreditAccounts.map((a) => a.employee_id));
+    return employees.filter((e) => e.is_active && enabledIds.has(e.id));
+  }, [employees, enabledCreditAccounts]);
+
+  const filteredEmployeesForCharge = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase();
+    if (!q) return employeesWithCredit.slice(0, 20);
+    return employeesWithCredit
+      .filter(
+        (e) =>
+          employeeDisplayName(e).toLowerCase().includes(q) ||
+          (e.employee_code ?? "").toLowerCase().includes(q),
+      )
+      .slice(0, 20);
+  }, [employeesWithCredit, employeeSearch]);
+
+  const selectedEmployee = useMemo(
+    () => employees.find((e) => e.id === selectedEmployeeId) ?? null,
+    [employees, selectedEmployeeId],
+  );
+
+  const selectedCreditAccount = useMemo(
+    () =>
+      creditAccounts.find(
+        (a) => a.employee_id === selectedEmployeeId && a.is_enabled,
+      ) ?? null,
+    [creditAccounts, selectedEmployeeId],
+  );
 
   const changeDue = useMemo(() => {
     if (!payOrder || paymentMethod !== "cash") return 0;
@@ -751,6 +812,28 @@ export default function QrSessionsPage({
         return;
       }
 
+      if (
+        paymentMethod === "employee_charge" &&
+        selectedEmployeeId &&
+        payOrder.id
+      ) {
+        const chargeResult = await createEmployeeCharge({
+          employee_id: selectedEmployeeId,
+          order_id: payOrder.id,
+          amount: amountDue,
+          status: "outstanding",
+          notes: `POS ${payOrder.order_number ?? payOrder.id}`,
+        });
+
+        if (!chargeResult.success) {
+          toast.error(
+            chargeResult.error ??
+              "Payment recorded but failed to create employee charge",
+          );
+          // You can still complete the order or leave it open – your choice
+        }
+      }
+
       // ── 4. Complete the order ──────────────────────────────────────────────
       const completeResult = await completeOrder(payOrder.id);
 
@@ -890,6 +973,12 @@ export default function QrSessionsPage({
       cancelled = true;
     };
   }, [selectedCustomerId]);
+
+  function employeeDisplayName(e?: Employee | null) {
+    if (!e) return "—";
+    const name = [e.first_name, e.last_name].filter(Boolean).join(" ");
+    return name || e.employee_code || e.id.slice(0, 8);
+  }
 
   return (
     <main className="min-h-[calc(100vh-4rem)] flex-1 bg-stone-50/50">
@@ -2088,6 +2177,11 @@ export default function QrSessionsPage({
                         icon: CreditCard,
                       },
                       { id: "maya" as const, label: "Maya", icon: CreditCard },
+                      {
+                        id: "employee_charge" as const,
+                        label: "Employee Charge",
+                        icon: User,
+                      },
                     ] as const
                   ).map(({ id, label, icon: Icon }) => (
                     <button
@@ -2136,6 +2230,84 @@ export default function QrSessionsPage({
                       {formatCurrency(changeDue)}
                     </span>
                   </div>
+                </div>
+              )}
+
+              {paymentMethod === "employee_charge" && (
+                <div className="space-y-2 rounded-xl border border-stone-200 bg-white p-3">
+                  <p className="text-sm font-medium text-stone-700">
+                    Charge to employee
+                  </p>
+
+                  {selectedEmployee ? (
+                    <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-stone-900">
+                          {employeeDisplayName(selectedEmployee)}
+                        </p>
+                        <p className="text-xs text-stone-500">
+                          {selectedEmployee.employee_code ?? "No code"}
+                          {selectedCreditAccount && (
+                            <>
+                              {" "}
+                              · Limit{" "}
+                              {formatCurrency(
+                                selectedCreditAccount.credit_limit,
+                              )}
+                            </>
+                          )}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0 text-xs text-stone-500"
+                        onClick={() => {
+                          setSelectedEmployeeId(null);
+                          setEmployeeSearch("");
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Input
+                        value={employeeSearch}
+                        onChange={(e) => setEmployeeSearch(e.target.value)}
+                        placeholder="Search employee name or code…"
+                        className="h-9 rounded-lg border-stone-200"
+                      />
+                      <ul className="max-h-40 overflow-y-auto rounded-lg border border-stone-200">
+                        {filteredEmployeesForCharge.length === 0 ? (
+                          <li className="px-3 py-2 text-xs text-stone-500">
+                            No employees with an enabled credit account.
+                          </li>
+                        ) : (
+                          filteredEmployeesForCharge.map((e) => (
+                            <li key={e.id}>
+                              <button
+                                type="button"
+                                className="flex w-full flex-col items-start px-3 py-2 text-left text-sm hover:bg-stone-50"
+                                onClick={() => {
+                                  setSelectedEmployeeId(e.id);
+                                  setEmployeeSearch("");
+                                }}
+                              >
+                                <span className="font-medium text-stone-900">
+                                  {employeeDisplayName(e)}
+                                </span>
+                                <span className="text-xs text-stone-500">
+                                  {e.employee_code ?? "—"}
+                                </span>
+                              </button>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
 

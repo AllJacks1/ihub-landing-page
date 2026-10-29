@@ -166,7 +166,7 @@ const chargeStatusSchema = z.enum([
 ]);
 
 const createEmployeeChargeSchema = z.object({
-  employee_id: uuidSchema,
+  employee_id: uuidSchema.optional().nullable(),
   order_id: uuidSchema.optional().nullable(),
   amount: z.coerce.number().finite().positive("Amount must be greater than 0"),
   status: chargeStatusSchema.optional().default("outstanding"),
