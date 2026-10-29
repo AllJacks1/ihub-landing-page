@@ -1,8 +1,15 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
 import { Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +46,8 @@ import {
   deleteEmployeeCharge,
   saveEmployee,
   saveEmployeeCreditAccount,
+  markChargeAsPaid,
+  deductChargeFromPayroll,
 } from "@/lib/employee-charges";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -120,6 +129,12 @@ export default function EmployeeCreditPage() {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  const [deductModalOpen, setDeductModalOpen] = useState(false);
+  const [chargeToDeduct, setChargeToDeduct] = useState<EmployeeCharge | null>(
+    null,
+  );
+  const [deductModalKey, setDeductModalKey] = useState(0);
+
   // filters
   const [chargeStatus, setChargeStatus] = useState<
     "all" | EmployeeChargeStatus
@@ -179,6 +194,7 @@ export default function EmployeeCreditPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
@@ -199,43 +215,69 @@ export default function EmployeeCreditPage() {
   };
 
   // ─── filtered lists ───────────────────────────────────────────────────────
-  const filteredEmployees = employees.filter((e) => {
-    const q = search.toLowerCase();
-    if (!q) return true;
-    return (
-      e.employee_code?.toLowerCase().includes(q) ||
-      e.first_name?.toLowerCase().includes(q) ||
-      e.last_name?.toLowerCase().includes(q)
-    );
-  });
+  const q = search.trim().toLowerCase();
 
-  const filteredCharges = charges.filter((c) => {
-    if (chargeStatus !== "all" && c.status !== chargeStatus) return false;
-    const q = search.toLowerCase();
-    if (!q) return true;
-    const name = employeeName(c.employee).toLowerCase();
-    return (
-      name.includes(q) ||
-      c.notes?.toLowerCase().includes(q) ||
-      c.order_id?.includes(q)
-    );
-  });
+  const filteredEmployees = useMemo(
+    () =>
+      q
+        ? employees.filter(
+            (e) =>
+              e.employee_code?.toLowerCase().includes(q) ||
+              e.first_name?.toLowerCase().includes(q) ||
+              e.last_name?.toLowerCase().includes(q),
+          )
+        : employees,
+    [employees, q],
+  );
 
-  const filteredAccounts = accounts.filter((a) => {
-    const q = search.toLowerCase();
-    if (!q) return true;
-    return employeeName(a.employee).toLowerCase().includes(q);
-  });
+  const filteredCharges = useMemo(
+    () =>
+      charges.filter((c) => {
+        if (chargeStatus !== "all" && c.status !== chargeStatus) return false;
+        if (!q) return true;
+        const name = employeeName(c.employee).toLowerCase();
+        return (
+          name.includes(q) ||
+          c.notes?.toLowerCase().includes(q) ||
+          c.order_id?.toLowerCase().includes(q)
+        );
+      }),
+    [charges, chargeStatus, q],
+  );
 
-  const filteredDeductions = deductions.filter((d) => {
-    const q = search.toLowerCase();
-    if (!q) return true;
-    return (
-      employeeName(d.employee).toLowerCase().includes(q) ||
-      d.payroll_reference?.toLowerCase().includes(q) ||
-      d.notes?.toLowerCase().includes(q)
-    );
-  });
+  const filteredAccounts = useMemo(
+    () =>
+      q
+        ? accounts.filter((a) =>
+            employeeName(a.employee).toLowerCase().includes(q),
+          )
+        : accounts,
+    [accounts, q],
+  );
+
+  const filteredDeductions = useMemo(
+    () =>
+      q
+        ? deductions.filter(
+            (d) =>
+              employeeName(d.employee).toLowerCase().includes(q) ||
+              d.payroll_reference?.toLowerCase().includes(q) ||
+              d.notes?.toLowerCase().includes(q),
+          )
+        : deductions,
+    [deductions, q],
+  );
+
+  // Outstanding balance per employee (used by credit accounts table)
+  const outstandingBalanceByEmployee = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of charges) {
+      if (c.status !== "outstanding") continue;
+      const prev = map.get(c.employee_id) ?? 0;
+      map.set(c.employee_id, prev + Number(c.amount ?? 0));
+    }
+    return map;
+  }, [charges]);
 
   // ─── delete charge ────────────────────────────────────────────────────────
   const handleDeleteCharge = (id: string) => {
@@ -244,10 +286,55 @@ export default function EmployeeCreditPage() {
     startTransition(async () => {
       const result = await deleteEmployeeCharge({ id });
       if (!result.success) {
-        alert(result.error);
+        toast.error(result.error || "Failed to delete charge");
         return;
       }
       setCharges((prev) => prev.filter((c) => c.id !== id));
+    });
+  };
+
+  const handleMarkPaid = (id: string) => {
+    if (!window.confirm("Mark this charge as paid (cash)?")) return;
+
+    startTransition(async () => {
+      const result = await markChargeAsPaid({ id });
+      if (!result.success) {
+        toast.error(result.error || "Failed to mark charge as paid");
+        return;
+      }
+      // Refresh everything so balance & status stay in sync
+      load();
+    });
+  };
+
+  const openDeductModal = (charge: EmployeeCharge) => {
+    setChargeToDeduct(charge);
+    setDeductModalKey((k) => k + 1);
+    setDeductModalOpen(true);
+  };
+
+  const handleDeductFromPayroll = async (payload: {
+    payroll_reference?: string | null;
+    payroll_period_start?: string | null;
+    payroll_period_end?: string | null;
+    notes?: string | null;
+  }) => {
+    if (!chargeToDeduct) return;
+
+    startTransition(async () => {
+      const result = await deductChargeFromPayroll({
+        id: chargeToDeduct.id,
+        ...payload,
+      });
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to deduct charge");
+        return;
+      }
+
+      setDeductModalOpen(false);
+      setChargeToDeduct(null);
+      load();
     });
   };
 
@@ -300,26 +387,6 @@ export default function EmployeeCreditPage() {
                 <Plus className="mr-2 h-4 w-4" /> Credit Account
               </Button>
             )}
-            {tab === "charges" && (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => openCreate("charge")}
-                className="bg-[#F36509] text-white hover:bg-[#d95a08]"
-              >
-                <Plus className="mr-2 h-4 w-4" /> Charge
-              </Button>
-            )}
-            {tab === "deductions" && (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => openCreate("deduction")}
-                className="bg-[#F36509] text-white hover:bg-[#d95a08]"
-              >
-                <Plus className="mr-2 h-4 w-4" /> Deduction
-              </Button>
-            )}
           </div>
         </div>
       </div>
@@ -343,7 +410,7 @@ export default function EmployeeCreditPage() {
       </div>
 
       {/* Toolbar */}
-      <div className="mx-4 mb-4 flex flex-wrap items-center gap-3">
+      <div className="mx-6 mb-4 flex flex-wrap items-center gap-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
           <Input
@@ -381,7 +448,7 @@ export default function EmployeeCreditPage() {
       )}
 
       {loading ? (
-        <Card className="mx-4">
+        <Card className="mx-6">
           <div className="mx-4 flex h-64 items-center justify-center text-stone-400">
             <RefreshCw className="mr-2 h-5 w-5 animate-spin text-[#F36509]" />
             Loading…
@@ -391,7 +458,7 @@ export default function EmployeeCreditPage() {
         <>
           {/* ── Employees ─────────────────────────────────────────────── */}
           {tab === "employees" && (
-            <Card className="mx-4">
+            <Card className="mx-6">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-stone-200 bg-stone-50 text-xs uppercase tracking-wider text-stone-500">
@@ -456,54 +523,102 @@ export default function EmployeeCreditPage() {
 
           {/* ── Credit Accounts ───────────────────────────────────────── */}
           {tab === "accounts" && (
-            <Card>
+            <Card className="mx-6">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-stone-200 bg-stone-50 text-xs uppercase tracking-wider text-stone-500">
                     <tr>
                       <th className="px-4 py-3">Employee</th>
-                      <th className="px-4 py-3">Credit Limit</th>
+                      <th className="px-4 py-3 min-w-[220px]">
+                        Credit Limit / Balance
+                      </th>
                       <th className="px-4 py-3">Enabled</th>
                       <th className="px-4 py-3">Updated</th>
                       <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
-                    {filteredAccounts.map((a) => (
-                      <tr key={a.id} className="hover:bg-stone-50">
-                        <td className="px-4 py-3 font-medium">
-                          {employeeName(a.employee)}
-                        </td>
-                        <td className="px-4 py-3 font-mono">
-                          {formatMoney(a.credit_limit)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge
-                            variant="outline"
-                            className={statusBadge(
-                              a.is_enabled ? "green" : "red",
-                            )}
-                          >
-                            {a.is_enabled ? "Enabled" : "Disabled"}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3 text-stone-500">
-                          {formatDateTime(a.updated_at)}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => openEdit("account", a)}
-                            className="text-stone-500 hover:text-stone-900"
-                          >
-                            <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                            Edit
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                    {accounts.length === 0 && (
+                    {filteredAccounts.map((a) => {
+                      const balance =
+                        outstandingBalanceByEmployee.get(a.employee_id) ?? 0;
+
+                      const limit = Number(a.credit_limit ?? 0);
+                      const utilization =
+                        limit > 0 ? Math.min((balance / limit) * 100, 100) : 0;
+                      const isOverLimit = balance > limit && limit > 0;
+
+                      return (
+                        <tr key={a.id} className="hover:bg-stone-50">
+                          <td className="px-4 py-3 font-medium">
+                            {employeeName(a.employee)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="space-y-1.5">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="font-mono text-sm font-medium">
+                                  {formatMoney(balance)}
+                                </span>
+                                <span className="text-xs text-stone-500">
+                                  of {formatMoney(limit)}
+                                </span>
+                              </div>
+                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-full transition-all",
+                                    isOverLimit
+                                      ? "bg-red-500"
+                                      : utilization >= 80
+                                        ? "bg-amber-500"
+                                        : "bg-emerald-500",
+                                  )}
+                                  style={{ width: `${utilization}%` }}
+                                />
+                              </div>
+                              <div className="flex justify-between text-[11px] text-stone-400">
+                                <span>
+                                  {utilization.toFixed(0)}% used
+                                  {isOverLimit && (
+                                    <span className="ml-1 font-medium text-red-600">
+                                      (over limit)
+                                    </span>
+                                  )}
+                                </span>
+                                <span>
+                                  Available:{" "}
+                                  {formatMoney(Math.max(limit - balance, 0))}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <Badge
+                              variant="outline"
+                              className={statusBadge(
+                                a.is_enabled ? "green" : "red",
+                              )}
+                            >
+                              {a.is_enabled ? "Enabled" : "Disabled"}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3 text-stone-500">
+                            {formatDateTime(a.updated_at)}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => openEdit("account", a)}
+                              className="text-stone-500 hover:text-stone-900"
+                            >
+                              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                              Edit
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredAccounts.length === 0 && (
                       <tr>
                         <td
                           colSpan={5}
@@ -521,7 +636,7 @@ export default function EmployeeCreditPage() {
 
           {/* ── Charges ───────────────────────────────────────────────── */}
           {tab === "charges" && (
-            <Card>
+            <Card className="mx-6">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-stone-200 bg-stone-50 text-xs uppercase tracking-wider text-stone-500">
@@ -571,6 +686,28 @@ export default function EmployeeCreditPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1">
+                            {c.status === "outstanding" && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleMarkPaid(c.id)}
+                                  disabled={isPending}
+                                  className="text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                                >
+                                  Paid
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => openDeductModal(c)}
+                                  disabled={isPending}
+                                  className="text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                                >
+                                  Deduct
+                                </Button>
+                              </>
+                            )}
                             <Button
                               size="sm"
                               variant="ghost"
@@ -613,7 +750,7 @@ export default function EmployeeCreditPage() {
 
           {/* ── Deductions ────────────────────────────────────────────── */}
           {tab === "deductions" && (
-            <Card>
+            <Card className="mx-6">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-stone-200 bg-stone-50 text-xs uppercase tracking-wider text-stone-500">
@@ -624,7 +761,6 @@ export default function EmployeeCreditPage() {
                       <th className="px-4 py-3">Period</th>
                       <th className="px-4 py-3">Recorded</th>
                       <th className="px-4 py-3">Notes</th>
-                      <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
@@ -647,26 +783,15 @@ export default function EmployeeCreditPage() {
                         <td className="px-4 py-3 text-stone-500">
                           {formatDateTime(d.recorded_at)}
                         </td>
-                        <td className="max-w-[180px] truncate px-4 py-3 text-stone-500">
+                        <td className="max-w-[220px] truncate px-4 py-3 text-stone-500">
                           {d.notes || "—"}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => openEdit("deduction", d)}
-                            className="text-stone-500 hover:text-stone-900"
-                          >
-                            <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                            Edit
-                          </Button>
                         </td>
                       </tr>
                     ))}
-                    {deductions.length === 0 && (
+                    {filteredDeductions.length === 0 && (
                       <tr>
                         <td
-                          colSpan={7}
+                          colSpan={6}
                           className="px-4 py-12 text-center text-stone-400"
                         >
                           No salary deductions
@@ -713,19 +838,18 @@ export default function EmployeeCreditPage() {
         employees={employees}
         onSaved={load}
       />
-      <DeductionFormModal
-        key={editing && modal === "deduction" ? editing.id : "new-deduction"}
-        open={modal === "deduction"}
+      <DeductChargeModal
+        key={deductModalKey}
+        open={deductModalOpen}
         onOpenChange={(open) => {
-          if (!open) setModal(null);
+          if (!open) {
+            setDeductModalOpen(false);
+            setChargeToDeduct(null);
+          }
         }}
-        initial={
-          modal === "deduction"
-            ? (editing as EmployeeSalaryDeduction | null)
-            : null
-        }
-        employees={employees}
-        onSaved={load}
+        charge={chargeToDeduct}
+        onConfirm={handleDeductFromPayroll}
+        isPending={isPending}
       />
     </main>
   );
@@ -771,7 +895,9 @@ function EmployeeFormModal({
       onSaved();
       onOpenChange(false);
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to save employee");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to save employee",
+      );
     } finally {
       setSaving(false);
     }
@@ -886,7 +1012,7 @@ function AccountFormModal({
       onSaved();
       onOpenChange(false);
     } catch (error) {
-      alert(
+      toast.error(
         error instanceof Error
           ? error.message
           : "Failed to save credit account",
@@ -1170,58 +1296,43 @@ function ChargeFormModal({
   );
 }
 
-function DeductionFormModal({
+function DeductChargeModal({
   open,
   onOpenChange,
-  initial,
-  employees,
-  onSaved,
+  charge,
+  onConfirm,
+  isPending,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  initial: EmployeeSalaryDeduction | null;
-  employees: Employee[];
-  onSaved: () => void;
+  charge: EmployeeCharge | null;
+  onConfirm: (payload: {
+    payroll_reference?: string | null;
+    payroll_period_start?: string | null;
+    payroll_period_end?: string | null;
+    notes?: string | null;
+  }) => void;
+  isPending: boolean;
 }) {
-  const [form, setForm] = useState({
-    employee_id: initial?.employee_id || "",
-    amount: initial ? String(initial.amount) : "",
-    payroll_reference: initial?.payroll_reference || "",
-    payroll_period_start: initial?.payroll_period_start || "",
-    payroll_period_end: initial?.payroll_period_end || "",
-    notes: initial?.notes || "",
+  const buildForm = (c: EmployeeCharge | null) => ({
+    payroll_reference: "",
+    payroll_period_start: "",
+    payroll_period_end: "",
+    notes: c
+      ? `Deducted from charge ${c.id.slice(0, 8)}… (${formatMoney(c.amount)})`
+      : "",
   });
-  const [saving, setSaving] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
+  const [form, setForm] = useState(() => buildForm(charge));
+
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setSaving(true);
-    try {
-      const payload = {
-        ...form,
-        amount: Number(form.amount),
-        payroll_reference: form.payroll_reference || null,
-        payroll_period_start: form.payroll_period_start || null,
-        payroll_period_end: form.payroll_period_end || null,
-        notes: form.notes || null,
-      };
-      const url = initial
-        ? `/api/employee-salary-deductions/${initial.id}`
-        : "/api/employee-salary-deductions";
-      const method = initial ? "PATCH" : "POST";
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error("Save failed");
-      onSaved();
-      onOpenChange(false);
-    } catch {
-      alert("Failed to save deduction");
-    } finally {
-      setSaving(false);
-    }
+    onConfirm({
+      payroll_reference: form.payroll_reference || null,
+      payroll_period_start: form.payroll_period_start || null,
+      payroll_period_end: form.payroll_period_end || null,
+      notes: form.notes || null,
+    });
   };
 
   return (
@@ -1229,43 +1340,23 @@ function DeductionFormModal({
       <DialogContent className="rounded-2xl sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="font-serif text-xl">
-            {initial ? "Edit Deduction" : "New Salary Deduction"}
+            Deduct from Payroll
           </DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label>Employee</Label>
-            <Select
-              value={form.employee_id}
-              onValueChange={(v) => setForm({ ...form, employee_id: v ?? "" })}
-              required
-              disabled={!!initial}
-            >
-              <SelectTrigger className="h-9 rounded-lg border-stone-200 bg-white">
-                <SelectValue placeholder="Select employee…" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">Select employee…</SelectItem>
-                {employees.map((e) => (
-                  <SelectItem key={e.id} value={e.id}>
-                    {employeeName(e)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+
+        {charge && (
+          <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm">
+            <div className="font-medium">{employeeName(charge.employee)}</div>
+            <div className="text-stone-500">
+              Amount:{" "}
+              <span className="font-mono font-medium text-stone-800">
+                {formatMoney(charge.amount)}
+              </span>
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label>Amount</Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={form.amount}
-              onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              required
-              className="h-9 rounded-lg border-stone-200"
-            />
-          </div>
+        )}
+
+        <form onSubmit={submit} className="space-y-4 py-2">
           <div className="space-y-2">
             <Label>Payroll Reference</Label>
             <Input
@@ -1273,10 +1364,11 @@ function DeductionFormModal({
               onChange={(e) =>
                 setForm({ ...form, payroll_reference: e.target.value })
               }
-              placeholder="PAY-2025-10"
+              placeholder="e.g. PAY-2025-10"
               className="h-9 rounded-lg border-stone-200"
             />
           </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>Period Start</Label>
@@ -1301,28 +1393,32 @@ function DeductionFormModal({
               />
             </div>
           </div>
+
           <div className="space-y-2">
             <Label>Notes</Label>
             <Textarea
               value={form.notes}
               onChange={(e) => setForm({ ...form, notes: e.target.value })}
               className="rounded-lg border-stone-200"
+              rows={3}
             />
           </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
+              disabled={isPending}
             >
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={saving}
+              disabled={isPending}
               className="bg-[#F36509] text-white hover:bg-[#d95a08]"
             >
-              {saving ? "Saving…" : "Save"}
+              {isPending ? "Processing…" : "Confirm Deduction"}
             </Button>
           </div>
         </form>

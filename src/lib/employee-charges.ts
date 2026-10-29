@@ -814,3 +814,269 @@ export async function saveEmployeeCreditAccount(
     return { success: false, error: zodErrorMessage(error) };
   }
 }
+
+// =============================================================================
+// Mark Charge as Paid
+// =============================================================================
+
+const markChargeAsPaidSchema = z.object({
+  id: uuidSchema,
+});
+
+export async function markChargeAsPaid(
+  input: z.input<typeof markChargeAsPaidSchema>,
+): Promise<ActionResult<EmployeeCharge>> {
+  try {
+    const validated = markChargeAsPaidSchema.parse(input);
+
+    const staff = await requireEmployeeCreditStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createOrderAdminClient();
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("employee_charges")
+      .select("id, status")
+      .eq("id", validated.id)
+      .maybeSingle();
+
+    if (fetchError) {
+      return { success: false, error: fetchError.message };
+    }
+    if (!existing) {
+      return { success: false, error: "Charge not found" };
+    }
+    if (existing.status !== "outstanding") {
+      return {
+        success: false,
+        error: `Charge is already ${existing.status}`,
+      };
+    }
+
+    const { data, error } = await supabase
+      .from("employee_charges")
+      .update({ status: "paid" })
+      .eq("id", validated.id)
+      .select(
+        `
+        id,
+        employee_id,
+        order_id,
+        amount,
+        status,
+        charged_by,
+        charged_at,
+        notes,
+        employee:employees (
+          id,
+          employee_code,
+          first_name,
+          last_name,
+          is_active,
+          created_at,
+          updated_at
+        )
+      `,
+      )
+      .maybeSingle();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    if (!data) {
+      return { success: false, error: "Charge not found" };
+    }
+
+    revalidateEmployeeCredit();
+
+    return {
+      success: true,
+      data: {
+        ...data,
+        amount: toNumber(data.amount),
+        employee: Array.isArray(data.employee)
+          ? (data.employee[0] ?? null)
+          : data.employee,
+      } as EmployeeCharge,
+    };
+  } catch (error) {
+    return { success: false, error: zodErrorMessage(error) };
+  }
+}
+
+// =============================================================================
+// Deduct Charge from Payroll (updates charge + creates deduction)
+// =============================================================================
+
+const deductChargeFromPayrollSchema = z.object({
+  id: uuidSchema,
+  payroll_reference: z.string().max(100).optional().nullable(),
+  payroll_period_start: z.string().optional().nullable(),
+  payroll_period_end: z.string().optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+});
+
+export async function deductChargeFromPayroll(
+  input: z.input<typeof deductChargeFromPayrollSchema>,
+): Promise<ActionResult<{ charge: EmployeeCharge; deduction: EmployeeSalaryDeduction }>> {
+  try {
+    const validated = deductChargeFromPayrollSchema.parse(input);
+
+    const staff = await requireEmployeeCreditStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createOrderAdminClient();
+
+    // 1. Load the charge
+    const { data: charge, error: chargeError } = await supabase
+      .from("employee_charges")
+      .select(
+        `
+        id,
+        employee_id,
+        order_id,
+        amount,
+        status,
+        charged_by,
+        charged_at,
+        notes,
+        employee:employees (
+          id,
+          employee_code,
+          first_name,
+          last_name,
+          is_active,
+          created_at,
+          updated_at
+        )
+      `,
+      )
+      .eq("id", validated.id)
+      .maybeSingle();
+
+    if (chargeError) {
+      return { success: false, error: chargeError.message };
+    }
+    if (!charge) {
+      return { success: false, error: "Charge not found" };
+    }
+    if (charge.status !== "outstanding") {
+      return {
+        success: false,
+        error: `Charge is already ${charge.status}`,
+      };
+    }
+
+    // 2. Update charge status → deducted
+    const { data: updatedCharge, error: updateError } = await supabase
+      .from("employee_charges")
+      .update({ status: "deducted" })
+      .eq("id", validated.id)
+      .select(
+        `
+        id,
+        employee_id,
+        order_id,
+        amount,
+        status,
+        charged_by,
+        charged_at,
+        notes,
+        employee:employees (
+          id,
+          employee_code,
+          first_name,
+          last_name,
+          is_active,
+          created_at,
+          updated_at
+        )
+      `,
+      )
+      .maybeSingle();
+
+    if (updateError) {
+      return { success: false, error: updateError.message };
+    }
+    if (!updatedCharge) {
+      return { success: false, error: "Failed to update charge" };
+    }
+
+    // 3. Create the salary deduction
+    const deductionNotes =
+      validated.notes?.trim() ||
+      `Auto-created from charge ${charge.id.slice(0, 8)}…`;
+
+    const { data: deduction, error: dedError } = await supabase
+      .from("employee_salary_deductions")
+      .insert({
+        employee_id: charge.employee_id,
+        amount: charge.amount,
+        payroll_reference: validated.payroll_reference ?? null,
+        payroll_period_start: validated.payroll_period_start ?? null,
+        payroll_period_end: validated.payroll_period_end ?? null,
+        notes: deductionNotes,
+      })
+      .select(
+        `
+        id,
+        employee_id,
+        amount,
+        payroll_reference,
+        payroll_period_start,
+        payroll_period_end,
+        recorded_by,
+        recorded_at,
+        notes,
+        employee:employees (
+          id,
+          employee_code,
+          first_name,
+          last_name,
+          is_active,
+          created_at,
+          updated_at
+        )
+      `,
+      )
+      .single();
+
+    if (dedError) {
+      // Best-effort rollback of the charge status
+      await supabase
+        .from("employee_charges")
+        .update({ status: "outstanding" })
+        .eq("id", validated.id);
+
+      return { success: false, error: dedError.message };
+    }
+
+    revalidateEmployeeCredit();
+
+    return {
+      success: true,
+      data: {
+        charge: {
+          ...updatedCharge,
+          amount: toNumber(updatedCharge.amount),
+          employee: Array.isArray(updatedCharge.employee)
+            ? (updatedCharge.employee[0] ?? null)
+            : updatedCharge.employee,
+        } as EmployeeCharge,
+        deduction: {
+          ...deduction,
+          amount: toNumber(deduction.amount),
+          employee: Array.isArray(deduction.employee)
+            ? (deduction.employee[0] ?? null)
+            : deduction.employee,
+        } as EmployeeSalaryDeduction,
+      },
+    };
+  } catch (error) {
+    return { success: false, error: zodErrorMessage(error) };
+  }
+}
