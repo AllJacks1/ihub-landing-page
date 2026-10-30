@@ -16,7 +16,10 @@ export type InventoryItem = {
   branch_id: string;
   branch_name: string | null;
   name: string;
-  sku: string | null;
+  price: number;
+  description: string | null;
+  area_id: string | null;
+  area_code: string | null;
   category: string;
   category_id: string | null;
   quantity: number;
@@ -150,7 +153,7 @@ export async function requireInventoryStaff(): Promise<
 // pos_inventory.branch_id -> pos_branches.id) into single
 // embedded objects.
 const INVENTORY_SELECT =
-  "id, branch_id, product_id, stock_quantity, reorder_level, updated_at, pos_products(id, name, sku, category_id, is_active, pos_categories(name)), pos_branches(name)";
+  "id, branch_id, product_id, stock_quantity, reorder_level, updated_at, pos_products(id, name, price, description, area_id, area_code, category_id, is_active, pos_categories(name)), pos_branches(name)";
 
 function toNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
@@ -168,7 +171,10 @@ function mapItemRow(row: Record<string, unknown>): InventoryItem {
     branch_id: String(row.branch_id ?? ""),
     branch_name: branch.name ? String(branch.name) : null,
     name: String(product.name ?? ""),
-    sku: product.sku ? String(product.sku) : null,
+    price: toNumber(product.price),
+    description: product.description ? String(product.description) : null,
+    area_id: product.area_id ? String(product.area_id) : null,
+    area_code: product.area_code ? String(product.area_code) : null,
     category: category.name ? String(category.name) : "",
     category_id: product.category_id ? String(product.category_id) : null,
     quantity: toNumber(row.stock_quantity),
@@ -194,6 +200,17 @@ function mapMovementRow(row: Record<string, unknown>): InventoryStockMovement {
 
 const createItemSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100),
+  price: z.coerce
+    .number({ error: "Price must be a number" })
+    .min(0, "Price cannot be negative")
+    .max(1_000_000, "Price is too large"),
+  description: z
+    .string()
+    .trim()
+    .max(500, "Description is too long")
+    .optional()
+    .or(z.literal("")),
+  area_code: z.string().trim().optional().or(z.literal("")),
   category_id: z.string().uuid("Select an existing category"),
   branch_id: z.string().uuid("Select a branch"),
   quantity: z.coerce
@@ -206,7 +223,6 @@ const createItemSchema = z.object({
     .int("Minimum stock must be a whole number")
     .min(0, "Minimum stock cannot be negative")
     .max(1_000_000, "Minimum stock is too large"),
-  area_id: z.string().uuid("Select an area"),
 });
 
 export async function getInventoryItems(): Promise<{
@@ -321,6 +337,9 @@ export async function getInventoryBranches(): Promise<{
 
 export async function createInventoryItem(input: {
   name: string;
+  price: number | string;
+  description?: string | null;
+  area_code?: string | null;
   category_id: string;
   branch_id: string;
   quantity: number | string;
@@ -340,6 +359,20 @@ export async function createInventoryItem(input: {
 
     const supabase = createInventoryAdminClient();
 
+    let areaId: string | null = null;
+    const areaCode = validated.area_code?.trim() || null;
+    if (areaCode) {
+      const { data: area, error: areaError } = await supabase
+        .from("pos_areas")
+        .select("id")
+        .eq("code", areaCode)
+        .maybeSingle();
+      if (areaError || !area) {
+        return { success: false, error: "Select a valid area" };
+      }
+      areaId = String(area.id);
+    }
+
     // Stock is tracked per branch, so a product is created first
     // and then linked to the selected branch with its opening
     // quantity and reorder level.
@@ -347,8 +380,11 @@ export async function createInventoryItem(input: {
       .from("pos_products")
       .insert({
         name: validated.name,
+        price: validated.price,
+        description: validated.description || null,
         category_id: validated.category_id,
-        area_id: validated.area_id,
+        area_id: areaId,
+        area_code: areaCode,
         is_active: true,
       })
       .select("id")
@@ -395,6 +431,13 @@ const updateItemSchema = z.object({
   id: z.string().uuid(),
   name: z.string().trim().min(1, "Name is required").max(100),
   category_id: z.string().uuid("Select an existing category"),
+  description: z
+    .string()
+    .trim()
+    .max(500, "Description is too long")
+    .optional()
+    .or(z.literal("")),
+  area_code: z.string().trim().optional().or(z.literal("")),
   min_stock: z.coerce
     .number({ error: "Minimum stock must be a number" })
     .int("Minimum stock must be a whole number")
@@ -406,6 +449,8 @@ export async function updateInventoryItem(input: {
   id: string;
   name: string;
   category_id: string;
+  description?: string | null;
+  area_code?: string | null;
   min_stock: number | string;
 }): Promise<{
   success: boolean;
@@ -437,11 +482,30 @@ export async function updateInventoryItem(input: {
       };
     }
 
+    let areaId: string | null = null;
+    const areaCode = validated.area_code?.trim() || null;
+    if (areaCode) {
+      const { data: area, error: areaError } = await supabase
+        .from("pos_areas")
+        .select("id")
+        .eq("code", areaCode)
+        .maybeSingle();
+      if (areaError || !area) {
+        return { success: false, error: "Select a valid area" };
+      }
+      areaId = String(area.id);
+    } else {
+      areaId = null;
+    }
+
     const { error: productError } = await supabase
       .from("pos_products")
       .update({
         name: validated.name,
         category_id: validated.category_id,
+        description: validated.description || null,
+        area_id: areaId,
+        area_code: areaCode,
         updated_at: new Date().toISOString(),
       })
       .eq("id", stockRow.product_id);

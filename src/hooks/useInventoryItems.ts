@@ -102,12 +102,11 @@ export function useInventoryItems() {
 
       if (!query) return true;
 
-      return (
-        item.name.toLowerCase().includes(query) ||
-        item.category.toLowerCase().includes(query) ||
-        (item.sku ?? "").toLowerCase().includes(query) ||
-        (item.branch_name ?? "").toLowerCase().includes(query)
-      );
+       return (
+         item.name.toLowerCase().includes(query) ||
+         item.category.toLowerCase().includes(query) ||
+         (item.branch_name ?? "").toLowerCase().includes(query)
+       );
     });
   }, [items, search, categoryFilter, branchFilter]);
 
@@ -138,6 +137,9 @@ export function useInventoryItems() {
 
   const handleSaveItem = async (values: {
     name: string;
+    price: number | string;
+    description: string;
+    area_code: string;
     category_id: string;
     branch_id: string;
     quantity: number | string;
@@ -146,12 +148,14 @@ export function useInventoryItems() {
     setIsSubmitting(true);
     try {
       if (editingItem) {
-        const result = await updateInventoryItem({
-          id: editingItem.id,
-          name: values.name,
-          category_id: values.category_id,
-          min_stock: values.min_stock,
-        });
+         const result = await updateInventoryItem({
+           id: editingItem.id,
+           name: values.name,
+           category_id: values.category_id,
+           description: values.description,
+           area_code: values.area_code,
+           min_stock: values.min_stock,
+         });
 
         if (result.success) {
           toast.success("Item updated");
