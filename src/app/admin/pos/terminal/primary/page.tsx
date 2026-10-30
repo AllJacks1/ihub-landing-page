@@ -475,7 +475,8 @@ export default function PrimaryTerminalPage() {
     return cart.reduce((total, item) => total + item.quantity, 0);
   }, [cart]);
 
-  function addToCart(product: PosProduct) {
+   function addToCart(product: PosProduct) {
+     if ((product.stock_quantity ?? 0) <= 0) return;
     setCart((currentCart) => {
       const existing = currentCart.find((item) => item.id === product.id);
 
@@ -1304,12 +1305,16 @@ export default function PrimaryTerminalPage() {
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 min-[110rem]:grid-cols-6 min-[130rem]:grid-cols-8">
                   {filteredProducts.map((product) => (
-                    <button
-                      key={product.id}
-                      type="button"
-                      onClick={() => addToCart(product)}
-                      className="group text-left"
-                    >
+                     <button
+                       key={product.id}
+                       type="button"
+                       onClick={() => {
+                         if ((product.stock_quantity ?? 0) <= 0) return;
+                         addToCart(product);
+                       }}
+                       disabled={(product.stock_quantity ?? 0) <= 0}
+                       className="group text-left disabled:cursor-not-allowed disabled:opacity-60"
+                     >
                       <Card className="h-full border-stone-200 bg-white transition-all group-hover:-translate-y-0.5 group-hover:border-[#F36509]/40 group-hover:shadow-sm">
                         <CardContent className="p-3 sm:p-4">
                           <div className="relative flex h-20 items-center justify-center overflow-hidden rounded-xl bg-stone-100 sm:h-24 lg:h-28">
@@ -1338,9 +1343,14 @@ export default function PrimaryTerminalPage() {
                               <Plus className="h-4 w-4 shrink-0 text-stone-300 transition-colors group-hover:text-[#F36509]" />
                             </div>
 
-                            <p className="mt-2 text-sm font-semibold text-[#F36509] sm:text-base">
-                              {formatCurrency(product.price)}
-                            </p>
+                             <p className="mt-2 text-sm font-semibold text-[#F36509] sm:text-base">
+                               {formatCurrency(product.price)}
+                             </p>
+                             <p className="mt-1 text-xs font-medium text-stone-500">
+                               {(product.stock_quantity ?? 0) > 0
+                                 ? `${product.stock_quantity} available`
+                                 : "Out of Stock"}
+                             </p>
                           </div>
                         </CardContent>
                       </Card>
