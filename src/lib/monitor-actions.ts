@@ -93,6 +93,55 @@ function classifyItemForStation(
   return { eligible: false, areaCode: null, areaName: null };
 }
 
+function extractLocationFromSession(session: any): string | null {
+  if (!session) return null;
+
+  const normalize = (val: any): any => {
+    if (Array.isArray(val)) {
+      return val.length > 0 ? val[0] : null;
+    }
+    return val ?? null;
+  };
+
+  const tables = normalize(session.tables); 
+  const rooms = normalize(session.rooms);
+  const cubicles = normalize(session.cubicles);
+
+  // Check nested tables first (object or array)
+  const tableNumber = tables?.table_number ?? tables?.number ?? tables?.name ?? session.table_number ?? session.tableNumber;
+  if (tableNumber !== undefined && tableNumber !== null && tableNumber !== "") {
+    const tableStr = String(tableNumber).trim();
+    if (tableStr !== "") {
+      // Format clearly as Table N if it looks like a number
+      if (/^\d+$/.test(tableStr)) {
+        return `Table ${tableStr}`;
+      }
+      // If it doesn't start with "Table", add prefix if it's numeric-like or just return as-is
+      if (!/^table\s+/i.test(tableStr)) {
+        // Try to detect if it's just a number
+        if (/^\d+$/.test(tableStr.replace(/\s+/g, ""))) {
+          return `Table ${tableStr.replace(/\s+/g, "")}`;
+        }
+      }
+      return tableStr;
+    }
+  }
+
+  const roomName = rooms?.name ?? rooms?.room_name ?? session.room_name ?? session.rooms?.name;
+  if (roomName !== undefined && roomName !== null && roomName !== "") {
+    const roomStr = String(roomName).trim();
+    if (roomStr !== "") return roomStr;
+  }
+
+  const cubicleName = cubicles?.name ?? cubicles?.cubicle_name ?? session.cubicle_name ?? session.cubicles?.name;
+  if (cubicleName !== undefined && cubicleName !== null && cubicleName !== "") {
+    const cubicleStr = String(cubicleName).trim();
+    if (cubicleStr !== "") return cubicleStr;
+  }
+
+  return null;
+}
+
 export async function getMonitorData(
   station: "kitchen" | "bar"
 ): Promise<{ success: boolean; data?: MonitorData; error?: string }> {
@@ -124,9 +173,12 @@ export async function getMonitorData(
         pos_sessions (
           id,
           is_active,
-          tables ( table_number ),
-          rooms ( name ),
-          cubicles ( name )
+          table_id,
+          room_id,
+          cubicle_id,
+          tables:table_id ( table_number ),
+          rooms:room_id ( name ),
+          cubicles:cubicle_id ( name )
         ),
         pos_order_items (
           id,
@@ -164,8 +216,32 @@ export async function getMonitorData(
     const unassignedItems: MonitorItem[] = [];
 
     for (const o of orders || []) {
-      const session = (o as any).pos_sessions;
-      if (session && session.is_active === false) continue;
+      const rawSession = (o as any).pos_sessions;
+      let session = Array.isArray(rawSession) ? rawSession[0] ?? null : rawSession;
+      const deptStatus = (o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"];
+      const source = (o as any).order_source ?? "pos";
+      // Fallback: fetch session by id if not embedded.
+      if (source === "qr" && !session && (o as any).session_id) {
+        const { data: fetched } = await supabase
+          .from("pos_sessions")
+          .select("id, is_active, expires_at, table_id, room_id, cubicle_id, tables:table_id ( table_number ), rooms:room_id ( name ), cubicles:cubicle_id ( name )")
+          .eq("id", (o as any).session_id)
+          .maybeSingle();
+        if (fetched) session = fetched;
+      }
+      // Hide QR orders whose session is expired or manually deactivated.
+      if (source === "qr" && session) {
+        const isExpired = session.expires_at && new Date(session.expires_at) <= new Date();
+        const isDeactivated = session.is_active === false;
+        if (isExpired || isDeactivated) continue;
+      }
+      // Hide QR orders with no resolvable session only if the order is at least 24 hours old.
+      if (source === "qr" && !session) {
+        const ageMs = Date.now() - new Date((o as any).created_at).getTime();
+        if (Number.isNaN(ageMs) || ageMs >= 24 * 60 * 60 * 1000) continue;
+      }
+      // Preserve served-order filtering.
+      if (deptStatus === "served") continue;
       const itemsRaw = (o as any).pos_order_items || [];
       for (const it of itemsRaw) {
         const classification = classifyItemForStation(it.area_id, areaIdToCode, station);
@@ -183,7 +259,7 @@ export async function getMonitorData(
             orderNumber: (o as any).order_number ?? "",
             orderTime: it.created_at || (o as any).created_at,
             orderSource: (o as any).order_source ?? "pos",
-            location: session?.tables?.table_number ?? session?.rooms?.name ?? session?.cubicles?.name ?? null,
+            location: session ? extractLocationFromSession(session) : ((o as any).order_source === "pos" ? "Walk-in" : "Unavailable"),
             productName: it.product_name,
             quantity: it.quantity,
             unitPrice: it.unit_price,
@@ -192,14 +268,14 @@ export async function getMonitorData(
             areaName: classification.areaName,
             preparationStatus: mappedStatus.value,
             preparationLabel: mappedStatus.label,
-            departmentStatus: ((o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"] ?? "order_placed") as DepartmentStatus,
+            departmentStatus: ((o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"] ?? null) as DepartmentStatus | null,
             specialInstructions: null,
             elapsedSeconds: elapsed,
             isNew: elapsed < 60,
           });
           continue;
         }
-
+     
         const mappedStatus = mapPreparationStatus(undefined);
         const elapsed = it.created_at ? elapsedSecondsSince(it.created_at) : 0;
         const monitorItem: MonitorItem = {
@@ -208,7 +284,7 @@ export async function getMonitorData(
           orderNumber: (o as any).order_number ?? "",
           orderTime: it.created_at || (o as any).created_at,
           orderSource: (o as any).order_source ?? "pos",
-          location: session?.table_number ?? session?.room_name ?? session?.cubicle_name ?? null,
+          location: session ? extractLocationFromSession(session) : ((o as any).order_source === "pos" ? "Walk-in" : "Unavailable"),
           productName: it.product_name,
           quantity: it.quantity,
           unitPrice: it.unit_price,
@@ -217,7 +293,7 @@ export async function getMonitorData(
           areaName: classification.areaName,
           preparationStatus: mappedStatus.value,
           preparationLabel: mappedStatus.label,
-            departmentStatus: ((o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"] ?? "order_placed") as DepartmentStatus,
+            departmentStatus: ((o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"] ?? null) as DepartmentStatus | null,
           specialInstructions: null,
           elapsedSeconds: elapsed,
           isNew: elapsed < 60,
@@ -229,7 +305,7 @@ export async function getMonitorData(
             orderNumber: (o as any).order_number ?? "",
             orderTime: it.created_at || (o as any).created_at,
             orderSource: (o as any).order_source ?? "pos",
-            location: session?.table_number ?? session?.room_name ?? session?.cubicle_name ?? null,
+            location: session ? extractLocationFromSession(session) : ((o as any).order_source === "pos" ? "Walk-in" : "Unavailable"),
             status: (o as any).status ?? "open",
             items: [],
           });
@@ -375,14 +451,39 @@ export async function updateDepartmentStatus(input: { orderId: string; station: 
     const user = await requireRole(input.station === "kitchen" ? ["management", "partner"] : ["management", "crew"]);
     if (!user) return { success: false, error: "Unauthorized" };
     const supabase = await currentSupabaseAdmin();
+    if (process.env.NODE_ENV === "development") {
+      console.log("[monitor] RPC call", { orderId: input.orderId, department: input.station, newStatus: input.newStatus });
+    }
     const { data, error } = await supabase.rpc("update_order_department_status", {
       p_order_id: input.orderId,
       p_department: input.station,
       p_new_status: input.newStatus,
     });
-    if (error) return { success: false, error: error.message };
+    if (error) {
+      if (/invalid transition/i.test(error.message)) {
+        const { data: current } = await supabase
+          .from("pos_orders")
+          .select(input.station === "kitchen" ? "kitchen_status" : "bar_status")
+          .eq("id", input.orderId)
+          .single();
+        const currentStatus = current ? (current as any)[input.station === "kitchen" ? "kitchen_status" : "bar_status"] : null;
+        if (currentStatus === input.newStatus) {
+          return { success: true, data: current };
+        }
+      }
+      if (process.env.NODE_ENV === "development") {
+        console.log("[monitor] RPC error", { orderId: input.orderId, department: input.station, newStatus: input.newStatus, error: error.message });
+      }
+      return { success: false, error: error.message };
+    }
+    if (process.env.NODE_ENV === "development") {
+      console.log("[monitor] RPC success", { orderId: input.orderId, department: input.station, newStatus: input.newStatus });
+    }
     return { success: true, data };
   } catch (err) {
+    if (process.env.NODE_ENV === "development") {
+      console.log("[monitor] RPC exception", { orderId: input.orderId, department: input.station, newStatus: input.newStatus, err: err instanceof Error ? err.message : err });
+    }
     return { success: false, error: err instanceof Error ? err.message : "Failed" };
   }
 }

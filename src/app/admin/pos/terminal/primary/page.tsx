@@ -49,6 +49,8 @@ import {
   completeOrder,
   cancelOrder,
   createQrOrder,
+  getOpenOrders,
+  getPosOrder,
 } from "@/lib/order-actions";
 import {
   createCrmUser,
@@ -123,6 +125,13 @@ export default function PrimaryTerminalPage() {
   type PaymentMethod = "cash" | "card" | "gcash" | "maya" | "employee_charge";
 
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  // Preserved for the same unresolved payment attempt across dialog open/close.
+  // Not persisted to browser storage; a full page refresh loses it and a new key
+  // is generated, so refresh recovery is NOT solved.
+  const [paymentIdempotencyKey, setPaymentIdempotencyKey] = useState<string | null>(null);
+  // Tracks an order whose payment succeeded but completion did not, so completion
+  // can be retried without recording another payment.
+  const [pendingCompletionOrderId, setPendingCompletionOrderId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [amountTendered, setAmountTendered] = useState("");
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
@@ -380,6 +389,32 @@ export default function PrimaryTerminalPage() {
         });
 
         await loadActiveSessions();
+
+        // Durable recovery: find paid-but-incomplete open orders.
+        try {
+          const openRes = await getOpenOrders(branch.id);
+          if (openRes.success) {
+            const candidates: string[] = [];
+            for (const o of openRes.data) {
+              if (o.status === "completed" || o.status === "cancelled") continue;
+              const full = await getPosOrder(o.id);
+              if (!full.success || !full.data) continue;
+              const hasCompletedPayment = (full.data.payments ?? []).some(
+                (p: { status?: string }) => p.status === "completed",
+              );
+              if (hasCompletedPayment) {
+                candidates.push(o.id);
+              }
+            }
+            if (candidates.length === 1) {
+              setPendingCompletionOrderId(candidates[0]);
+              setShowPaymentDialog(true);
+              toast.message("Recovered a paid order awaiting completion.");
+            }
+          }
+        } catch {
+          // best-effort recovery
+        }
       } catch (e) {
         console.error(e);
         if (!cancelled) {
@@ -684,11 +719,43 @@ export default function PrimaryTerminalPage() {
       email: "",
     });
     setIsIaccessMemberFlag(false);
+    // Keep an existing unresolved attempt key; only mint a new key when none exists.
+    if (!paymentIdempotencyKey) {
+      setPaymentIdempotencyKey(
+        crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+    }
     setShowPaymentDialog(true);
   }
 
   async function handleConfirmPayment() {
-    if (!canConfirmPayment || !branchId || !terminalId || !shiftId) return;
+    if (!branchId || !terminalId || !shiftId) return;
+    if (!pendingCompletionOrderId && !canConfirmPayment) return;
+
+    // Retry completion for an already-paid order without recording another payment.
+    if (pendingCompletionOrderId) {
+      setIsProcessingPayment(true);
+      try {
+        const completeResult = await completeOrder(pendingCompletionOrderId);
+        if (!completeResult.success) {
+          toast.error(completeResult.error ?? "Payment saved but order could not be completed");
+          return;
+        }
+        toast.success("Order completed");
+        clearCart();
+        setShowPaymentDialog(false);
+        setAmountTendered("");
+        setPendingCompletionOrderId(null);
+        setPaymentIdempotencyKey(null);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Order completion failed");
+      } finally {
+        setIsProcessingPayment(false);
+      }
+      return;
+    }
 
     setIsProcessingPayment(true);
     let orderId: string | null = null;
@@ -731,21 +798,55 @@ export default function PrimaryTerminalPage() {
         return;
       }
 
-      const received =
-        paymentMethod === "cash"
-          ? parseFloat(amountTendered) || amountDue
-          : amountDue;
+      const existingOrder = await getPosOrder(orderId);
+      if (!existingOrder.success || !existingOrder.data) {
+        toast.error("Could not verify existing payment; please retry.");
+        return;
+      }
+      const payments = existingOrder.data.payments ?? [];
+      const hasCompletedPayment = payments.some(
+        (p: { status?: string }) => p.status === "completed",
+      );
+      const hasNonCompletedPayment = payments.some(
+        (p: { status?: string }) => p.status !== "completed",
+      );
+      let payResult: { success: boolean; error?: string; duplicate?: boolean } = {
+        success: false,
+      };
+      if (hasCompletedPayment) {
+        payResult = { success: true, duplicate: true };
+        toast.message("Payment already recorded; completing order.");
+      } else if (hasNonCompletedPayment) {
+        toast.error("Payment is not confirmed. Reconciliation required before retry.");
+        return;
+      } else {
+        const received =
+          paymentMethod === "cash"
+            ? parseFloat(amountTendered) || amountDue
+            : amountDue;
 
-      const payResult = await recordPayment({
-        order_id: orderId,
-        payment_method: paymentMethod,
-        amount: amountDue,
-        received_amount: received,
-      });
+        payResult = await recordPayment({
+          order_id: orderId,
+          payment_method: paymentMethod,
+          amount: amountDue,
+          received_amount: received,
+          idempotencyKey: paymentIdempotencyKey || undefined,
+        });
+      }
 
       if (!payResult.success) {
-        toast.error(payResult.error ?? "Payment failed");
-        return; // items + open order remain; operator can complete later
+        // Ambiguous/timeout outcomes are reported as unknown, not proof of failure.
+        toast.error(
+          payResult.error ??
+            "Payment outcome unknown. Retry will reuse the same idempotency key.",
+        );
+        return; // items + open order remain; operator can retry safely
+      }
+
+      // A duplicate response means the RPC already recorded this payment; do not
+      // insert another. The RPC returns the existing payment for reconciliation.
+      if (payResult.duplicate) {
+        toast.message("Payment already recorded; completing order.");
       }
 
       if (
@@ -771,18 +872,21 @@ export default function PrimaryTerminalPage() {
       }
 
       const completeResult = await completeOrder(orderId);
-      if (!completeResult.success) {
+      const alreadyCompleted = !completeResult.success && /already completed/i.test(completeResult.error ?? "");
+      if (!completeResult.success && !alreadyCompleted) {
         toast.error(
           completeResult.error ??
-            "Payment saved but order could not be completed",
+            "Payment saved but order could not be completed. Retry completion without re-paying.",
         );
-      } else {
+        setPendingCompletionOrderId(orderId);
+        return;
+      }
         toast.success(
           paymentMethod === "cash" && changeDue > 0
             ? `Paid · Change ${formatCurrency(changeDue)}`
             : "Payment successful",
         );
-      }
+        // removed stray brace
 
       if (isIaccessMemberFlag && selectedCustomerId && amountDue > 0) {
         const orderNumber = orderResult.data?.order_number ?? orderId;
@@ -809,10 +913,12 @@ export default function PrimaryTerminalPage() {
       clearCart();
       setShowPaymentDialog(false);
       setAmountTendered("");
+      setPendingCompletionOrderId(null);
+      setPaymentIdempotencyKey(null);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Payment failed");
+      toast.error(e instanceof Error ? e.message : "Payment outcome unknown; retry will reuse the same key");
       if (orderId) {
-        // optional: cancelOrder(orderId)
+        // Leave order/payment state untouched for reconciliation; do not cancel automatically.
       }
     } finally {
       setIsProcessingPayment(false);
@@ -1431,7 +1537,13 @@ export default function PrimaryTerminalPage() {
         </aside>
       </div>
 
-      <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
+      <Dialog
+        open={showPaymentDialog}
+        onOpenChange={(open) => {
+          if (!open && isProcessingPayment) return;
+          setShowPaymentDialog(open);
+        }}
+      >
         <DialogContent className="w-[calc(100vw-2rem)] rounded-2xl sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="font-serif text-xl">
@@ -1958,6 +2070,17 @@ export default function PrimaryTerminalPage() {
           </div>
 
           <DialogFooter className="flex-col gap-2 sm:flex-row">
+            {pendingCompletionOrderId && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isProcessingPayment}
+                onClick={handleConfirmPayment}
+                className="border-amber-300 text-amber-700"
+              >
+                Retry complete order
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"

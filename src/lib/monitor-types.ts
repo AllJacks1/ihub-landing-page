@@ -30,7 +30,7 @@ export interface MonitorItem {
   orderTime: string;
   orderSource: string;
   location: string | null;
-  departmentStatus: DepartmentStatus;
+  departmentStatus: DepartmentStatus | null;
   productName: string;
   quantity: number;
   unitPrice: number;

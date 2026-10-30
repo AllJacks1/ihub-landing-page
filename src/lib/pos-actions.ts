@@ -568,7 +568,7 @@ export async function createPosSession(input: {
     }
 
     const qr_token = generateQrToken();
-    const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours from creation
 
     const { data, error } = await supabase
       .from("pos_sessions")
@@ -576,7 +576,7 @@ export async function createPosSession(input: {
         table_id: locationType === "table" ? locationId : null,
         room_id: locationType === "room" ? locationId : null,
         cubicle_id: locationType === "cubicle" ? locationId : null,
-        branch_id: validated.branch_id, // ← add
+        branch_id: validated.branch_id,
         qr_token,
         expires_at,
         is_active: true,

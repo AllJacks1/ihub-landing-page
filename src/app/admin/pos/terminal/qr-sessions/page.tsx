@@ -12,8 +12,15 @@ function getSessionStatusBadge(status: string) {
       </span>
     );
   }
+  if (status === "deactivated") {
+    return (
+      <span className="inline-flex items-center rounded-full border border-stone-200 bg-stone-50 px-2 py-0.5 text-xs font-medium text-stone-600">
+        Deactivated
+      </span>
+    );
+  }
   return (
-    <span className="inline-flex items-center rounded-full border border-stone-200 bg-stone-50 px-2 py-0.5 text-xs font-medium text-stone-500">
+    <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
       Expired
     </span>
   );

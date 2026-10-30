@@ -290,7 +290,10 @@ export function useQrSessions() {
   }
 
   function getSessionStatus(session: PosSession) {
-    return session.is_active && new Date(session.expires_at) > new Date()
+    if (!session.is_active) {
+      return "deactivated";
+    }
+    return new Date(session.expires_at) > new Date()
       ? "active"
       : "expired";
   }

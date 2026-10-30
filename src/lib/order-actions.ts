@@ -952,6 +952,24 @@ export async function createPosOrder(
     const supabase = createOrderAdminClient();
     const orderNumber = generateOrderNumber();
 
+    // Validate QR session if one is supplied (manual deactivation takes precedence).
+    if (validated.session_id) {
+      const { data: session, error: sessionError } = await supabase
+        .from("pos_sessions")
+        .select("id, is_active, expires_at")
+        .eq("id", validated.session_id)
+        .maybeSingle();
+      if (sessionError || !session) {
+        return { success: false, error: "Invalid QR session" };
+      }
+      if (!session.is_active) {
+        return { success: false, error: "QR session is inactive" };
+      }
+      if (session.expires_at && new Date(session.expires_at) <= new Date()) {
+        return { success: false, error: "QR session has expired" };
+      }
+    }
+
     const { data, error } = await supabase
       .from("pos_orders")
       .insert({
@@ -1513,6 +1531,18 @@ export async function completeOrder(orderId: string): Promise<{
 
     if (order.branch_id && items && items.length > 0) {
       for (const item of items) {
+        // Idempotency guard: skip inventory deduction if a sale movement already
+        // exists for this order/product (survives retries/server restarts).
+        const { data: existingMovement } = await supabase
+          .from("pos_inventory_movements")
+          .select("id")
+          .eq("reference_id", orderId)
+          .eq("product_id", item.product_id)
+          .eq("movement_type", "sale")
+          .limit(1)
+          .maybeSingle();
+        if (existingMovement) continue;
+
         const result = await deductInventory(
           supabase,
           order.branch_id,
@@ -1591,11 +1621,12 @@ export async function cancelOrder(
 // =============================================================================
 
 export async function recordPayment(
-  input: z.infer<typeof paymentSchema>,
+  input: z.infer<typeof paymentSchema> & { idempotencyKey?: string },
 ): Promise<{
   success: boolean;
   data?: PosPayment;
   error?: string;
+  duplicate?: boolean;
 }> {
   try {
     const validated = paymentSchema.parse(input);
@@ -1604,40 +1635,44 @@ export async function recordPayment(
 
     const supabase = createOrderAdminClient();
 
-    const { data: order } = await supabase
-      .from("pos_orders")
-      .select("id, status")
-      .eq("id", validated.order_id)
-      .single();
-
-    if (!order) return { success: false, error: "Order not found" };
-    if (order.status === "cancelled") {
-      return {
-        success: false,
-        error: "Cannot take payment on a cancelled order",
-      };
+    // Management-only authorization.
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("auth_user_id", staff.user.id)
+      .maybeSingle();
+    if (profileError || !profile || profile.role !== "management") {
+      return { success: false, error: "Unauthorized" };
     }
 
-    const received = validated.received_amount ?? validated.amount;
-    const change = Math.max(0, received - validated.amount);
+    // Validate idempotency key using the existing Zod approach.
+    const idempotencyKeySchema = z.string().uuid().optional().nullable();
+    const parsedKey = idempotencyKeySchema.safeParse(input.idempotencyKey ?? null);
+    if (!parsedKey.success) {
+      return { success: false, error: "Invalid idempotency key" };
+    }
+    const idempotencyKey = parsedKey.data ?? null;
 
-    const { data, error } = await supabase
-      .from("pos_payments")
-      .insert({
-        order_id: validated.order_id,
-        payment_method: validated.payment_method,
-        amount: validated.amount,
-        received_amount: received,
-        change_amount: change,
-        reference_number: validated.reference_number ?? null,
-        status: "completed",
-      })
-      .select("*")
-      .single();
+    const { data, error } = await supabase.rpc("rpc_record_payment_and_start_session_timer", {
+      p_order_id: validated.order_id,
+      p_payment_method: validated.payment_method,
+      p_amount: validated.amount,
+      p_received_amount: validated.received_amount ?? validated.amount,
+      p_change_amount: Math.max(0, (validated.received_amount ?? validated.amount) - validated.amount),
+      p_reference_number: validated.reference_number ?? null,
+      p_idempotency_key: idempotencyKey,
+      p_staff_user_id: staff.user.id,
+    });
 
-    if (error) return { success: false, error: error.message };
+    if (error) {
+      return { success: false, error: error.message };
+    }
 
-    return { success: true, data: mapPosPayment(data) };
+    if (data?.success) {
+      return { success: true, data: mapPosPayment(data.payment), duplicate: data.duplicate };
+    }
+
+    return { success: false, error: "Payment failed" };
   } catch (error) {
     return { success: false, error: zodErrorMessage(error) };
   }
