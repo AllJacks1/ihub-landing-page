@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { updateDepartmentStatus } from "@/lib/monitor-actions";
 import { type MonitorCard, type DepartmentStatus } from "@/lib/monitor-types";
-import { Clock, CheckCircle2, ChefHat, Coffee, AlertCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Clock } from "lucide-react";
 
 interface MonitorCardProps {
   card: MonitorCard;
@@ -26,32 +27,109 @@ function formatElapsed(seconds: number): number {
 }
 
 export default function MonitorCardComponent({ card, station }: MonitorCardProps) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState<DepartmentStatus>(card.items[0]?.departmentStatus ?? "order_placed");
+  const initialStatus = card.items[0]?.departmentStatus ?? null;
+  const [status, setStatus] = useState<DepartmentStatus | null>(initialStatus);
   const [elapsed, setElapsed] = useState(card.items[0]?.elapsedSeconds || 0);
   const [error, setError] = useState<string | null>(null);
+
+  const orderIdRef = useRef(card.items[0]?.orderId ?? card.orderId);
+  const currentOrderIdRef = useRef(card.items[0]?.orderId ?? card.orderId);
+  const lastSentRef = useRef<DepartmentStatus | null>(initialStatus);
+  const updatingRef = useRef(false);
+  const lastAppliedRef = useRef<DepartmentStatus | null>(initialStatus);
+
+  // Keep latest rendered order id updated every render (in effect, not during render)
+  useEffect(() => {
+    currentOrderIdRef.current = card.items[0]?.orderId ?? card.orderId;
+  });
 
   useEffect(() => {
     const interval = setInterval(() => setElapsed((e: number) => e + 1), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const config = statusConfig[status];
-  const canUpdate = status !== "served" && !!config.next;
+  const isUninitialized = status === null;
+  const effectiveStatus: DepartmentStatus = isUninitialized ? "order_placed" : (status as DepartmentStatus);
+  const config = statusConfig[effectiveStatus];
+  const canUpdate = isUninitialized
+    ? true // NULL -> order_placed
+    : (status !== "served" && !!config.next);
 
   const handleUpdate = () => {
-    if (!canUpdate || !config.next) return;
+    if (!canUpdate || isPending || updatingRef.current) return;
     setError(null);
+    const requestOrderId = card.items[0]?.orderId ?? card.orderId;
+    const toSend: DepartmentStatus = isUninitialized ? "order_placed" : (config.next as DepartmentStatus);
+    updatingRef.current = true;
+    const previousStatus = status;
+    setStatus(toSend);
     startTransition(async () => {
-      const result = await updateDepartmentStatus({
-        orderId: card.items[0]?.orderId ?? card.orderId,
-        station,
-        newStatus: config.next as any,
-      });
-      if (result.success) setStatus(config.next!);
-      else setError(result.error || "Failed to update status");
+      try {
+        const result = await updateDepartmentStatus({
+          orderId: requestOrderId,
+          station,
+          newStatus: toSend,
+        });
+
+        // Ignore response if order changed (check against latest rendered order id)
+        const currentOrderIdNow = card.items[0]?.orderId ?? card.orderId;
+        if (requestOrderId !== currentOrderIdNow || requestOrderId !== currentOrderIdRef.current) {
+          return;
+        }
+
+        if (result.success) {
+          lastSentRef.current = toSend;
+          lastAppliedRef.current = toSend;
+          setError(null);
+          router.refresh();
+        } else {
+          setStatus(previousStatus);
+          const currentOrderIdNow = card.items[0]?.orderId ?? card.orderId;
+          if (requestOrderId === currentOrderIdNow && requestOrderId === currentOrderIdRef.current) {
+            setError(result.error || "Failed to update status");
+          }
+        }
+        // Do not update status on failure
+      } catch (err) {
+        setStatus(previousStatus);
+        const currentOrderIdNow = card.items[0]?.orderId ?? card.orderId;
+        if (requestOrderId === currentOrderIdNow && requestOrderId === currentOrderIdRef.current) {
+          setError(err instanceof Error ? err.message : "Failed to update status");
+        }
+        // Otherwise ignore thrown error for a different order
+      } finally {
+        updatingRef.current = false;
+      }
     });
   };
+
+  useEffect(() => {
+    const propStatus = card.items[0]?.departmentStatus ?? null;
+    const currentOrderId = card.items[0]?.orderId ?? card.orderId;
+
+    // Order identity changed -> reset from server props
+    if (currentOrderId !== orderIdRef.current) {
+      orderIdRef.current = currentOrderId;
+      currentOrderIdRef.current = currentOrderId;
+      lastSentRef.current = propStatus;
+      lastAppliedRef.current = propStatus;
+      // Defer to avoid synchronous setState in effect
+      queueMicrotask(() => {
+        setStatus(propStatus);
+        setError(null);
+      });
+      return;
+    }
+
+    // Do not overwrite local state while a request is in-flight
+    if (isPending || updatingRef.current) {
+      return;
+    }
+
+    // Do not overwrite local status from possibly stale props; parent refresh resets component.
+  }, [card.items, card.orderId, isPending, status]);
 
   return (
     <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
@@ -87,7 +165,7 @@ export default function MonitorCardComponent({ card, station }: MonitorCardProps
           disabled={isPending}
           className="mt-3 w-full rounded-lg bg-[#F36509] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#d95a08] disabled:opacity-50"
         >
-          {isPending ? "Updating..." : config.actionLabel}
+          {isPending ? "Processing..." : config.actionLabel}
         </button>
       )}
       {error && <p className="mt-2 text-center text-xs text-red-600">{error}</p>}
@@ -95,3 +173,4 @@ export default function MonitorCardComponent({ card, station }: MonitorCardProps
 
   );
 }
+
