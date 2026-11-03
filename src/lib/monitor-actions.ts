@@ -170,16 +170,17 @@ export async function getMonitorData(
         kitchen_status,
         bar_status,
         session_id,
-        pos_sessions (
-          id,
-          is_active,
-          table_id,
-          room_id,
-          cubicle_id,
-          tables:table_id ( table_number ),
-          rooms:room_id ( name ),
-          cubicles:cubicle_id ( name )
-        ),
+          pos_sessions (
+           id,
+           is_active,
+           expires_at,
+           table_id,
+           room_id,
+           cubicle_id,
+           tables:table_id ( table_number ),
+           rooms:room_id ( name ),
+           cubicles:cubicle_id ( name )
+         ),
         pos_order_items (
           id,
           order_id,
@@ -229,8 +230,8 @@ export async function getMonitorData(
           .maybeSingle();
         if (fetched) session = fetched;
       }
-      // Hide QR orders whose session is expired or manually deactivated.
-      if (source === "qr" && session) {
+      // Hide orders whose associated session is expired or manually deactivated.
+      if (session) {
         const isExpired = session.expires_at && new Date(session.expires_at) <= new Date();
         const isDeactivated = session.is_active === false;
         if (isExpired || isDeactivated) continue;
@@ -239,6 +240,14 @@ export async function getMonitorData(
       if (source === "qr" && !session) {
         const ageMs = Date.now() - new Date((o as any).created_at).getTime();
         if (Number.isNaN(ageMs) || ageMs >= 24 * 60 * 60 * 1000) continue;
+      }
+      // Hide stale manual orders with no resolvable session when at least 24 hours old.
+      if (source === "manual" && !session) {
+        const createdMs = new Date((o as any).created_at).getTime();
+        if (!Number.isNaN(createdMs)) {
+          const ageMs = Date.now() - createdMs;
+          if (ageMs >= 24 * 60 * 60 * 1000) continue;
+        }
       }
       // Preserve served-order filtering.
       if (deptStatus === "served") continue;

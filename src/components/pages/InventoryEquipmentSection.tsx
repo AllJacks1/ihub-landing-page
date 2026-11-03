@@ -50,7 +50,9 @@ import {
 } from "@/lib/inventory-actions";
 import type { useInventoryEquipment } from "@/hooks/useInventoryEquipment";
 
-type InventoryEquipmentSectionProps = ReturnType<typeof useInventoryEquipment>;
+type InventoryEquipmentSectionProps = ReturnType<typeof useInventoryEquipment> & {
+  renderToolbarActions?: React.ReactNode;
+};
 
 const CONDITION_STYLES: Record<
   EquipmentCondition,

@@ -655,29 +655,33 @@ export default function PrimaryTerminalPage() {
   }, [cart]);
 
    function addToCart(product: PosProduct) {
-     if ((product.stock_quantity ?? 0) <= 0) return;
-    setCart((currentCart) => {
-      const existing = currentCart.find((item) => item.id === product.id);
+     const stock = product.stock_quantity ?? 0;
+     if (stock <= 0) return;
+     setCart((currentCart) => {
+       const existing = currentCart.find((item) => item.id === product.id);
+       const currentQty = existing?.quantity ?? 0;
+       if (currentQty + 1 > stock) return currentCart;
+       if (existing) {
+         return currentCart.map((item) =>
+           item.id === product.id
+             ? { ...item, quantity: item.quantity + 1 }
+             : item,
+         );
+       }
+       return [...currentCart, { ...product, quantity: 1 }];
+     });
+   }
 
-      if (existing) {
-        return currentCart.map((item) =>
-          item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item,
-        );
-      }
-
-      return [...currentCart, { ...product, quantity: 1 }];
-    });
-  }
-
-  function increaseQuantity(id: string) {
-    setCart((currentCart) =>
-      currentCart.map((item) =>
-        item.id === id ? { ...item, quantity: item.quantity + 1 } : item,
-      ),
-    );
-  }
+   function increaseQuantity(id: string) {
+     setCart((currentCart) =>
+       currentCart.map((item) => {
+         if (item.id !== id) return item;
+         const stock = item.stock_quantity ?? 0;
+         if (item.quantity + 1 > stock) return item;
+         return { ...item, quantity: item.quantity + 1 };
+       }),
+     );
+   }
 
   function decreaseQuantity(id: string) {
     setCart((currentCart) =>

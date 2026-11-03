@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { getCurrentUser } from "@/lib/actions";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus,
@@ -240,6 +241,77 @@ const sidebarGroups: SidebarGroup[] = [
 function AdminSidebar() {
   const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [role, setRole] = useState<string | null>(null);
+  const [roleLoaded, setRoleLoaded] = useState(false);
+
+  useEffect(() => {
+    getCurrentUser()
+      .then((user) => setRole(user?.role ?? null))
+      .catch(() => setRole(null))
+      .finally(() => setRoleLoaded(true));
+  }, []);
+
+  const allowedHrefs: Record<string, string[]> = {
+    cashier: [
+      "/admin/pos/terminal/primary",
+      "/admin/pos/terminal/reservation",
+      "/admin/pos/terminal/reservation-monitor",
+      "/admin/reservations/calendar",
+      "/admin/spaces",
+      "/admin/iaccess/users",
+      "/admin/iaccess/users/new",
+      "/admin/iaccess/sponsorship/new",
+      "/admin/iaccess/activity-logs",
+    ],
+    partner: [
+      "/admin/pos/inventory",
+      "/admin/pos/monitoring/reports",
+      "/admin/pos/monitor/kitchen",
+    ],
+    crew: [
+      "/admin/pos/inventory",
+      "/admin/pos/monitoring/reports",
+      "/admin/pos/monitor/bar",
+    ],
+  };
+
+    const visibleGroups =
+      !roleLoaded || role === null
+        ? []
+        : role === "management"
+          ? sidebarGroups
+          : role === "cashier"
+            ? sidebarGroups
+                .filter((group) => group.id === "pos" || group.id === "iaccess")
+                .map((group) => ({
+                  ...group,
+                  items: group.items.filter((item) =>
+                    allowedHrefs.cashier.includes(item.href),
+                  ),
+                }))
+                .filter((group) => group.items.length > 0)
+            : sidebarGroups
+                .map((group) => ({
+                  ...group,
+                items: group.items
+                  .map((item) => ({
+                    ...item,
+                    items: item.items
+                      ? item.items.filter((sub) =>
+                          allowedHrefs[role]?.includes(sub.href),
+                        )
+                      : item.items,
+                  }))
+                  .filter(
+                    (item) =>
+                      allowedHrefs[role]?.includes(item.href) ||
+                      (item.items?.some((sub) =>
+                        allowedHrefs[role]?.includes(sub.href),
+                      ) ??
+                        false),
+                  ),
+                }))
+                .filter((group) => group.items.length > 0);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
     {
       overview: true,
@@ -280,7 +352,7 @@ function AdminSidebar() {
     >
       <div className="flex h-full flex-col p-3">
         <nav className="flex-1 space-y-4 overflow-y-auto">
-          {sidebarGroups.map((group) => (
+           {visibleGroups.map((group) => (
             <div key={group.id}>
               {!sidebarCollapsed && (
                 <button
