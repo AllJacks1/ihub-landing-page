@@ -11,6 +11,7 @@ import { useInventoryEquipment } from "@/hooks/useInventoryEquipment";
 
 type InventoryPageProps = {
   children?: ReactNode;
+  role?: string | null;
 };
 
 type InventoryTab = "products" | "equipment";
@@ -24,15 +25,56 @@ const TABS: {
   { id: "equipment", label: "Equipment", icon: Wrench },
 ];
 
-export default function InventoryPage({ children }: InventoryPageProps) {
+export default function InventoryPage({ children, role }: InventoryPageProps) {
+  const allowedDepartments =
+    role === "partner"
+      ? ["kitchen"]
+      : role === "crew"
+        ? ["bar"]
+        : ["kitchen", "bar"];
+
+  const [activeDepartment, setActiveDepartment] = useState<string>(
+    allowedDepartments[0],
+  );
   const [activeTab, setActiveTab] = useState<InventoryTab>("products");
 
   const products = useInventoryItems();
   const equipment = useInventoryEquipment();
 
-  const counts: Record<InventoryTab, number | undefined> = {
-    products: products?.items?.length,
-    equipment: equipment?.allEquipment?.length,
+  const filteredProducts = {
+    ...products,
+    items: (products?.items ?? []).filter((item: any) =>
+      activeDepartment === "kitchen"
+        ? item.area_code === "ieat"
+        : item.area_code === "idrink",
+    ),
+  };
+
+  const stockSummary = {
+    inStock: 0,
+    lowStock: 0,
+    outOfStock: 0,
+  };
+  for (const item of filteredProducts.items) {
+    if (item.quantity <= 0) stockSummary.outOfStock += 1;
+    else if (item.min_stock > 0 && item.quantity <= item.min_stock)
+      stockSummary.lowStock += 1;
+    else stockSummary.inStock += 1;
+  }
+  filteredProducts.stockSummary = stockSummary;
+
+  const filteredEquipment = {
+    ...equipment,
+    allEquipment: (equipment?.allEquipment ?? []).filter((item: any) =>
+      activeDepartment === "kitchen"
+        ? item.department === "kitchen"
+        : item.department === "bar",
+    ),
+  };
+
+  const counts = {
+    products: filteredProducts.items.length,
+    equipment: filteredEquipment.allEquipment.length,
   };
 
   const handleTabKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -67,55 +109,72 @@ export default function InventoryPage({ children }: InventoryPageProps) {
       </div>
 
       <div className="flex-1 p-4 sm:p-6">
-        {/* Segmented tab control — matches Sales page tab style */}
-        <div className="mb-4">
-          <div
-            role="tablist"
-            aria-label="Inventory sections"
-            onKeyDown={handleTabKeyDown}
-            className="flex w-full gap-1 overflow-x-auto rounded-xl border border-stone-200 bg-white p-1 sm:w-fit"
-          >
-            {TABS.map(({ id, label, icon: Icon }) => {
-              const selected = activeTab === id;
-              const count = counts[id];
-              return (
-                <button
-                  key={id}
-                  id={`inventory-${id}-tab`}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  aria-controls={`inventory-${id}-panel`}
-                  tabIndex={selected ? 0 : -1}
-                  onClick={() => setActiveTab(id)}
-                  className={`flex shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F36509]/40 ${
-                    selected
-                      ? "bg-[#F36509] text-white"
-                      : "text-stone-600 hover:bg-stone-50"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {label}
-                  {typeof count === "number" && (
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
-                        selected
-                          ? "bg-white/20 text-white"
-                          : "bg-stone-100 text-stone-500"
-                      }`}
-                    >
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
         {/* Content card — matches Sales page table card */}
         <Card className="border-stone-200 bg-white">
-          <CardContent className="p-4">
+          <CardContent className="p-4 pt-0">
+            {allowedDepartments.length > 1 && (
+              <div className="mb-4 flex gap-2">
+                {allowedDepartments.map((dept) => (
+                  <button
+                    key={dept}
+                    type="button"
+                    onClick={() => setActiveDepartment(dept)}
+                    className={`min-w-[120px] rounded-xl px-6 py-3 text-base font-semibold transition-colors ${
+                      activeDepartment === dept
+                        ? "bg-[#F36509] text-white"
+                        : "border border-stone-200 bg-white text-stone-600"
+                    }`}
+                  >
+                    {dept === "kitchen" ? "Kitchen" : "Bar"}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Segmented tab control — matches Sales page tab style */}
+            <div className="mb-4">
+              <div
+                role="tablist"
+                aria-label="Inventory sections"
+                onKeyDown={handleTabKeyDown}
+                className="flex w-full gap-1 overflow-x-auto rounded-xl border border-stone-200 bg-white p-1 sm:w-fit"
+              >
+                {TABS.map(({ id, label, icon: Icon }) => {
+                  const selected = activeTab === id;
+                  const count = counts[id];
+                  return (
+                    <button
+                      key={id}
+                      id={`inventory-${id}-tab`}
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      aria-controls={`inventory-${id}-panel`}
+                      tabIndex={selected ? 0 : -1}
+                      onClick={() => setActiveTab(id)}
+                      className={`flex shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F36509]/40 ${
+                        selected
+                          ? "bg-[#F36509] text-white"
+                          : "text-stone-600 hover:bg-stone-50"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {label}
+                      {typeof count === "number" && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
+                            selected
+                              ? "bg-white/20 text-white"
+                              : "bg-stone-100 text-stone-500"
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             {activeTab === "products" ? (
               <section
                 id="inventory-products-panel"
@@ -123,7 +182,7 @@ export default function InventoryPage({ children }: InventoryPageProps) {
                 aria-labelledby="inventory-products-tab"
                 className="min-w-0"
               >
-                <InventoryProductsSection {...products} />
+                <InventoryProductsSection {...filteredProducts} />
               </section>
             ) : (
               <section
@@ -132,7 +191,7 @@ export default function InventoryPage({ children }: InventoryPageProps) {
                 aria-labelledby="inventory-equipment-tab"
                 className="min-w-0"
               >
-                <InventoryEquipmentSection {...equipment} />
+                <InventoryEquipmentSection {...filteredEquipment} />
               </section>
             )}
           </CardContent>
