@@ -20,6 +20,7 @@ import {
   PosLocation,
 } from "@/lib/pos-locations";
 import {
+  cancelOrder,
   getOrdersBySessionId,
   SessionOrder,
 } from "@/lib/order-actions";
@@ -104,6 +105,10 @@ export function useQrSessions() {
 
   const [crmUsers, setCrmUsers] = useState<CrmUser[]>([]);
   const [isLoadingCrmUsers, setIsLoadingCrmUsers] = useState(false);
+
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(
+    null,
+  );
 
   // ── Loaders ───────────────────────────────────────────────────────────────
   const loadSessions = useCallback(async () => {
@@ -293,9 +298,7 @@ export function useQrSessions() {
     if (!session.is_active) {
       return "deactivated";
     }
-    return new Date(session.expires_at) > new Date()
-      ? "active"
-      : "expired";
+    return new Date(session.expires_at) > new Date() ? "active" : "expired";
   }
 
   function getSessionLocation(session: PosSession) {
@@ -458,6 +461,29 @@ export function useQrSessions() {
     }
   }, []);
 
+  const handleCancelOrder = useCallback(
+    async (orderId: string, sessionId: string, reason?: string) => {
+      setCancellingOrderId(orderId);
+      try {
+        const result = await cancelOrder(orderId, reason);
+
+        if (!result.success) {
+          toast.error(result.error ?? "Failed to cancel order");
+          return;
+        }
+
+        toast.success("Order cancelled");
+        await onLoadSessionOrders(sessionId); // refresh the modal list
+      } catch (error) {
+        console.error("Failed to cancel order:", error);
+        toast.error("Failed to cancel order");
+      } finally {
+        setCancellingOrderId(null);
+      }
+    },
+    [onLoadSessionOrders],
+  );
+
   return {
     // Sessions
     sessions,
@@ -486,6 +512,8 @@ export function useQrSessions() {
     sessionOrders,
     isLoadingSessionOrders,
     onLoadSessionOrders,
+    handleCancelOrder,
+    cancellingOrderId,
 
     // Locations
     locations,

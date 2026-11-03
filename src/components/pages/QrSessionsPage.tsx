@@ -74,6 +74,7 @@ import {
   getEmployeeCreditAccounts,
   getEmployees,
 } from "@/lib/employee-charges";
+import { CancelOrderDialog } from "../sections/CancelDialog";
 
 type QrSessionsReturn = ReturnType<typeof useQrSessions>;
 
@@ -308,6 +309,8 @@ export default function QrSessionsPage({
   sessionOrders = {},
   isLoadingSessionOrders = false,
   onLoadSessionOrders,
+  handleCancelOrder,
+  cancellingOrderId,
 
   crmUsersList,
   onSearchCrmUsers,
@@ -401,7 +404,14 @@ export default function QrSessionsPage({
         }
 
         setTerminalId(ctx.data.terminal.id);
-        setShiftId(ctx.data.shift.id);
+        const shiftId = ctx?.data?.shift?.id;
+
+        if (typeof shiftId !== "string" || !shiftId.trim()) {
+          console.warn("Cannot set shift ID: invalid or missing shift ID");
+          return;
+        }
+
+        setShiftId(shiftId);
       } catch (e) {
         console.error("Failed to initialise terminal context", e);
       }
@@ -622,6 +632,10 @@ export default function QrSessionsPage({
     seniorCount,
     pwdCount,
   ]);
+
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   function openPayDialog(order: SessionOrder) {
     setPayOrder(order);
@@ -978,6 +992,10 @@ export default function QrSessionsPage({
     if (!e) return "—";
     const name = [e.first_name, e.last_name].filter(Boolean).join(" ");
     return name || e.employee_code || e.id.slice(0, 8);
+  }
+
+  function isOrderCancellable(status: string) {
+    return ["open", "in_progress", "ready"].includes(status);
   }
 
   return (
@@ -1526,15 +1544,18 @@ export default function QrSessionsPage({
                     {order.items && order.items.length > 0 && (
                       <ul className="mt-2 space-y-1 border-t border-stone-200 pt-2">
                         {(() => {
-                          const grouped = new Map<string, {
-                            key: string;
-                            product_id: string;
-                            product_name: string;
-                            unit_price: number;
-                            quantity: number;
-                            line_total: number;
-                            area_code: string | null;
-                          }>();
+                          const grouped = new Map<
+                            string,
+                            {
+                              key: string;
+                              product_id: string;
+                              product_name: string;
+                              unit_price: number;
+                              quantity: number;
+                              line_total: number;
+                              area_code: string | null;
+                            }
+                          >();
                           for (const item of order.items) {
                             const key = `${item.product_id}::${item.unit_price}`;
                             const existing = grouped.get(key);
@@ -1628,17 +1649,52 @@ export default function QrSessionsPage({
                       </div>
                     )}
 
-                    {isOrderPayable(order.status) && (
-                      <div className="mt-3 flex justify-end border-t border-stone-200 pt-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => openPayDialog(order)}
-                          className="rounded-full bg-[#F36509] text-white hover:bg-[#d95a08]"
-                        >
-                          <CreditCard className="mr-1.5 h-3.5 w-3.5" />
-                          Pay {formatCurrency(order.total_amount)}
-                        </Button>
+                    {(isOrderPayable(order.status) ||
+                      isOrderCancellable(order.status)) && (
+                      <div className="mt-3 flex justify-end gap-2 border-t border-stone-200 pt-2">
+                        {isOrderCancellable(order.status) && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={
+                              isCancelling || cancellingOrderId === order.id
+                            }
+                            onClick={() => {
+                              if (!order?.id || !ordersModalSession?.id) {
+                                console.warn(
+                                  "Cannot cancel order: missing order or session ID",
+                                );
+                                return;
+                              }
+
+                              setSelectedOrderId(order.id);
+                              setCancelDialogOpen(true);
+                            }}
+                            className="rounded-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                          >
+                            {cancellingOrderId === order.id ? (
+                              <>
+                                <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                Cancelling…
+                              </>
+                            ) : (
+                              "Cancel order"
+                            )}
+                          </Button>
+                        )}
+
+                        {isOrderPayable(order.status) && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => openPayDialog(order)}
+                            className="rounded-full bg-[#F36509] text-white hover:bg-[#d95a08]"
+                          >
+                            <CreditCard className="mr-1.5 h-3.5 w-3.5" />
+                            Pay {formatCurrency(order.total_amount)}
+                          </Button>
+                        )}
                       </div>
                     )}
 
@@ -2529,6 +2585,35 @@ export default function QrSessionsPage({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <CancelOrderDialog
+        open={cancelDialogOpen}
+        onOpenChange={(open) => {
+          if (isCancelling) return;
+
+          setCancelDialogOpen(open);
+
+          if (!open) {
+            setSelectedOrderId(null);
+          }
+        }}
+        orderId={selectedOrderId ?? ""}
+        loading={isCancelling}
+        onConfirm={async () => {
+          if (!selectedOrderId || !ordersModalSession?.id || isCancelling) {
+            return;
+          }
+
+          try {
+            await handleCancelOrder(selectedOrderId, ordersModalSession.id);
+
+            setCancelDialogOpen(false);
+            setSelectedOrderId(null);
+          } catch (error) {
+            console.error("Failed to cancel order:", error);
+            toast.error("Failed to cancel order. Please try again.");
+          }
+        }}
+      />
     </main>
   );
 }

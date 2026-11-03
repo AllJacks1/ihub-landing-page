@@ -1753,12 +1753,6 @@ export async function closePosShift(
     if (shiftRow.cashier_user_id !== staff.user.id) {
       return { success: false, error: "You can only close your own shift" };
     }
-    if (retained > 0 && !shiftRow.drawer_id) {
-      return {
-        success: false,
-        error: "Select a cash drawer for this shift before retaining a float.",
-      };
-    }
 
     const closedAt = new Date().toISOString();
 
