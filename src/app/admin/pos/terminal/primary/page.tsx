@@ -482,31 +482,31 @@ export default function PrimaryTerminalPage() {
     await loadActiveSessions();
 
     // keep your paid-but-incomplete recovery block here
-    try {
-      const openRes = await getOpenOrders(branchId);
-      if (openRes.success) {
-        const candidates: string[] = [];
-        for (const o of openRes.data) {
-          if (o.status === "completed" || o.status === "cancelled") continue;
-          const full = await getPosOrder(o.id);
-          if (!full.success || !full.data) continue;
-          const hasCompletedPayment = (full.data.payments ?? []).some(
-            (p: { status?: string }) => p.status === "completed",
-          );
-          if (hasCompletedPayment) {
-            candidates.push(o.id);
-          }
-        }
-        if (candidates.length === 1) {
-          setActivePaymentOrderId(candidates[0]);
-          setPendingCompletionOrderId(candidates[0]);
-          setShowPaymentDialog(true);
-          toast.message("Recovered a paid order awaiting completion.");
-        }
-      }
-    } catch {
-      // best-effort recovery
-    }
+    // try {
+    //   const openRes = await getOpenOrders(branchId);
+    //   if (openRes.success) {
+    //     const candidates: string[] = [];
+    //     for (const o of openRes.data) {
+    //       if (o.status === "completed" || o.status === "cancelled") continue;
+    //       const full = await getPosOrder(o.id);
+    //       if (!full.success || !full.data) continue;
+    //       const hasCompletedPayment = (full.data.payments ?? []).some(
+    //         (p: { status?: string }) => p.status === "completed",
+    //       );
+    //       if (hasCompletedPayment) {
+    //         candidates.push(o.id);
+    //       }
+    //     }
+    //     if (candidates.length === 1) {
+    //       setActivePaymentOrderId(candidates[0]);
+    //       setPendingCompletionOrderId(candidates[0]);
+    //       setShowPaymentDialog(true);
+    //       toast.message("Recovered a paid order awaiting completion.");
+    //     }
+    //   }
+    // } catch {
+    //   // best-effort recovery
+    // }
   }
 
   useEffect(() => {
