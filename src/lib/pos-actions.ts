@@ -144,7 +144,6 @@ export type CashDrawer = {
   pending_turnover?: boolean;
 };
 
-
 const createLocationSchema = z.object({
   type: z.enum(["table", "room", "cubicle"]),
   name: z.string().min(1, "Name is required").max(100),
@@ -1460,8 +1459,6 @@ export async function getCashDrawers(
   }
 }
 
-
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -1759,7 +1756,7 @@ export async function closePosShift(
     // Prepare the remittance before closing so a remittance insert failure
     // cannot leave the shift closed without its corresponding cash record.
     let remittanceId: string | null = null;
-    if (remittanceAmount > 0 && shiftRow.drawer_id) {
+    if (remittanceAmount > 0) {
       const { data: remittance, error: remittanceError } = await supabase
         .from("cash_remittances")
         .insert({
@@ -1770,13 +1767,18 @@ export async function closePosShift(
           status: "draft",
           prepared_by: staff.user.id,
           prepared_at: closedAt,
-          notes: `Prepared from shift ${shiftRow.shift_number ?? shiftRow.id}. ${validated.notes?.trim() ?? ""}`.trim(),
+          from_shift_id: shiftRow.id,
+          notes:
+            `Prepared from shift ${shiftRow.shift_number ?? shiftRow.id}. ${validated.notes?.trim() ?? ""}`.trim(),
         })
         .select("id")
         .single();
 
       if (remittanceError) {
-        return { success: false, error: `Could not prepare cash remittance: ${remittanceError.message}` };
+        return {
+          success: false,
+          error: `Could not prepare cash remittance: ${remittanceError.message}`,
+        };
       }
       remittanceId = remittance.id;
     }
@@ -1887,6 +1889,799 @@ export async function closePosShift(
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to close shift",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Remittance / Handover types & actions
+// ---------------------------------------------------------------------------
+
+export type CashRemittance = {
+  id: string;
+  branch_id: string;
+  drawer_id: string | null;
+  remittance_number: number | null;
+  recipient_name: string | null;
+  expected_amount: number;
+  actual_amount: number | null;
+  difference_amount: number | null;
+  retained_cash: number;
+  status: string;
+  prepared_by: string | null;
+  confirmed_by: string | null;
+  prepared_at: string;
+  confirmed_at: string | null;
+  notes: string | null;
+  from_shift_id: string | null;
+  to_shift_id: string | null;
+  // joined
+  drawer_name?: string | null;
+  branch_name?: string | null;
+  prepared_by_name?: string | null;
+  confirmed_by_name?: string | null;
+  from_shift_number?: string | null;
+  from_shift_variance?: number | null;
+  from_shift_actual_cash?: number | null;
+};
+
+export type ShiftHandoverRow = {
+  terminal_id: string;
+  terminal_name: string;
+  branch_id: string;
+  branch_name: string;
+  last_closed_shift_id: string | null;
+  last_closed_shift_number: string | null;
+  last_retained_cash: number | null;
+  last_closed_at: string | null;
+  last_turnover_status: string | null;
+  open_shift_id: string | null;
+  open_shift_number: string | null;
+  open_starting_cash: number | null;
+  open_opening_counted_cash: number | null;
+  open_cashier_user_id: string | null;
+  match_status: "matched" | "mismatch" | "no_open_shift" | "no_prior_retained";
+  difference: number | null;
+};
+
+export type ClosedShiftCashRow = {
+  id: string;
+  shift_number: string | null;
+  branch_id: string;
+  branch_name: string | null;
+  terminal_id: string;
+  terminal_name: string | null;
+  drawer_id: string | null;
+  drawer_name: string | null;
+  cashier_user_id: string;
+  status: string;
+  opened_at: string;
+  closed_at: string | null;
+  starting_cash: number;
+  opening_counted_cash: number | null;
+  expected_cash: number;
+  actual_cash: number | null;
+  variance: number | null;
+  retained_cash: number;
+  turnover_status: string | null;
+  remittance_id: string | null;
+  remittance_status: string | null;
+  remittance_expected: number | null;
+};
+
+type RemittanceJoinRow = {
+  id: string;
+  branch_id: string;
+  drawer_id: string | null;
+  remittance_number: number | null;
+  recipient_name: string | null;
+  expected_amount: number | string | null;
+  actual_amount: number | string | null;
+  difference_amount: number | string | null;
+  retained_cash: number | string | null;
+  status: string;
+  prepared_by: string | null;
+  confirmed_by: string | null;
+  prepared_at: string;
+  confirmed_at: string | null;
+  notes: string | null;
+  from_shift_id: string | null;
+  to_shift_id: string | null;
+  cash_drawers: { name: string } | { name: string }[] | null;
+  pos_branches: { name: string } | { name: string }[] | null;
+  from_shift:
+    | {
+        shift_number: string | null;
+        variance: number | string | null;
+        actual_cash: number | string | null;
+      }
+    | {
+        shift_number: string | null;
+        variance: number | string | null;
+        actual_cash: number | string | null;
+      }[]
+    | null;
+};
+
+type ClosedShiftJoinRow = {
+  id: string;
+  shift_number: string | null;
+  branch_id: string;
+  terminal_id: string;
+  cashier_user_id: string;
+  status: string;
+  opened_at: string;
+  closed_at: string | null;
+  starting_cash: number | string | null;
+  opening_counted_cash: number | string | null;
+  expected_cash: number | string | null;
+  actual_cash: number | string | null;
+  variance: number | string | null;
+  retained_cash: number | string | null;
+  turnover_status: string | null;
+  drawer_id: string | null;
+  pos_branches: { name: string } | { name: string }[] | null;
+  pos_terminals: { name: string } | { name: string }[] | null;
+  cash_drawers: { name: string } | { name: string }[] | null;
+};
+
+type ClosedShiftLite = {
+  id: string;
+  shift_number: string | null;
+  terminal_id: string | null;
+  retained_cash: number | string | null;
+  closed_at: string | null;
+  turnover_status: string | null;
+  status: string;
+};
+
+type OpenShiftLite = {
+  id: string;
+  shift_number: string | null;
+  terminal_id: string | null;
+  starting_cash: number | string | null;
+  opening_counted_cash: number | string | null;
+  cashier_user_id: string | null;
+  status: string;
+};
+
+function firstJoin<T>(value: T | T[] | null | undefined): T | null {
+  if (value == null) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
+const confirmRemittanceSchema = z.object({
+  id: z.string().uuid(),
+  actual_amount: z.coerce.number().min(0),
+  recipient_name: z.string().max(200).optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+  to_shift_id: z.string().uuid().optional().nullable(),
+});
+
+export async function getPendingRemittances(branchId?: string): Promise<{
+  success: boolean;
+  data: CashRemittance[];
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+
+    let query = supabase
+      .from("cash_remittances")
+      .select(
+        `
+        id, branch_id, drawer_id, remittance_number, recipient_name,
+        expected_amount, actual_amount, difference_amount, retained_cash,
+        status, prepared_by, confirmed_by, prepared_at, confirmed_at, notes,
+        from_shift_id, to_shift_id
+      `,
+      )
+      .in("status", ["draft", "prepared"])
+      .order("prepared_at", { ascending: false });
+
+    if (branchId) {
+      query = query.eq("branch_id", branchId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error("getPendingRemittances error:", error);
+      return { success: false, data: [], error: error.message };
+    }
+
+    const rows: CashRemittance[] = (data ?? []).map((r) => ({
+      id: r.id,
+      branch_id: r.branch_id,
+      drawer_id: r.drawer_id,
+      remittance_number: r.remittance_number,
+      recipient_name: r.recipient_name,
+      expected_amount: Number(r.expected_amount ?? 0),
+      actual_amount: r.actual_amount != null ? Number(r.actual_amount) : null,
+      difference_amount:
+        r.difference_amount != null ? Number(r.difference_amount) : null,
+      retained_cash: Number(r.retained_cash ?? 0),
+      status: r.status,
+      prepared_by: r.prepared_by,
+      confirmed_by: r.confirmed_by,
+      prepared_at: r.prepared_at,
+      confirmed_at: r.confirmed_at,
+      notes: r.notes,
+      from_shift_id: r.from_shift_id,
+      to_shift_id: r.to_shift_id,
+      drawer_name: null,
+      branch_name: null,
+      from_shift_number: null,
+      from_shift_variance: null,
+      from_shift_actual_cash: null,
+    }));
+
+    return { success: true, data: rows };
+  } catch (error) {
+    return {
+      success: false,
+      data: [],
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load pending remittances",
+    };
+  }
+}
+
+export async function getRemittanceHistory(params?: {
+  branchId?: string;
+  status?: string;
+  from?: string; // ISO date
+  to?: string;
+  limit?: number;
+}): Promise<{
+  success: boolean;
+  data: CashRemittance[];
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+    const limit = Math.min(params?.limit ?? 50, 200);
+
+    let query = supabase
+      .from("cash_remittances")
+      .select(
+        `
+    id, branch_id, drawer_id, remittance_number, recipient_name,
+    expected_amount, actual_amount, difference_amount, retained_cash,
+    status, prepared_by, confirmed_by, prepared_at, confirmed_at, notes,
+    from_shift_id, to_shift_id
+  `,
+      )
+      .order("prepared_at", { ascending: false })
+      .limit(limit);
+
+    if (params?.branchId) query = query.eq("branch_id", params.branchId);
+    if (params?.status) query = query.eq("status", params.status);
+    if (params?.from) query = query.gte("prepared_at", params.from);
+    if (params?.to) query = query.lte("prepared_at", params.to);
+
+    // Default: show completed ones; caller can pass status if needed
+    if (!params?.status) {
+      query = query.in("status", [
+        "confirmed",
+        "received",
+        "banked",
+        "adjusted",
+        "cancelled",
+      ]);
+    }
+
+    const { data, error } = await query;
+    console.log("getRemittanceHistory raw:", {
+      data,
+      error,
+      count: data?.length,
+    });
+    if (error) return { success: false, data: [], error: error.message };
+
+    const rowsRaw = data ?? [];
+
+    // Collect IDs
+    const branchIds = [...new Set(rowsRaw.map((r) => r.branch_id))];
+    const shiftIds = [
+      ...new Set(
+        rowsRaw
+          .map((r) => r.from_shift_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const drawerIds = [
+      ...new Set(
+        rowsRaw
+          .map((r) => r.drawer_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+
+    // Fetch related data
+    const branchMap = new Map<string, string>();
+    const shiftMap = new Map<
+      string,
+      {
+        shift_number: string | null;
+        variance: number | null;
+        actual_cash: number | null;
+      }
+    >();
+    const drawerMap = new Map<string, string>();
+
+    if (branchIds.length > 0) {
+      const { data: branches } = await supabase
+        .from("pos_branches")
+        .select("id, name")
+        .in("id", branchIds);
+      for (const b of branches ?? []) branchMap.set(b.id, b.name);
+    }
+
+    if (shiftIds.length > 0) {
+      const { data: shifts } = await supabase
+        .from("pos_shifts")
+        .select("id, shift_number, variance, actual_cash")
+        .in("id", shiftIds);
+      for (const s of shifts ?? []) {
+        shiftMap.set(s.id, {
+          shift_number: s.shift_number,
+          variance: s.variance != null ? Number(s.variance) : null,
+          actual_cash: s.actual_cash != null ? Number(s.actual_cash) : null,
+        });
+      }
+    }
+
+    if (drawerIds.length > 0) {
+      const { data: drawers } = await supabase
+        .from("cash_drawers")
+        .select("id, name")
+        .in("id", drawerIds);
+      for (const d of drawers ?? []) drawerMap.set(d.id, d.name);
+    }
+
+    // Map to final shape
+    const rows: CashRemittance[] = rowsRaw.map((r) => {
+      const shift = r.from_shift_id ? shiftMap.get(r.from_shift_id) : null;
+
+      return {
+        id: r.id,
+        branch_id: r.branch_id,
+        drawer_id: r.drawer_id,
+        remittance_number: r.remittance_number,
+        recipient_name: r.recipient_name,
+        expected_amount: Number(r.expected_amount ?? 0),
+        actual_amount: r.actual_amount != null ? Number(r.actual_amount) : null,
+        difference_amount:
+          r.difference_amount != null ? Number(r.difference_amount) : null,
+        retained_cash: Number(r.retained_cash ?? 0),
+        status: r.status,
+        prepared_by: r.prepared_by,
+        confirmed_by: r.confirmed_by,
+        prepared_at: r.prepared_at,
+        confirmed_at: r.confirmed_at,
+        notes: r.notes,
+        from_shift_id: r.from_shift_id,
+        to_shift_id: r.to_shift_id,
+        drawer_name: r.drawer_id ? (drawerMap.get(r.drawer_id) ?? null) : null,
+        branch_name: branchMap.get(r.branch_id) ?? null,
+        from_shift_number: shift?.shift_number ?? null,
+        from_shift_variance: shift?.variance ?? null,
+        from_shift_actual_cash: shift?.actual_cash ?? null,
+      };
+    });
+
+    return { success: true, data: rows };
+  } catch (error) {
+    return {
+      success: false,
+      data: [],
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load remittance history",
+    };
+  }
+}
+
+export async function confirmRemittance(
+  input: z.infer<typeof confirmRemittanceSchema>,
+): Promise<{
+  success: boolean;
+  data?: CashRemittance;
+  error?: string;
+}> {
+  try {
+    const validated = confirmRemittanceSchema.parse(input);
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+
+    const { data: existing, error: loadErr } = await supabase
+      .from("cash_remittances")
+      .select("*")
+      .eq("id", validated.id)
+      .maybeSingle();
+
+    if (loadErr) return { success: false, error: loadErr.message };
+    if (!existing) return { success: false, error: "Remittance not found" };
+    if (!["draft", "prepared"].includes(existing.status)) {
+      return {
+        success: false,
+        error: `Remittance is already ${existing.status}`,
+      };
+    }
+
+    const expected = Number(existing.expected_amount ?? 0);
+    const actual = Number(validated.actual_amount);
+    const difference = Number((actual - expected).toFixed(2));
+    const confirmedAt = new Date().toISOString();
+
+    const { data: updated, error: updateErr } = await supabase
+      .from("cash_remittances")
+      .update({
+        status: difference === 0 ? "confirmed" : "adjusted",
+        actual_amount: actual,
+        difference_amount: difference,
+        recipient_name:
+          validated.recipient_name?.trim() || existing.recipient_name,
+        confirmed_by: staff.user.id,
+        confirmed_at: confirmedAt,
+        to_shift_id: validated.to_shift_id ?? existing.to_shift_id,
+        notes:
+          [existing.notes, validated.notes?.trim()]
+            .filter(Boolean)
+            .join("\n") || null,
+      })
+      .eq("id", validated.id)
+      .select("*")
+      .single();
+
+    if (updateErr) return { success: false, error: updateErr.message };
+
+    // Optional ledger entry for the physical remittance
+    if (existing.drawer_id) {
+      await supabase.from("cash_ledger").upsert(
+        {
+          branch_id: existing.branch_id,
+          drawer_id: existing.drawer_id,
+          shift_id: existing.from_shift_id,
+          movement_type: "remittance_out",
+          amount: actual,
+          source_type: "cash_remittance",
+          source_id: existing.id,
+          idempotency_key: `remittance-confirm-${existing.id}`,
+          recorded_by: staff.user.id,
+          occurred_at: confirmedAt,
+        },
+        { onConflict: "idempotency_key", ignoreDuplicates: true },
+      );
+    }
+
+    // Mark related shift turnover as completed if present
+    if (existing.from_shift_id) {
+      await supabase
+        .from("pos_shifts")
+        .update({
+          turnover_status: "completed",
+          updated_at: confirmedAt,
+        })
+        .eq("id", existing.from_shift_id)
+        .eq("turnover_status", "pending");
+    }
+
+    return {
+      success: true,
+      data: {
+        id: updated.id,
+        branch_id: updated.branch_id,
+        drawer_id: updated.drawer_id,
+        remittance_number: updated.remittance_number,
+        recipient_name: updated.recipient_name,
+        expected_amount: Number(updated.expected_amount ?? 0),
+        actual_amount:
+          updated.actual_amount != null ? Number(updated.actual_amount) : null,
+        difference_amount:
+          updated.difference_amount != null
+            ? Number(updated.difference_amount)
+            : null,
+        retained_cash: Number(updated.retained_cash ?? 0),
+        status: updated.status,
+        prepared_by: updated.prepared_by,
+        confirmed_by: updated.confirmed_by,
+        prepared_at: updated.prepared_at,
+        confirmed_at: updated.confirmed_at,
+        notes: updated.notes,
+        from_shift_id: updated.from_shift_id,
+        to_shift_id: updated.to_shift_id,
+      },
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to confirm remittance",
+    };
+  }
+}
+
+export async function getShiftHandoverStatus(branchId?: string): Promise<{
+  success: boolean;
+  data: ShiftHandoverRow[];
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+
+    // Active terminals (primary first, or all)
+    let terminalsQuery = supabase
+      .from("pos_terminals")
+      .select("id, name, branch_id")
+      .eq("is_active", true)
+      .order("name");
+
+    if (branchId) terminalsQuery = terminalsQuery.eq("branch_id", branchId);
+
+    const { data: terminals, error: tErr } = await terminalsQuery;
+    if (tErr) return { success: false, data: [], error: tErr.message };
+    if (!terminals?.length) return { success: true, data: [] };
+
+    const terminalIds = terminals.map((t) => t.id);
+    const branchIds = [...new Set(terminals.map((t) => t.branch_id))];
+
+    const { data: branches } = await supabase
+      .from("pos_branches")
+      .select("id, name")
+      .in("id", branchIds);
+    const branchMap = new Map((branches ?? []).map((b) => [b.id, b.name]));
+
+    // Latest closed shift per terminal
+    const { data: closedShiftsData } = await supabase
+      .from("pos_shifts")
+      .select(
+        "id, shift_number, terminal_id, retained_cash, closed_at, turnover_status, status",
+      )
+      .in("terminal_id", terminalIds)
+      .eq("status", "closed")
+      .order("closed_at", { ascending: false });
+
+    const closedShifts = (closedShiftsData ?? []) as ClosedShiftLite[];
+
+    const lastClosedByTerminal = new Map<string, ClosedShiftLite>();
+    for (const s of closedShifts) {
+      if (s.terminal_id && !lastClosedByTerminal.has(s.terminal_id)) {
+        lastClosedByTerminal.set(s.terminal_id, s);
+      }
+    }
+
+    // same for open shifts
+    const { data: openShiftsData } = await supabase
+      .from("pos_shifts")
+      .select(
+        "id, shift_number, terminal_id, starting_cash, opening_counted_cash, cashier_user_id, status",
+      )
+      .in("terminal_id", terminalIds)
+      .eq("status", "open");
+
+    const openShifts = (openShiftsData ?? []) as OpenShiftLite[];
+
+    const openByTerminal = new Map<string, OpenShiftLite>();
+    for (const s of openShifts) {
+      if (s.terminal_id) openByTerminal.set(s.terminal_id, s);
+    }
+
+    const rows: ShiftHandoverRow[] = terminals.map((t) => {
+      const last = lastClosedByTerminal.get(t.id) ?? null;
+      const open = openByTerminal.get(t.id) ?? null;
+
+      const retained = last != null ? Number(last.retained_cash ?? 0) : null;
+
+      const counted =
+        open?.opening_counted_cash != null
+          ? Number(open.opening_counted_cash)
+          : open?.starting_cash != null
+            ? Number(open.starting_cash)
+            : null;
+
+      let match_status: ShiftHandoverRow["match_status"] = "no_prior_retained";
+      let difference: number | null = null;
+
+      if (retained != null && retained > 0) {
+        if (!open) {
+          match_status = "no_open_shift";
+        } else if (counted == null) {
+          match_status = "mismatch";
+        } else {
+          difference = Number((counted - retained).toFixed(2));
+          match_status = difference === 0 ? "matched" : "mismatch";
+        }
+      }
+
+      return {
+        terminal_id: t.id,
+        terminal_name: t.name,
+        branch_id: t.branch_id,
+        branch_name: branchMap.get(t.branch_id) ?? "—",
+        last_closed_shift_id: last?.id ?? null,
+        last_closed_shift_number: last?.shift_number ?? null,
+        last_retained_cash: retained,
+        last_closed_at: last?.closed_at ?? null,
+        last_turnover_status: last?.turnover_status ?? null,
+        open_shift_id: open?.id ?? null,
+        open_shift_number: open?.shift_number ?? null,
+        open_starting_cash:
+          open?.starting_cash != null ? Number(open.starting_cash) : null,
+        open_opening_counted_cash:
+          open?.opening_counted_cash != null
+            ? Number(open.opening_counted_cash)
+            : null,
+        open_cashier_user_id: open?.cashier_user_id ?? null,
+        match_status,
+        difference,
+      };
+    });
+
+    return { success: true, data: rows };
+  } catch (error) {
+    return {
+      success: false,
+      data: [],
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load handover status",
+    };
+  }
+}
+
+export async function getClosedShiftsWithCashSummary(params?: {
+  branchId?: string;
+  limit?: number;
+}): Promise<{
+  success: boolean;
+  data: ClosedShiftCashRow[];
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+    const limit = Math.min(params?.limit ?? 40, 100);
+
+    let query = supabase
+      .from("pos_shifts")
+      .select(
+        `
+    id, shift_number, branch_id, terminal_id, cashier_user_id, status,
+    opened_at, closed_at, starting_cash, opening_counted_cash,
+    expected_cash, actual_cash, variance, retained_cash, turnover_status,
+    drawer_id,
+    pos_branches:branch_id ( name ),
+    pos_terminals:terminal_id ( name )
+  `,
+      )
+      .eq("status", "closed")
+      .order("closed_at", { ascending: false })
+      .limit(limit);
+
+    if (params?.branchId) query = query.eq("branch_id", params.branchId);
+
+    const { data: shifts, error } = await query;
+    if (error) return { success: false, data: [], error: error.message };
+
+    const shiftIds = (shifts ?? []).map((s) => s.id);
+
+    const remittanceByShift = new Map<
+      string,
+      { id: string; status: string; expected_amount: number }
+    >();
+    if (shiftIds.length > 0) {
+      const { data: rems } = await supabase
+        .from("cash_remittances")
+        .select("id, from_shift_id, status, expected_amount")
+        .in("from_shift_id", shiftIds);
+
+      for (const r of rems ?? []) {
+        if (r.from_shift_id && !remittanceByShift.has(r.from_shift_id)) {
+          remittanceByShift.set(r.from_shift_id, {
+            id: r.id,
+            status: r.status,
+            expected_amount: Number(r.expected_amount ?? 0),
+          });
+        }
+      }
+    }
+
+    const drawerIds = [
+      ...new Set(
+        (shifts ?? [])
+          .map((s) => s.drawer_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+
+    const drawerMap = new Map<string, string>();
+    if (drawerIds.length > 0) {
+      const { data: drawers } = await supabase
+        .from("cash_drawers")
+        .select("id, name")
+        .in("id", drawerIds);
+      for (const d of drawers ?? []) {
+        drawerMap.set(d.id, d.name);
+      }
+    }
+
+    const rows: ClosedShiftCashRow[] = (
+      (shifts ?? []) as unknown as ClosedShiftJoinRow[]
+    ).map((s) => {
+      const branch = firstJoin(s.pos_branches);
+      const terminal = firstJoin(s.pos_terminals);
+      const rem = remittanceByShift.get(s.id);
+
+      return {
+        id: s.id,
+        shift_number: s.shift_number,
+        branch_id: s.branch_id,
+        branch_name: branch?.name ?? null,
+        terminal_id: s.terminal_id,
+        terminal_name: terminal?.name ?? null,
+        drawer_id: s.drawer_id,
+        drawer_name: s.drawer_id ? (drawerMap.get(s.drawer_id) ?? null) : null,
+        cashier_user_id: s.cashier_user_id,
+        status: s.status,
+        opened_at: s.opened_at,
+        closed_at: s.closed_at,
+        starting_cash: Number(s.starting_cash ?? 0),
+        opening_counted_cash:
+          s.opening_counted_cash != null
+            ? Number(s.opening_counted_cash)
+            : null,
+        expected_cash: Number(s.expected_cash ?? 0),
+        actual_cash: s.actual_cash != null ? Number(s.actual_cash) : null,
+        variance: s.variance != null ? Number(s.variance) : null,
+        retained_cash: Number(s.retained_cash ?? 0),
+        turnover_status: s.turnover_status,
+        remittance_id: rem?.id ?? null,
+        remittance_status: rem?.status ?? null,
+        remittance_expected: rem?.expected_amount ?? null,
+      };
+    });
+
+    return { success: true, data: rows };
+  } catch (error) {
+    return {
+      success: false,
+      data: [],
+      error:
+        error instanceof Error ? error.message : "Failed to load closed shifts",
     };
   }
 }
