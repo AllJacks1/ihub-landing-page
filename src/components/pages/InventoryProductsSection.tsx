@@ -46,7 +46,9 @@ import type { InventoryItem } from "@/lib/inventory-actions";
 import type { StockMovementAction } from "@/hooks/useInventoryItems";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 
-type InventoryProductsSectionProps = ReturnType<typeof useInventoryItems>;
+type InventoryProductsSectionProps = ReturnType<typeof useInventoryItems> & {
+  renderToolbarActions?: React.ReactNode;
+};
 
 const STATUS_STYLES: Record<
   ReturnType<typeof getStockStatus>,

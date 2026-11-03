@@ -311,28 +311,36 @@ export default function MenuInner() {
 
   /* ── Cart ops ──────────────────────────────────────────────────────── */
    function addToCart(product: PosProduct) {
-     if (!(product.is_active && (product.stock_quantity ?? 0) > 0)) return;
+     const stock = product.stock_quantity ?? 0;
+     if (!(product.is_active && stock > 0)) return;
      if (!canOrder) {
-      toast.error("A valid QR session is required to order");
-      return;
-    }
-    setCart((cur) => {
-      const existing = cur.find((i) => i.id === product.id);
-      return existing
-        ? cur.map((i) =>
-            i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i,
-          )
-        : [...cur, { ...product, quantity: 1 }];
-    });
-  }
+       toast.error("A valid QR session is required to order");
+       return;
+     }
+     setCart((cur) => {
+       const existing = cur.find((i) => i.id === product.id);
+       const currentQty = existing?.quantity ?? 0;
+       if (currentQty + 1 > stock) {
+         toast.error("Maximum stock reached");
+         return cur;
+       }
+       return existing
+         ? cur.map((i) =>
+             i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i,
+           )
+         : [...cur, { ...product, quantity: 1 }];
+     });
+   }
 
-  function setQuantity(id: string, qty: number) {
-    setCart((cur) =>
-      qty <= 0
-        ? cur.filter((i) => i.id !== id)
-        : cur.map((i) => (i.id === id ? { ...i, quantity: qty } : i)),
-    );
-  }
+   function setQuantity(id: string, qty: number) {
+     setCart((cur) => {
+       const item = cur.find((i) => i.id === id);
+       const stock = item?.stock_quantity ?? 0;
+       const nextQty = stock > 0 ? Math.min(qty, stock) : qty;
+       if (nextQty <= 0) return cur.filter((i) => i.id !== id);
+       return cur.map((i) => (i.id === id ? { ...i, quantity: nextQty } : i));
+     });
+   }
 
   function removeFromCart(id: string) {
     setCart((cur) => cur.filter((i) => i.id !== id));

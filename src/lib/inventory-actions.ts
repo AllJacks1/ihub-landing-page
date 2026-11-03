@@ -105,6 +105,7 @@ async function createInventorySupabaseClient() {
 type InventoryStaffUser = {
   id: string;
   email: string | null;
+  role: string | null;
 };
 
 export async function requireInventoryStaff(): Promise<
@@ -124,24 +125,24 @@ export async function requireInventoryStaff(): Promise<
 
   const adminClient = createInventoryAdminClient();
 
-  const { data: profile, error: profileError } = await adminClient
-    .from("profiles")
-    .select("id")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
+   const { data: profile, error: profileError } = await adminClient
+     .from("profiles")
+     .select("id, role")
+     .eq("auth_user_id", user.id)
+     .maybeSingle();
 
-  if (profileError) {
-    return { authorized: false, error: "Staff verification failed" };
-  }
+   if (profileError) {
+     return { authorized: false, error: "Staff verification failed" };
+   }
 
-  if (!profile) {
-    return { authorized: false, error: "Unauthorized: staff account required" };
-  }
+   if (!profile) {
+     return { authorized: false, error: "Unauthorized: staff account required" };
+   }
 
-  return {
-    authorized: true,
-    user: { id: user.id, email: user.email ?? null },
-  };
+   return {
+     authorized: true,
+     user: { id: user.id, email: user.email ?? null, role: (profile as any).role ?? null },
+   };
 }
 
 // ==================== Shared helpers ====================
@@ -155,6 +156,18 @@ export async function requireInventoryStaff(): Promise<
 const INVENTORY_SELECT =
   "id, branch_id, product_id, stock_quantity, reorder_level, updated_at, pos_products(id, name, price, description, area_id, area_code, category_id, is_active, pos_categories(name)), pos_branches(name)";
 
+function getAllowedInventoryDepartments(role: string | null): {
+  areaCodes: string[] | null;
+  equipmentDepartments: string[] | null;
+} {
+  if (role === "partner") {
+    return { areaCodes: ["ieat"], equipmentDepartments: ["kitchen"] };
+  }
+  if (role === "crew") {
+    return { areaCodes: ["idrink"], equipmentDepartments: ["bar"] };
+  }
+  return { areaCodes: null, equipmentDepartments: null };
+}
 function toNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -247,7 +260,21 @@ export async function getInventoryItems(): Promise<{
       return { success: false, data: [], error: error.message };
     }
 
-    return { success: true, data: (data ?? []).map(mapItemRow) };
+     const role = staff.user.role;
+     const allowedAreaCodes =
+       role === "partner"
+         ? ["ieat"]
+         : role === "crew"
+           ? ["idrink"]
+           : null;
+
+     const items = (data ?? []).map(mapItemRow);
+     const filtered =
+       allowedAreaCodes === null
+         ? items
+         : items.filter((item) => allowedAreaCodes.includes(item.area_code ?? ""));
+
+     return { success: true, data: filtered };
   } catch (error) {
     return {
       success: false,
@@ -352,16 +379,22 @@ export async function createInventoryItem(input: {
   try {
     const validated = createItemSchema.parse(input);
 
-    const staff = await requireInventoryStaff();
-    if (!staff.authorized) {
-      return { success: false, error: staff.error };
-    }
+     const staff = await requireInventoryStaff();
+     if (!staff.authorized) {
+       return { success: false, error: staff.error };
+     }
 
-    const supabase = createInventoryAdminClient();
+     const supabase = createInventoryAdminClient();
 
-    let areaId: string | null = null;
-    const areaCode = validated.area_code?.trim() || null;
-    if (areaCode) {
+     let areaId: string | null = null;
+     const areaCode = validated.area_code?.trim() || null;
+
+     const allowed = getAllowedInventoryDepartments(staff.user.role);
+     if (allowed.areaCodes && !allowed.areaCodes.includes(areaCode ?? "")) {
+       return { success: false, error: "Unauthorized: department access denied" };
+     }
+
+     if (areaCode) {
       const { data: area, error: areaError } = await supabase
         .from("pos_areas")
         .select("id")
@@ -460,30 +493,47 @@ export async function updateInventoryItem(input: {
   try {
     const validated = updateItemSchema.parse(input);
 
-    const staff = await requireInventoryStaff();
-    if (!staff.authorized) {
-      return { success: false, error: staff.error };
-    }
+     const staff = await requireInventoryStaff();
+     if (!staff.authorized) {
+       return { success: false, error: staff.error };
+     }
 
-    const supabase = createInventoryAdminClient();
+     const supabase = createInventoryAdminClient();
 
-    // The inventory row identifies the branch/product pair; the
-    // editable product details live on pos_products.
-    const { data: stockRow, error: stockError } = await supabase
-      .from("pos_inventory")
-      .select("product_id")
-      .eq("id", validated.id)
-      .single();
+     // The inventory row identifies the branch/product pair; the
+     // editable product details live on pos_products.
+     const { data: stockRow, error: stockError } = await supabase
+       .from("pos_inventory")
+       .select("product_id")
+       .eq("id", validated.id)
+       .single();
 
-    if (stockError || !stockRow) {
-      return {
-        success: false,
-        error: stockError?.message ?? "Item not found",
-      };
-    }
+     if (stockError || !stockRow) {
+       return {
+         success: false,
+         error: stockError?.message ?? "Item not found",
+       };
+     }
 
-    let areaId: string | null = null;
-    const areaCode = validated.area_code?.trim() || null;
+     const { data: existingProduct } = await supabase
+       .from("pos_products")
+       .select("area_code")
+       .eq("id", stockRow!.product_id)
+       .maybeSingle();
+
+     const allowed = getAllowedInventoryDepartments(staff.user.role);
+     if (
+       allowed.areaCodes &&
+       !allowed.areaCodes.includes((existingProduct?.area_code as string | null) ?? "")
+     ) {
+       return { success: false, error: "Unauthorized: department access denied" };
+     }
+
+     let areaId: string | null = null;
+     const areaCode = validated.area_code?.trim() || null;
+     if (allowed.areaCodes && !allowed.areaCodes.includes(areaCode ?? "")) {
+       return { success: false, error: "Unauthorized: department access denied" };
+     }
     if (areaCode) {
       const { data: area, error: areaError } = await supabase
         .from("pos_areas")
@@ -618,15 +668,21 @@ export async function recordStockMovement(input: {
       .eq("id", validated.itemId)
       .single();
 
-    if (stockError || !stockRow) {
-      return {
-        success: false,
-        error: stockError?.message ?? "Item not found",
-      };
-    }
+     const { data: productRow } = await supabase
+       .from("pos_products")
+       .select("area_code")
+       .eq("id", stockRow!.product_id)
+       .maybeSingle();
 
-    const currentStock = toNumber(stockRow.stock_quantity);
-    const newBalance = currentStock + signedQuantity;
+     const allowed = getAllowedInventoryDepartments(staff.user.role);
+     if (
+       allowed.areaCodes &&
+       !allowed.areaCodes.includes((productRow?.area_code as string | null) ?? "")
+     ) {
+       return { success: false, error: "Unauthorized: department access denied" };
+     }
+     const currentStock = toNumber(stockRow!.stock_quantity);
+     const newBalance = currentStock + signedQuantity;
 
     if (newBalance < 0) {
       return {
@@ -654,8 +710,8 @@ export async function recordStockMovement(input: {
     const { error: movementError } = await supabase
       .from("pos_inventory_movements")
       .insert({
-        branch_id: stockRow.branch_id,
-        product_id: stockRow.product_id,
+         branch_id: stockRow!.branch_id,
+         product_id: stockRow!.product_id,
         movement_type: movementType,
         quantity: signedQuantity,
         notes: validated.reason || null,
@@ -696,19 +752,37 @@ export async function getStockHistory(itemId: string): Promise<{
 
     // Scope history to the exact branch/product pair the stock
     // row represents.
-    const { data: stockRow, error: stockError } = await adminClient
-      .from("pos_inventory")
-      .select("branch_id, product_id")
-      .eq("id", itemId)
-      .single();
+     const { data: stockRow, error: stockError } = await adminClient
+       .from("pos_inventory")
+       .select("branch_id, product_id")
+       .eq("id", itemId)
+       .single();
 
-    if (stockError || !stockRow) {
-      return {
-        success: false,
-        data: [],
-        error: stockError?.message ?? "Item not found",
-      };
-    }
+     if (stockError || !stockRow) {
+       return {
+         success: false,
+         data: [],
+         error: stockError?.message ?? "Item not found",
+       };
+     }
+
+     const { data: productRow } = await adminClient
+       .from("pos_products")
+       .select("area_code")
+       .eq("id", stockRow.product_id)
+       .maybeSingle();
+
+     const allowed = getAllowedInventoryDepartments(staff.user.role);
+     if (
+       allowed.areaCodes &&
+       !allowed.areaCodes.includes((productRow?.area_code as string | null) ?? "")
+     ) {
+       return {
+         success: false,
+         data: [],
+         error: "Unauthorized: department access denied",
+       };
+     }
 
     const { data, error } = await adminClient
       .from("pos_inventory_movements")
@@ -841,12 +915,26 @@ export async function getInventoryEquipment(): Promise<{
       return { success: false, data: [], error: error.message };
     }
 
-    return {
-      success: true,
-      data: (data ?? []).map((row) =>
-        mapEquipmentRow(row as Record<string, unknown>),
-      ),
-    };
+     const role = staff.user.role;
+     const allowedDepartments =
+       role === "partner"
+         ? ["kitchen"]
+         : role === "crew"
+           ? ["bar"]
+           : null;
+
+     const equipment = (data ?? []).map((row) =>
+       mapEquipmentRow(row as Record<string, unknown>),
+     );
+     const filtered =
+       allowedDepartments === null
+         ? equipment
+         : equipment.filter((item) => allowedDepartments.includes(item.department));
+
+     return {
+       success: true,
+       data: filtered,
+     };
   } catch (error) {
     return {
       success: false,
@@ -873,20 +961,20 @@ export async function createInventoryEquipment(input: {
   try {
     const validated = createEquipmentSchema.parse(input);
 
-    // available cannot exceed total
-    if (validated.available_quantity > validated.total_quantity) {
-      return {
-        success: false,
-        error: "Available quantity cannot exceed total quantity",
-      };
-    }
+     const staff = await requireInventoryStaff();
+     if (!staff.authorized) {
+       return { success: false, error: staff.error };
+     }
 
-    const staff = await requireInventoryStaff();
-    if (!staff.authorized) {
-      return { success: false, error: staff.error };
-    }
+     const allowed = getAllowedInventoryDepartments(staff.user.role);
+     if (
+       allowed.equipmentDepartments &&
+       !allowed.equipmentDepartments.includes(validated.department)
+     ) {
+       return { success: false, error: "Unauthorized: department access denied" };
+     }
 
-    const supabase = createInventoryAdminClient();
+     const supabase = createInventoryAdminClient();
 
     const { data, error } = await supabase
       .from("pos_equipment")
@@ -958,26 +1046,42 @@ export async function updateInventoryEquipment(input: {
       };
     }
 
-    const staff = await requireInventoryStaff();
-    if (!staff.authorized) {
-      return { success: false, error: staff.error };
-    }
+     const staff = await requireInventoryStaff();
+     if (!staff.authorized) {
+       return { success: false, error: staff.error };
+     }
 
-    const supabase = createInventoryAdminClient();
+     const allowed = getAllowedInventoryDepartments(staff.user.role);
+     if (
+       allowed.equipmentDepartments &&
+       !allowed.equipmentDepartments.includes(validated.department)
+     ) {
+       return { success: false, error: "Unauthorized: department access denied" };
+     }
 
-    // Fetch current row for history diff
-    const { data: current, error: currentError } = await supabase
-      .from("pos_equipment")
-      .select(EQUIPMENT_SELECT)
-      .eq("id", validated.id)
-      .single();
+     const supabase = createInventoryAdminClient();
 
-    if (currentError || !current) {
-      return {
-        success: false,
-        error: currentError?.message ?? "Equipment not found",
-      };
-    }
+     // Fetch current row for history diff
+     const { data: current, error: currentError } = await supabase
+       .from("pos_equipment")
+       .select(EQUIPMENT_SELECT)
+       .eq("id", validated.id)
+       .single();
+
+     if (currentError || !current) {
+       return {
+         success: false,
+         error: currentError?.message ?? "Equipment not found",
+       };
+     }
+
+     const currentDepartment = (current as any).department;
+     if (
+       allowed.equipmentDepartments &&
+       !allowed.equipmentDepartments.includes(currentDepartment)
+     ) {
+       return { success: false, error: "Unauthorized: department access denied" };
+     }
 
     const { data, error } = await supabase
       .from("pos_equipment")
@@ -1047,18 +1151,38 @@ export async function getEquipmentHistory(equipmentId: string): Promise<{
   error?: string;
 }> {
   try {
-    const staff = await requireInventoryStaff();
-    if (!staff.authorized) {
-      return { success: false, data: [], error: staff.error };
-    }
+     const staff = await requireInventoryStaff();
+     if (!staff.authorized) {
+       return { success: false, data: [], error: staff.error };
+     }
 
-    if (!z.string().uuid().safeParse(equipmentId).success) {
-      return { success: false, data: [], error: "Invalid equipment id" };
-    }
+     if (!z.string().uuid().safeParse(equipmentId).success) {
+       return { success: false, data: [], error: "Invalid equipment id" };
+     }
 
-    const supabase = createInventoryAdminClient();
+     const supabase = createInventoryAdminClient();
 
-    const { data, error } = await supabase
+     const { data: equipmentRow, error: equipmentError } = await supabase
+       .from("pos_equipment")
+       .select("department")
+       .eq("id", equipmentId)
+       .maybeSingle();
+
+     if (equipmentError || !equipmentRow) {
+       return { success: false, data: [], error: "Equipment not found" };
+     }
+
+     const allowed = getAllowedInventoryDepartments(staff.user.role);
+     if (
+       allowed.equipmentDepartments &&
+       !allowed.equipmentDepartments.includes(
+         (equipmentRow as any).department,
+       )
+     ) {
+       return { success: false, data: [], error: "Unauthorized: department access denied" };
+     }
+
+     const { data, error } = await supabase
       .from("pos_equipment_history")
       .select(
         "id, equipment_id, event, details, staff_user_id, staff_name, created_at",
@@ -1112,25 +1236,34 @@ export async function recordEquipmentEvent(input: {
   error?: string;
 }> {
   try {
-    const staff = await requireInventoryStaff();
-    if (!staff.authorized) {
-      return { success: false, error: staff.error };
-    }
+     const staff = await requireInventoryStaff();
+     if (!staff.authorized) {
+       return { success: false, error: staff.error };
+     }
 
-    const supabase = createInventoryAdminClient();
+     const allowed = getAllowedInventoryDepartments(staff.user.role);
 
-    const { data: current, error: currentError } = await supabase
-      .from("pos_equipment")
-      .select(EQUIPMENT_SELECT)
-      .eq("id", input.equipmentId)
-      .single();
+     const supabase = createInventoryAdminClient();
 
-    if (currentError || !current) {
-      return {
-        success: false,
-        error: currentError?.message ?? "Equipment not found",
-      };
-    }
+     const { data: current, error: currentError } = await supabase
+       .from("pos_equipment")
+       .select(EQUIPMENT_SELECT)
+       .eq("id", input.equipmentId)
+       .single();
+
+     if (currentError || !current) {
+       return {
+         success: false,
+         error: currentError?.message ?? "Equipment not found",
+       };
+     }
+
+     if (
+       allowed.equipmentDepartments &&
+       !allowed.equipmentDepartments.includes((current as any).department)
+     ) {
+       return { success: false, error: "Unauthorized: department access denied" };
+     }
 
     let newAvailable = Number(current.available_quantity);
     let newCondition = current.condition as EquipmentCondition;
