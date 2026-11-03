@@ -128,7 +128,22 @@ export type PosShift = {
   variance: number | null;
   notes: string | null;
   closed_at: string | null;
+  drawer_id: string | null;
+  opening_counted_cash: number | null;
+  retained_cash: number | null;
+  turnover_status: string | null;
 };
+
+export type CashDrawer = {
+  id: string;
+  branch_id: string;
+  terminal_id: string | null;
+  name: string;
+  opening_float: number;
+  is_active: boolean;
+  pending_turnover?: boolean;
+};
+
 
 const createLocationSchema = z.object({
   type: z.enum(["table", "room", "cubicle"]),
@@ -1196,7 +1211,10 @@ export async function openPosShift(params: {
   branch_id: string;
   terminal_id: string;
   cashier_user_id: string;
-  starting_cash?: number;
+  starting_cash: number;
+  opening_counted_cash?: number | null;
+  drawer_id?: string | null;
+  notes?: string | null;
 }): Promise<{
   success: boolean;
   data?: PosShift;
@@ -1208,17 +1226,35 @@ export async function openPosShift(params: {
       return { success: false, error: staff.error };
     }
 
-    // Only the current user may open a shift for themselves
     if (staff.user.id !== params.cashier_user_id) {
       return { success: false, error: "Cannot open a shift for another user" };
     }
 
+    const starting = Number(params.starting_cash);
+    if (!Number.isFinite(starting) || starting < 0) {
+      return { success: false, error: "Starting cash must be 0 or greater" };
+    }
+
+    const counted =
+      params.opening_counted_cash != null &&
+      Number.isFinite(Number(params.opening_counted_cash))
+        ? Number(params.opening_counted_cash)
+        : starting;
+
     const supabase = createPosAdminClient();
 
     // Guard: one open shift per (terminal + cashier)
-    const existing = await getOpenShift(params);
+    const existing = await getOpenShift({
+      branch_id: params.branch_id,
+      terminal_id: params.terminal_id,
+      cashier_user_id: params.cashier_user_id,
+    });
     if (existing.success && existing.data) {
-      return { success: true, data: existing.data };
+      return {
+        success: false,
+        error: "You already have an open shift on this terminal",
+      };
+      // Or: return { success: true, data: existing.data } if you prefer resume
     }
 
     const shiftNumber = `SH-${new Date()
@@ -1234,8 +1270,11 @@ export async function openPosShift(params: {
         cashier_user_id: params.cashier_user_id,
         shift_number: shiftNumber,
         status: "open",
-        starting_cash: params.starting_cash ?? 0,
-        expected_cash: params.starting_cash ?? 0,
+        starting_cash: starting,
+        opening_counted_cash: counted,
+        expected_cash: counted,
+        drawer_id: params.drawer_id ?? null,
+        notes: params.notes?.trim() || null,
       })
       .select("*")
       .single();
@@ -1261,7 +1300,7 @@ export async function ensureTerminalContext(
   data?: {
     branch: PosBranch;
     terminal: PosTerminal;
-    shift: PosShift;
+    shift: PosShift | null;
     cashier_user_id: string;
   };
   error?: string;
@@ -1295,34 +1334,18 @@ export async function ensureTerminalContext(
       };
     }
 
-    let shiftResult = await getOpenShift({
+    const shiftResult = await getOpenShift({
       branch_id: branch.id,
       terminal_id: terminalResult.data.id,
       cashier_user_id: staff.user.id,
     });
-
-    if (!shiftResult.success || !shiftResult.data) {
-      shiftResult = await openPosShift({
-        branch_id: branch.id,
-        terminal_id: terminalResult.data.id,
-        cashier_user_id: staff.user.id,
-        starting_cash: 0,
-      });
-    }
-
-    if (!shiftResult.success || !shiftResult.data) {
-      return {
-        success: false,
-        error: shiftResult.error ?? "Could not open a shift",
-      };
-    }
 
     return {
       success: true,
       data: {
         branch,
         terminal: terminalResult.data,
-        shift: shiftResult.data,
+        shift: shiftResult.success ? (shiftResult.data ?? null) : null,
         cashier_user_id: staff.user.id,
       },
     };
@@ -1383,6 +1406,493 @@ export async function getBranchBillingSettings(branchId: string): Promise<{
         error instanceof Error
           ? error.message
           : "Failed to load billing settings",
+    };
+  }
+}
+
+export async function getCashDrawers(
+  branchId: string,
+  terminalId?: string,
+): Promise<{
+  success: boolean;
+  data: CashDrawer[];
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, data: [], error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+    let query = supabase
+      .from("cash_drawers")
+      .select("id, branch_id, terminal_id, name, opening_float, is_active")
+      .eq("branch_id", branchId)
+      .eq("is_active", true)
+      .order("name", { ascending: true });
+
+    // Prefer drawers for this terminal, but also allow branch-wide (terminal_id null)
+    if (terminalId) {
+      query = query.or(`terminal_id.eq.${terminalId},terminal_id.is.null`);
+    }
+
+    const { data, error } = await query;
+    if (error) return { success: false, data: [], error: error.message };
+
+    return {
+      success: true,
+      data: (data ?? []).map((d) => ({
+        id: d.id,
+        branch_id: d.branch_id,
+        terminal_id: d.terminal_id,
+        name: d.name,
+        opening_float: Number(d.opening_float ?? 0),
+        is_active: Boolean(d.is_active),
+      })),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      data: [],
+      error: error instanceof Error ? error.message : "Failed to load drawers",
+    };
+  }
+}
+
+
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type ShiftCashSummary = {
+  shift_id: string;
+  starting_cash: number;
+  opening_counted_cash: number | null;
+  cash_sales: number;
+  cash_refunds: number;
+  cash_expenses: number;
+  cash_topups: number;
+  /** starting + sales - refunds - expenses + topups */
+  expected_cash: number;
+  payment_breakdown: {
+    cash: number;
+    card: number;
+    gcash: number;
+    maya: number;
+    employee_charge: number;
+    other: number;
+  };
+  order_count: number;
+  open_order_count: number;
+};
+
+export type CloseShiftResult = {
+  shift: {
+    id: string;
+    status: string;
+    closed_at: string;
+    starting_cash: number;
+    expected_cash: number;
+    actual_cash: number;
+    variance: number;
+    retained_cash: number;
+    remittance_amount: number;
+  };
+};
+
+// ---------------------------------------------------------------------------
+// getShiftCashSummary
+// ---------------------------------------------------------------------------
+
+/**
+ * Computes expected drawer cash for an open shift.
+ * Cash sales come from completed payments with payment_method = 'cash'
+ * linked to orders on this shift. Adjust the join paths if your
+ * order/payment tables differ.
+ */
+export async function getShiftCashSummary(shiftId: string): Promise<{
+  success: boolean;
+  data?: ShiftCashSummary;
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+
+    const { data: shift, error: shiftError } = await supabase
+      .from("pos_shifts")
+      .select(
+        "id, branch_id, terminal_id, cashier_user_id, status, starting_cash, opening_counted_cash, expected_cash, drawer_id",
+      )
+      .eq("id", shiftId)
+      .maybeSingle();
+
+    if (shiftError) return { success: false, error: shiftError.message };
+    if (!shift) return { success: false, error: "Shift not found" };
+    if (shift.status !== "open") {
+      return { success: false, error: "Shift is not open" };
+    }
+    if (shift.cashier_user_id !== staff.user.id) {
+      return {
+        success: false,
+        error: "You can only close your own shift",
+      };
+    }
+
+    const { data: orders, error: ordersError } = await supabase
+      .from("pos_orders")
+      .select("id, status")
+      .eq("shift_id", shiftId);
+
+    if (ordersError) {
+      return { success: false, error: ordersError.message };
+    }
+
+    const orderIds = (orders ?? []).map((o) => o.id);
+    const openOrderCount = (orders ?? []).filter(
+      (o) =>
+        o.status !== "completed" &&
+        o.status !== "cancelled" &&
+        o.status !== "void",
+    ).length;
+
+    let cashSales = 0;
+    const cashRefunds = 0;
+    const breakdown = {
+      cash: 0,
+      card: 0,
+      gcash: 0,
+      maya: 0,
+      employee_charge: 0,
+      other: 0,
+    };
+
+    if (orderIds.length > 0) {
+      const { data: payments, error: payError } = await supabase
+        .from("pos_payments")
+        .select("order_id, payment_method, amount, status, received_amount")
+        .in("order_id", orderIds)
+        .eq("status", "completed");
+
+      if (payError) {
+        return { success: false, error: payError.message };
+      }
+
+      for (const p of payments ?? []) {
+        const method = String(p.payment_method ?? "other").toLowerCase();
+        const amt = Number(p.amount ?? 0);
+        if (!Number.isFinite(amt)) continue;
+
+        if (method === "cash") {
+          breakdown.cash += amt;
+          cashSales += amt;
+        } else if (method === "card") {
+          breakdown.card += amt;
+        } else if (method === "gcash") {
+          breakdown.gcash += amt;
+        } else if (method === "maya") {
+          breakdown.maya += amt;
+        } else if (method === "employee_charge") {
+          breakdown.employee_charge += amt;
+        } else {
+          breakdown.other += amt;
+        }
+      }
+    }
+
+    let cashExpenses = 0;
+    const { data: expenses } = await supabase
+      .from("cash_expenses")
+      .select("amount, status, payment_method")
+      .eq("shift_id", shiftId)
+      .in("status", ["paid", "approved", "completed"]);
+
+    for (const e of expenses ?? []) {
+      if (String(e.payment_method ?? "cash").toLowerCase() === "cash") {
+        cashExpenses += Number(e.amount ?? 0);
+      }
+    }
+
+    let cashTopups = 0;
+    const { data: ledger } = await supabase
+      .from("cash_ledger")
+      .select("movement_type, amount")
+      .eq("shift_id", shiftId);
+
+    for (const row of ledger ?? []) {
+      const t = String(row.movement_type ?? "").toLowerCase();
+      const amt = Number(row.amount ?? 0);
+      if (t === "topup" || t === "float_in" || t === "paid_in") {
+        cashTopups += amt;
+      }
+    }
+
+    const starting = Number(
+      shift.opening_counted_cash ?? shift.starting_cash ?? 0,
+    );
+    const expected =
+      starting + cashSales - cashRefunds - cashExpenses + cashTopups;
+
+    return {
+      success: true,
+      data: {
+        shift_id: shift.id,
+        starting_cash: Number(shift.starting_cash ?? 0),
+        opening_counted_cash:
+          shift.opening_counted_cash != null
+            ? Number(shift.opening_counted_cash)
+            : null,
+        cash_sales: cashSales,
+        cash_refunds: cashRefunds,
+        cash_expenses: cashExpenses,
+        cash_topups: cashTopups,
+        expected_cash: Number(expected.toFixed(2)),
+        payment_breakdown: {
+          cash: Number(breakdown.cash.toFixed(2)),
+          card: Number(breakdown.card.toFixed(2)),
+          gcash: Number(breakdown.gcash.toFixed(2)),
+          maya: Number(breakdown.maya.toFixed(2)),
+          employee_charge: Number(breakdown.employee_charge.toFixed(2)),
+          other: Number(breakdown.other.toFixed(2)),
+        },
+        order_count: orderIds.length,
+        open_order_count: openOrderCount,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load shift cash summary",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// closePosShift (End Shift only)
+// ---------------------------------------------------------------------------
+
+const closeShiftSchema = z.object({
+  shift_id: z.string().uuid(),
+  /** Physical count of all cash currently in the drawer */
+  actual_cash: z.coerce.number().min(0),
+  /** Amount intentionally left in the drawer for the next cashier */
+  retained_cash: z.coerce.number().min(0),
+  notes: z.string().max(1000).optional().nullable(),
+  /** If true, refuse to close while any non-completed orders remain */
+  block_if_open_orders: z.boolean().default(true),
+});
+
+export async function closePosShift(
+  input: z.infer<typeof closeShiftSchema>,
+): Promise<{
+  success: boolean;
+  data?: CloseShiftResult;
+  error?: string;
+}> {
+  try {
+    const validated = closeShiftSchema.parse(input);
+
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+
+    const summaryRes = await getShiftCashSummary(validated.shift_id);
+    if (!summaryRes.success || !summaryRes.data) {
+      return {
+        success: false,
+        error: summaryRes.error ?? "Could not compute expected cash",
+      };
+    }
+    const summary = summaryRes.data;
+
+    if (validated.block_if_open_orders && summary.open_order_count > 0) {
+      return {
+        success: false,
+        error: `There are still ${summary.open_order_count} open order(s). Complete or cancel them before ending the shift.`,
+      };
+    }
+
+    const expected = summary.expected_cash;
+    const actual = Number(validated.actual_cash);
+    const retained = Number(validated.retained_cash);
+    if (retained > actual) {
+      return {
+        success: false,
+        error: "Retained float cannot be greater than the counted drawer cash.",
+      };
+    }
+    const remittanceAmount = Number((actual - retained).toFixed(2));
+    const variance = Number((actual - expected).toFixed(2));
+
+    const { data: shiftRow, error: loadErr } = await supabase
+      .from("pos_shifts")
+      .select("*")
+      .eq("id", validated.shift_id)
+      .eq("status", "open")
+      .maybeSingle();
+
+    if (loadErr) return { success: false, error: loadErr.message };
+    if (!shiftRow) {
+      return {
+        success: false,
+        error: "Open shift not found (already closed?)",
+      };
+    }
+    if (shiftRow.cashier_user_id !== staff.user.id) {
+      return { success: false, error: "You can only close your own shift" };
+    }
+    if (retained > 0 && !shiftRow.drawer_id) {
+      return {
+        success: false,
+        error: "Select a cash drawer for this shift before retaining a float.",
+      };
+    }
+
+    const closedAt = new Date().toISOString();
+
+    // Prepare the remittance before closing so a remittance insert failure
+    // cannot leave the shift closed without its corresponding cash record.
+    let remittanceId: string | null = null;
+    if (remittanceAmount > 0 && shiftRow.drawer_id) {
+      const { data: remittance, error: remittanceError } = await supabase
+        .from("cash_remittances")
+        .insert({
+          branch_id: shiftRow.branch_id,
+          drawer_id: shiftRow.drawer_id,
+          expected_amount: remittanceAmount,
+          retained_cash: retained,
+          status: "draft",
+          prepared_by: staff.user.id,
+          prepared_at: closedAt,
+          notes: `Prepared from shift ${shiftRow.shift_number ?? shiftRow.id}. ${validated.notes?.trim() ?? ""}`.trim(),
+        })
+        .select("id")
+        .single();
+
+      if (remittanceError) {
+        return { success: false, error: `Could not prepare cash remittance: ${remittanceError.message}` };
+      }
+      remittanceId = remittance.id;
+    }
+
+    const { data: closedShift, error: closeErr } = await supabase
+      .from("pos_shifts")
+      .update({
+        status: "closed",
+        closed_at: closedAt,
+        expected_cash: expected,
+        actual_cash: actual,
+        variance,
+        retained_cash: retained,
+        turnover_status: retained > 0 ? "pending" : "not_started",
+        notes:
+          [shiftRow.notes, validated.notes?.trim()]
+            .filter(Boolean)
+            .join("\n") || null,
+        cash_management_notes: validated.notes?.trim() || null,
+        reconciled_at: closedAt,
+        reconciled_by: staff.user.id,
+      })
+      .eq("id", validated.shift_id)
+      .eq("status", "open")
+      .select("*")
+      .single();
+
+    if (closeErr) {
+      if (remittanceId) {
+        await supabase.from("cash_remittances").delete().eq("id", remittanceId);
+      }
+      return { success: false, error: closeErr.message };
+    }
+    if (!closedShift) {
+      if (remittanceId) {
+        await supabase.from("cash_remittances").delete().eq("id", remittanceId);
+      }
+      return { success: false, error: "Failed to close shift" };
+    }
+
+    // Optional audit row in cash_ledger
+    const { error: ledgerErr } = await supabase.from("cash_ledger").upsert(
+      {
+        branch_id: shiftRow.branch_id,
+        drawer_id: shiftRow.drawer_id,
+        shift_id: shiftRow.id,
+        movement_type: "shift_close",
+        amount: actual,
+        source_type: "pos_shift",
+        source_id: shiftRow.id,
+        idempotency_key: `shift-close-${shiftRow.id}`,
+        recorded_by: staff.user.id,
+        occurred_at: closedAt,
+      },
+      { onConflict: "idempotency_key", ignoreDuplicates: true },
+    );
+
+    if (ledgerErr) {
+      console.error("cash_ledger write after shift close:", ledgerErr);
+    }
+
+    if (retained > 0 && shiftRow.drawer_id) {
+      const { error: retainedLedgerError } = await supabase
+        .from("cash_ledger")
+        .upsert(
+          {
+            branch_id: shiftRow.branch_id,
+            drawer_id: shiftRow.drawer_id,
+            shift_id: shiftRow.id,
+            movement_type: "float_retained",
+            amount: retained,
+            source_type: "pos_shift",
+            source_id: shiftRow.id,
+            idempotency_key: `float-retained-${shiftRow.id}`,
+            recorded_by: staff.user.id,
+            occurred_at: closedAt,
+          },
+          { onConflict: "idempotency_key", ignoreDuplicates: true },
+        );
+      if (retainedLedgerError) {
+        console.error("cash_ledger retained-float write:", retainedLedgerError);
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        shift: {
+          id: closedShift.id,
+          status: closedShift.status,
+          closed_at: closedShift.closed_at,
+          starting_cash: Number(closedShift.starting_cash),
+          expected_cash: Number(closedShift.expected_cash),
+          actual_cash: Number(closedShift.actual_cash),
+          variance: Number(closedShift.variance),
+          retained_cash: Number(closedShift.retained_cash ?? 0),
+          remittance_amount: remittanceAmount,
+        },
+      },
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: error.issues[0]?.message || "Validation failed",
+      };
+    }
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to close shift",
     };
   }
 }

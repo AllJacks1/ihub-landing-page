@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Package,
   QrCode,
+  LogOut,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,12 @@ import {
   type PosProduct,
   getBranchBillingSettings,
   createPosSession,
+  CashDrawer,
+  getCashDrawers,
+  openPosShift,
+  ShiftCashSummary,
+  getShiftCashSummary,
+  closePosShift,
 } from "@/lib/pos-actions";
 import Image from "next/image";
 import Link from "next/link";
@@ -128,10 +135,24 @@ export default function PrimaryTerminalPage() {
   // Preserved for the same unresolved payment attempt across dialog open/close.
   // Not persisted to browser storage; a full page refresh loses it and a new key
   // is generated, so refresh recovery is NOT solved.
-  const [paymentIdempotencyKey, setPaymentIdempotencyKey] = useState<string | null>(null);
+  const [paymentIdempotencyKey, setPaymentIdempotencyKey] = useState<
+    string | null
+  >(null);
   // Tracks an order whose payment succeeded but completion did not, so completion
   // can be retried without recording another payment.
-  const [pendingCompletionOrderId, setPendingCompletionOrderId] = useState<string | null>(null);
+  const [pendingCompletionOrderId, setPendingCompletionOrderId] = useState<
+    string | null
+  >(null);
+  // Keeps an unresolved payment attached to its original order during retries.
+  const [activePaymentOrderId, setActivePaymentOrderId] = useState<
+    string | null
+  >(null);
+  const [pendingEmployeeCharge, setPendingEmployeeCharge] = useState<{
+    employeeId: string;
+    orderId: string;
+    amount: number;
+    notes: string;
+  } | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [amountTendered, setAmountTendered] = useState("");
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
@@ -145,10 +166,8 @@ export default function PrimaryTerminalPage() {
   // Optional: set from your branch picker / default branch
   const [branchId, setBranchId] = useState<string | undefined>(undefined);
 
-  const [isHolding, setIsHolding] = useState(false);
   const [showHoldQrDialog, setShowHoldQrDialog] = useState(false);
   const [heldSessionUrl, setHeldSessionUrl] = useState<string | null>(null);
-  const [heldSessionToken, setHeldSessionToken] = useState<string | null>(null);
   const [heldOrderNumber, setHeldOrderNumber] = useState<string | null>(null);
 
   const [showCreateSessionDialog, setShowCreateSessionDialog] = useState(false);
@@ -217,15 +236,155 @@ export default function PrimaryTerminalPage() {
   const [isIaccessMemberFlag, setIsIaccessMemberFlag] = useState(false);
   const [checkingIaccess, setCheckingIaccess] = useState(false);
 
+  const [shiftReady, setShiftReady] = useState(false);
+  const [cashierUserId, setCashierUserId] = useState<string | null>(null);
+  const [drawers, setDrawers] = useState<CashDrawer[]>([]);
+  const [isStartingShift, setIsStartingShift] = useState(false);
+  const [startShiftForm, setStartShiftForm] = useState({
+    drawer_id: "",
+    starting_cash: "",
+    opening_counted_cash: "",
+    notes: "",
+  });
+
+  const [showEndShiftDialog, setShowEndShiftDialog] = useState(false);
+  const [shiftSummary, setShiftSummary] = useState<ShiftCashSummary | null>(
+    null,
+  );
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const [isClosingShift, setIsClosingShift] = useState(false);
+  const [endShiftForm, setEndShiftForm] = useState({
+    actual_cash: "",
+    retained_cash: "",
+    notes: "",
+  });
+
+  async function openEndShiftDialog() {
+  if (!shiftId) {
+    toast.error("No open shift");
+    return;
+  }
+
+  setIsLoadingSummary(true);
+  setShowEndShiftDialog(true);
+  setEndShiftForm({ actual_cash: "", retained_cash: "", notes: "" });
+  setShiftSummary(null);
+
+  try {
+    const res = await getShiftCashSummary(shiftId);
+
+    if (!res.success || !res.data) {
+      toast.error(res.error ?? "Could not load shift summary");
+      setShowEndShiftDialog(false);
+      return;
+    }
+
+    const data = res.data;
+
+    setShiftSummary(data);
+
+    setEndShiftForm((f) => ({
+      ...f,
+      retained_cash: String(
+        data.opening_counted_cash ?? data.starting_cash ?? 0,
+      ),
+    }));
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Failed to load summary");
+    setShowEndShiftDialog(false);
+  } finally {
+    setIsLoadingSummary(false);
+  }
+}
+
+  async function handleEndShift() {
+    if (!shiftId || !shiftSummary) return;
+
+    const actual = parseFloat(endShiftForm.actual_cash);
+    const retained = parseFloat(endShiftForm.retained_cash);
+
+    if (!Number.isFinite(actual) || actual < 0) {
+      toast.error("Enter a valid counted cash amount");
+      return;
+    }
+    if (!Number.isFinite(retained) || retained < 0 || retained > actual) {
+      toast.error("Retained float must be a valid amount not greater than counted cash");
+      return;
+    }
+
+    setIsClosingShift(true);
+    try {
+      const result = await closePosShift({
+        shift_id: shiftId,
+        actual_cash: actual,
+        retained_cash: retained,
+        notes: endShiftForm.notes.trim() || null,
+        block_if_open_orders: true,
+      });
+
+      if (!result.success || !result.data) {
+        toast.error(result.error ?? "Failed to end shift");
+        return;
+      }
+
+      const v = result.data.shift.variance;
+      const varianceLabel =
+        v === 0
+          ? "balanced"
+          : v > 0
+            ? `over by ${formatCurrency(v)}`
+            : `short by ${formatCurrency(Math.abs(v))}`;
+
+      toast.success(
+        `Shift closed · ${formatCurrency(result.data.shift.retained_cash)} retained for next shift · ${formatCurrency(result.data.shift.remittance_amount)} to remit · Drawer ${varianceLabel}`,
+      );
+
+      // Reset terminal to "start shift" state
+      setShiftId(null);
+      setShiftReady(false);
+      setShowEndShiftDialog(false);
+      setShiftSummary(null);
+      clearCart();
+      setActivePaymentOrderId(null);
+      setPendingCompletionOrderId(null);
+      setPaymentIdempotencyKey(null);
+
+      // Reload drawers for the next shift start screen
+      if (branchId && terminalId) {
+        const drawersRes = await getCashDrawers(branchId, terminalId);
+        if (drawersRes.success) {
+          setDrawers(drawersRes.data);
+          if (drawersRes.data.length === 1) {
+            const d = drawersRes.data[0];
+            setStartShiftForm((f) => ({
+              ...f,
+              drawer_id: d.id,
+              starting_cash:
+                d.opening_float > 0 ? String(d.opening_float) : f.starting_cash,
+              opening_counted_cash: "",
+              notes: "",
+            }));
+          }
+        }
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to end shift");
+    } finally {
+      setIsClosingShift(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
     async function checkMember() {
       if (!selectedCustomerId) {
         setIsIaccessMemberFlag(false);
+        setCheckingIaccess(false);
         return;
       }
 
+      setIsIaccessMemberFlag(false);
       setCheckingIaccess(true);
       try {
         const res = await checkIsIaccessMember(selectedCustomerId);
@@ -250,7 +409,7 @@ export default function PrimaryTerminalPage() {
 
     try {
       const [productsResult, categoriesResult] = await Promise.all([
-        getPosProducts(),
+        getPosProducts(branchId),
         getPosCategories(),
       ]);
 
@@ -275,6 +434,81 @@ export default function PrimaryTerminalPage() {
     }
   }
 
+  async function loadTerminalData(
+    branchId: string,
+    isCancelled: () => boolean = () => false,
+  ) {
+    if (isCancelled()) return;
+
+    const usersRes = await getCrmUsers();
+    if (isCancelled()) return;
+    if (usersRes.success) setCrmUsers(usersRes.data);
+
+    const [productsResult, categoriesResult, billingRes, tablesRes, roomsRes] =
+      await Promise.all([
+        getPosProducts(branchId),
+        getPosCategories(),
+        getBranchBillingSettings(branchId),
+        getTables(),
+        getRooms(),
+      ]);
+
+    if (isCancelled()) return;
+
+    if (productsResult.success) setProducts(productsResult.data);
+    if (categoriesResult.success) {
+      setCategories(["All", ...categoriesResult.data.map((c) => c.name)]);
+    }
+    if (billingRes.success && billingRes.data) {
+      setBillingSettings(billingRes.data);
+    }
+
+    setLocations({
+      table: (tablesRes.success ? tablesRes.data : []).map((t) => ({
+        id: t.id,
+        name: t.table_number,
+        seats: t.seats,
+        is_active: t.is_active,
+        zone: t.zone,
+      })),
+      room: (roomsRes.success ? roomsRes.data : []).map((r) => ({
+        id: r.id,
+        name: r.name,
+        seats: r.seats,
+        is_active: r.is_active,
+      })),
+    });
+
+    await loadActiveSessions();
+
+    // keep your paid-but-incomplete recovery block here
+    try {
+      const openRes = await getOpenOrders(branchId);
+      if (openRes.success) {
+        const candidates: string[] = [];
+        for (const o of openRes.data) {
+          if (o.status === "completed" || o.status === "cancelled") continue;
+          const full = await getPosOrder(o.id);
+          if (!full.success || !full.data) continue;
+          const hasCompletedPayment = (full.data.payments ?? []).some(
+            (p: { status?: string }) => p.status === "completed",
+          );
+          if (hasCompletedPayment) {
+            candidates.push(o.id);
+          }
+        }
+        if (candidates.length === 1) {
+          setActivePaymentOrderId(candidates[0]);
+          setPendingCompletionOrderId(candidates[0]);
+          setShowPaymentDialog(true);
+          toast.message("Recovered a paid order awaiting completion.");
+        }
+      }
+    } catch {
+      // best-effort recovery
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -287,28 +521,6 @@ export default function PrimaryTerminalPage() {
 
         const ctx = await ensureTerminalContext();
         if (cancelled) return;
-
-        if (!ctx.success || !ctx.data) {
-          setContextError(ctx.error ?? "Terminal context unavailable");
-          setContextReady(false);
-          // still try unscoped products as fallback
-          const [productsResult, categoriesResult] = await Promise.all([
-            getPosProducts(),
-            getPosCategories(),
-          ]);
-          // set them if success...
-          return;
-        }
-
-        const [empRes, accRes] = await Promise.all([
-          getEmployees(),
-          getEmployeeCreditAccounts(),
-        ]);
-
-        if (!cancelled) {
-          if (empRes.success) setEmployees(empRes.data);
-          if (accRes.success) setCreditAccounts(accRes.data);
-        }
 
         if (!ctx.success || !ctx.data) {
           setContextError(ctx.error ?? "Terminal context unavailable");
@@ -327,93 +539,60 @@ export default function PrimaryTerminalPage() {
         }
 
         // Narrow once — no more ctx.data?.xxx errors
-        const { branch, terminal, shift } = ctx.data;
+        const { branch, terminal, shift, cashier_user_id } = ctx.data;
 
         setBranchId(branch.id);
         setTerminalId(terminal.id);
-        setShiftId(shift.id);
         setBranchName(branch.name);
         setTerminalName(terminal.name);
-        setContextReady(true);
-
-        const usersRes = await getCrmUsers();
-        if (!cancelled && usersRes.success) {
-          setCrmUsers(usersRes.data);
-        }
-
+        setCashierUserId(cashier_user_id);
         setContextError(null);
+        setCreateSessionForm((prev) => ({ ...prev, branch_id: branch.id }));
 
-        setCreateSessionForm((prev) => ({
-          ...prev,
-          branch_id: branch.id,
-        }));
-
-        const [
-          productsResult,
-          categoriesResult,
-          billingRes,
-          tablesRes,
-          roomsRes,
-        ] = await Promise.all([
-          getPosProducts(branch.id),
-          getPosCategories(),
-          getBranchBillingSettings(branch.id),
-          getTables(),
-          getRooms(),
+        // Employees can load either way (or only after shift — your choice)
+        const [empRes, accRes] = await Promise.all([
+          getEmployees(),
+          getEmployeeCreditAccounts(),
         ]);
-
-        if (cancelled) return;
-
-        if (productsResult.success) setProducts(productsResult.data);
-        if (categoriesResult.success) {
-          setCategories(["All", ...categoriesResult.data.map((c) => c.name)]);
-        }
-        if (billingRes.success && billingRes.data) {
-          setBillingSettings(billingRes.data);
+        if (!cancelled) {
+          if (empRes.success) setEmployees(empRes.data);
+          if (accRes.success) setCreditAccounts(accRes.data);
         }
 
-        setLocations({
-          table: (tablesRes.success ? tablesRes.data : []).map((t) => ({
-            id: t.id,
-            name: t.table_number,
-            seats: t.seats,
-            is_active: t.is_active,
-            zone: t.zone,
-          })),
-          room: (roomsRes.success ? roomsRes.data : []).map((r) => ({
-            id: r.id,
-            name: r.name,
-            seats: r.seats,
-            is_active: r.is_active,
-          })),
-        });
+        if (shift) {
+          // Resume existing open shift
+          setShiftId(shift.id);
+          setShiftReady(true);
+          setContextReady(true);
 
-        await loadActiveSessions();
+          await loadTerminalData(branch.id, () => cancelled);
+        } else {
+          // No active shift — require cashier to start one
+          setShiftId(null);
+          setShiftReady(false);
 
-        // Durable recovery: find paid-but-incomplete open orders.
-        try {
-          const openRes = await getOpenOrders(branch.id);
-          if (openRes.success) {
-            const candidates: string[] = [];
-            for (const o of openRes.data) {
-              if (o.status === "completed" || o.status === "cancelled") continue;
-              const full = await getPosOrder(o.id);
-              if (!full.success || !full.data) continue;
-              const hasCompletedPayment = (full.data.payments ?? []).some(
-                (p: { status?: string }) => p.status === "completed",
-              );
-              if (hasCompletedPayment) {
-                candidates.push(o.id);
-              }
-            }
-            if (candidates.length === 1) {
-              setPendingCompletionOrderId(candidates[0]);
-              setShowPaymentDialog(true);
-              toast.message("Recovered a paid order awaiting completion.");
+          const drawersRes = await getCashDrawers(branch.id, terminal.id);
+
+          if (!cancelled && drawersRes.success) {
+            setDrawers(drawersRes.data);
+
+            if (drawersRes.data.length === 1) {
+              const d = drawersRes.data[0];
+
+              setStartShiftForm((f) => ({
+                ...f,
+                drawer_id: d.id,
+                starting_cash:
+                  d.opening_float > 0
+                    ? String(d.opening_float)
+                    : f.starting_cash,
+              }));
             }
           }
-        } catch {
-          // best-effort recovery
+
+          if (!cancelled) {
+            setContextReady(true);
+          }
         }
       } catch (e) {
         console.error(e);
@@ -670,7 +849,8 @@ export default function PrimaryTerminalPage() {
   }, [paymentMethod, amountTendered, amountDue]);
 
   const canConfirmPayment = useMemo(() => {
-    if (cart.length === 0 || isProcessingPayment) return false;
+    if (cart.length === 0 || isProcessingPayment || checkingIaccess)
+      return false;
     if (!discountResult.valid && (seniorCount > 0 || pwdCount > 0))
       return false;
 
@@ -695,18 +875,21 @@ export default function PrimaryTerminalPage() {
     pwdCount,
     selectedEmployeeId,
     selectedCreditAccount,
+    checkingIaccess,
   ]);
 
   function openPaymentDialog() {
+    if (activePaymentOrderId || pendingCompletionOrderId) {
+      setShowPaymentDialog(true);
+      return;
+    }
+
     setPaymentMethod("cash");
     setAmountTendered("");
     setSeniorCount(0);
     setPwdCount(0);
     setOtherGuestCount(1);
-    setDiscountVatIncluded(
-      billingSettings?.price_mode === "inclusive" ||
-        billingSettings?.vat_enabled === true,
-    );
+    setDiscountVatIncluded(billingSettings?.price_mode === "inclusive");
     setSelectedEmployeeId(null);
     setEmployeeSearch("");
     setSelectedCustomerId(null);
@@ -731,23 +914,68 @@ export default function PrimaryTerminalPage() {
   }
 
   async function handleConfirmPayment() {
-    if (!branchId || !terminalId || !shiftId) return;
+    if (!branchId || !terminalId || !shiftId) {
+      toast.error("Terminal context is not ready.");
+      return;
+    }
     if (!pendingCompletionOrderId && !canConfirmPayment) return;
 
-    // Retry completion for an already-paid order without recording another payment.
     if (pendingCompletionOrderId) {
       setIsProcessingPayment(true);
       try {
+        if (pendingEmployeeCharge) {
+          const chargeResult = await createEmployeeCharge({
+            employee_id: pendingEmployeeCharge.employeeId,
+            order_id: pendingEmployeeCharge.orderId,
+            amount: pendingEmployeeCharge.amount,
+            status: "outstanding",
+            notes: pendingEmployeeCharge.notes,
+          });
+          if (!chargeResult.success) {
+            toast.error(
+              chargeResult.error ??
+                "Employee charge is still not recorded. Reconcile before completing this order.",
+            );
+            return;
+          }
+          setPendingEmployeeCharge(null);
+        }
+
         const completeResult = await completeOrder(pendingCompletionOrderId);
-        if (!completeResult.success) {
-          toast.error(completeResult.error ?? "Payment saved but order could not be completed");
+        const alreadyCompleted =
+          !completeResult.success &&
+          /already completed/i.test(completeResult.error ?? "");
+        if (!completeResult.success && !alreadyCompleted) {
+          toast.error(
+            completeResult.error ??
+              "Payment saved but order could not be completed",
+          );
           return;
         }
+
+        if (isIaccessMemberFlag && selectedCustomerId && amountDue > 0) {
+          const pointsResult = await addPoints({
+            userId: selectedCustomerId,
+            amount: amountDue,
+            receiptNumber: pendingCompletionOrderId,
+            description: `POS sale ${pendingCompletionOrderId}`,
+            adminEmail: cashierFullname || null,
+          });
+          if (!pointsResult.success) {
+            toast.message(
+              pointsResult.error ??
+                "Order completed, but points could not be added",
+            );
+          }
+        }
+
         toast.success("Order completed");
         clearCart();
         setShowPaymentDialog(false);
         setAmountTendered("");
         setPendingCompletionOrderId(null);
+        setPendingEmployeeCharge(null);
+        setActivePaymentOrderId(null);
         setPaymentIdempotencyKey(null);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Order completion failed");
@@ -758,71 +986,101 @@ export default function PrimaryTerminalPage() {
     }
 
     setIsProcessingPayment(true);
-    let orderId: string | null = null;
+    let orderId: string | null = activePaymentOrderId;
 
     try {
-      const orderResult = await createPosOrder({
-        branch_id: branchId,
-        terminal_id: terminalId,
-        shift_id: shiftId,
-        order_type: "walk_in",
-        order_source: "manual",
-        client_id: selectedCustomerId ?? undefined,
-      });
+      let orderNumber: string | null = null;
 
-      if (!orderResult.success || !orderResult.data) {
-        toast.error(orderResult.error ?? "Failed to create order");
-        return;
+      // Create the order and its lines once. Retries reuse this same order.
+      if (!orderId) {
+        const orderResult = await createPosOrder({
+          branch_id: branchId,
+          terminal_id: terminalId,
+          shift_id: shiftId,
+          order_type: "walk_in",
+          order_source: "manual",
+          client_id: selectedCustomerId ?? undefined,
+        });
+
+        if (!orderResult.success || !orderResult.data) {
+          toast.error(orderResult.error ?? "Failed to create order");
+          return;
+        }
+
+        orderId = orderResult.data.id;
+        orderNumber = orderResult.data.order_number ?? null;
+        setActivePaymentOrderId(orderId);
+
+        const eligible = cart.filter((item) => {
+          const code = (item.area_code ?? "").toLowerCase();
+          return code === "ieat" || code === "idrink";
+        });
+        const discountMap = allocateDiscount(eligible, totalEligibleSavings);
+        const items = cart.map((item) => ({
+          product_id: item.id,
+          quantity: item.quantity,
+          discount_amount: discountMap.get(item.id) ?? 0,
+        }));
+
+        const itemsResult = await addOrderItems({ order_id: orderId, items });
+        if (!itemsResult.success) {
+          toast.error(itemsResult.error ?? "Failed to add items to the order.");
+          const cancelResult = await cancelOrder(orderId);
+          if (cancelResult.success) {
+            setActivePaymentOrderId(null);
+            setPaymentIdempotencyKey(null);
+          } else {
+            toast.error(
+              cancelResult.error ??
+                "The incomplete order could not be cancelled. Contact an administrator before retrying.",
+            );
+          }
+          return;
+        }
       }
-      orderId = orderResult.data.id;
 
-      // Proportional largest-remainder only on eligible lines
-      const eligible = cart.filter((i) => {
-        const c = (i.area_code ?? "").toLowerCase();
-        return c === "ieat" || c === "idrink";
-      });
-      // was: discountResult.totalSavings only
-      const totalSavings = totalEligibleSavings;
-      const discountMap = allocateDiscount(eligible, totalSavings);
-
-      const items = cart.map((item) => ({
-        product_id: item.id,
-        quantity: item.quantity,
-        discount_amount: discountMap.get(item.id) ?? 0,
-      }));
-
-      const itemsResult = await addOrderItems({ order_id: orderId, items });
-      if (!itemsResult.success) {
-        toast.error(itemsResult.error ?? "Failed to add items");
-        await cancelOrder(orderId); // clean up
+      if (!orderId) {
+        toast.error("Unable to identify the active order.");
         return;
       }
 
       const existingOrder = await getPosOrder(orderId);
       if (!existingOrder.success || !existingOrder.data) {
-        toast.error("Could not verify existing payment; please retry.");
+        toast.error(
+          "Could not verify the order. It has been kept open for reconciliation.",
+        );
         return;
       }
+
+      orderNumber = existingOrder.data.order_number ?? orderNumber;
       const payments = existingOrder.data.payments ?? [];
       const hasCompletedPayment = payments.some(
-        (p: { status?: string }) => p.status === "completed",
+        (payment: { status?: string }) => payment.status === "completed",
       );
       const hasNonCompletedPayment = payments.some(
-        (p: { status?: string }) => p.status !== "completed",
+        (payment: { status?: string }) => payment.status !== "completed",
       );
-      let payResult: { success: boolean; error?: string; duplicate?: boolean } = {
-        success: false,
-      };
+
+      let payResult: {
+        success: boolean;
+        error?: string;
+        duplicate?: boolean;
+      } = { success: false };
+
       if (hasCompletedPayment) {
         payResult = { success: true, duplicate: true };
-        toast.message("Payment already recorded; completing order.");
       } else if (hasNonCompletedPayment) {
-        toast.error("Payment is not confirmed. Reconciliation required before retry.");
+        toast.error(
+          "A payment attempt is still pending. Reconcile its status before retrying to avoid a duplicate charge.",
+        );
         return;
       } else {
+        const tendered = Number.parseFloat(amountTendered);
         const received =
           paymentMethod === "cash"
-            ? parseFloat(amountTendered) || amountDue
+            ? Number.isFinite(tendered)
+              ? tendered
+              : amountDue
             : amountDue;
 
         payResult = await recordPayment({
@@ -835,18 +1093,17 @@ export default function PrimaryTerminalPage() {
       }
 
       if (!payResult.success) {
-        // Ambiguous/timeout outcomes are reported as unknown, not proof of failure.
         toast.error(
           payResult.error ??
-            "Payment outcome unknown. Retry will reuse the same idempotency key.",
+            "Payment outcome is unknown. Retry will use the same order and idempotency key.",
         );
-        return; // items + open order remain; operator can retry safely
+        return;
       }
 
-      // A duplicate response means the RPC already recorded this payment; do not
-      // insert another. The RPC returns the existing payment for reconciliation.
       if (payResult.duplicate) {
-        toast.message("Payment already recorded; completing order.");
+        toast.message(
+          "Payment already recorded; completing the existing order.",
+        );
       }
 
       if (
@@ -859,20 +1116,30 @@ export default function PrimaryTerminalPage() {
           order_id: orderId,
           amount: amountDue,
           status: "outstanding",
-          notes: `POS ${orderResult.data?.order_number ?? orderId}`,
+          notes: `POS ${orderNumber ?? orderId}`,
         });
 
         if (!chargeResult.success) {
           toast.error(
             chargeResult.error ??
-              "Payment recorded but failed to create employee charge",
+              "Payment was recorded, but the employee charge could not be created. Reconcile this order before proceeding.",
           );
-          // You can still complete the order or leave it open – your choice
+          setPendingEmployeeCharge({
+            employeeId: selectedEmployeeId,
+            orderId,
+            amount: amountDue,
+            notes: `POS ${orderNumber ?? orderId}`,
+          });
+          setPendingCompletionOrderId(orderId);
+          return;
         }
       }
 
       const completeResult = await completeOrder(orderId);
-      const alreadyCompleted = !completeResult.success && /already completed/i.test(completeResult.error ?? "");
+      const alreadyCompleted =
+        !completeResult.success &&
+        /already completed/i.test(completeResult.error ?? "");
+
       if (!completeResult.success && !alreadyCompleted) {
         toast.error(
           completeResult.error ??
@@ -881,27 +1148,28 @@ export default function PrimaryTerminalPage() {
         setPendingCompletionOrderId(orderId);
         return;
       }
-        toast.success(
-          paymentMethod === "cash" && changeDue > 0
-            ? `Paid · Change ${formatCurrency(changeDue)}`
-            : "Payment successful",
-        );
-        // removed stray brace
+
+      toast.success(
+        paymentMethod === "cash" && changeDue > 0
+          ? `Paid · Change ${formatCurrency(changeDue)}`
+          : "Payment successful",
+      );
 
       if (isIaccessMemberFlag && selectedCustomerId && amountDue > 0) {
-        const orderNumber = orderResult.data?.order_number ?? orderId;
+        const receiptNumber = orderNumber ?? orderId;
         const pointsResult = await addPoints({
           userId: selectedCustomerId,
           amount: amountDue,
-          receiptNumber: orderNumber,
-          description: `POS sale ${orderNumber}`,
+          receiptNumber,
+          description: `POS sale ${receiptNumber}`,
           adminEmail: cashierFullname || null,
         });
+
         if (pointsResult.success) {
-          const pts =
+          const pointsAdded =
             (pointsResult.data as { pointsAdded?: number })?.pointsAdded ??
             amountDue / 150;
-          toast.success(`iAccess: +${Number(pts).toFixed(2)} points`);
+          toast.success(`iAccess: +${Number(pointsAdded).toFixed(2)} points`);
         } else {
           console.error("addPoints failed:", pointsResult.error);
           toast.message(
@@ -914,12 +1182,15 @@ export default function PrimaryTerminalPage() {
       setShowPaymentDialog(false);
       setAmountTendered("");
       setPendingCompletionOrderId(null);
+      setPendingEmployeeCharge(null);
+      setActivePaymentOrderId(null);
       setPaymentIdempotencyKey(null);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Payment outcome unknown; retry will reuse the same key");
-      if (orderId) {
-        // Leave order/payment state untouched for reconciliation; do not cancel automatically.
-      }
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : "Payment outcome unknown. The order has been kept for reconciliation.",
+      );
     } finally {
       setIsProcessingPayment(false);
     }
@@ -1016,7 +1287,6 @@ export default function PrimaryTerminalPage() {
       const url = `${baseUrl}/menu?session=${qrToken}`;
 
       setHeldSessionUrl(url);
-      setHeldSessionToken(qrToken);
       setHeldOrderNumber(orderResult.data.order_number ?? null);
 
       clearCart();
@@ -1104,8 +1374,58 @@ export default function PrimaryTerminalPage() {
     return name || e.employee_code || e.id.slice(0, 8);
   }
 
+  async function handleStartShift() {
+    if (!branchId || !terminalId || !cashierUserId) {
+      toast.error("Terminal context not ready");
+      return;
+    }
+
+    const starting = parseFloat(startShiftForm.starting_cash);
+    if (!Number.isFinite(starting) || starting < 0) {
+      toast.error("Enter a valid starting cash amount");
+      return;
+    }
+
+    setIsStartingShift(true);
+    try {
+      const result = await openPosShift({
+        branch_id: branchId,
+        terminal_id: terminalId,
+        cashier_user_id: cashierUserId,
+        starting_cash: starting,
+        opening_counted_cash: (() => {
+          const v = parseFloat(startShiftForm.opening_counted_cash);
+          return Number.isFinite(v) ? v : undefined;
+        })(),
+        drawer_id: startShiftForm.drawer_id || null,
+        notes: startShiftForm.notes.trim() || null,
+      });
+
+      if (!result.success || !result.data) {
+        toast.error(result.error ?? "Failed to start shift");
+        return;
+      }
+
+      setShiftId(result.data.id);
+      setShiftReady(true);
+      toast.success("Shift started");
+      await loadTerminalData(branchId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to start shift");
+    } finally {
+      setIsStartingShift(false);
+    }
+  }
+
+  const endShiftActual = parseFloat(endShiftForm.actual_cash) || 0;
+  const endShiftVariance =
+    shiftSummary != null
+      ? Number((endShiftActual - shiftSummary.expected_cash).toFixed(2))
+      : 0;
+
   const canPay =
     contextReady &&
+    shiftReady &&
     !!branchId &&
     !!terminalId &&
     !!shiftId &&
@@ -1127,12 +1447,19 @@ export default function PrimaryTerminalPage() {
                 Primary Terminal
               </h1>
 
-              {contextReady ? (
+              {contextReady && shiftReady ? (
                 <Badge
                   variant="outline"
                   className="border-emerald-200 bg-emerald-50 text-emerald-700"
                 >
                   Open · {branchName} / {terminalName}
+                </Badge>
+              ) : contextReady ? (
+                <Badge
+                  variant="outline"
+                  className="border-amber-200 bg-amber-50 text-amber-700"
+                >
+                  Shift not started
                 </Badge>
               ) : (
                 <Badge
@@ -1150,6 +1477,23 @@ export default function PrimaryTerminalPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {contextReady && shiftReady && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={openEndShiftDialog}
+                disabled={
+                  !!activePaymentOrderId ||
+                  !!pendingCompletionOrderId ||
+                  isProcessingPayment
+                }
+                className="border-stone-200 text-stone-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                End shift
+              </Button>
+            )}
             <div className="hidden items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-2.5 sm:flex">
               <User className="h-4 w-4 text-stone-400" />
               <div>
@@ -1174,368 +1518,538 @@ export default function PrimaryTerminalPage() {
         </div>
       </div>
 
-      {/* Terminal — whole area scrolls on mobile, split panes on xl */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">
-        {/* Products */}
-        <section className="min-w-0 flex-1 bg-stone-50 p-4 sm:p-6 xl:overflow-y-auto">
-          <div className="mx-auto">
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-
-              <Input
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search products..."
-                className="h-12 rounded-xl border-stone-200 bg-white pl-11 pr-11"
-              />
-
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
-                >
-                  <svg
-                    className="h-4 w-4"
-                    viewBox="0 0 20 20"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M6.28 5.22a.75.75 0 0 0-1.06 1.06l10 10a.75.75 0 1 0 1.06-1.06l-10-10ZM2.03 13.24a.75.75 0 0 0 1.06 1.06l10 10a.75.75 0 0 0 1.06-1.06l-10-10a.75.75 0 0 0-1.06 0Z"
-                      fill="currentColor"
-                    />
-                  </svg>
-                </button>
-              )}
-            </div>
-
-            <div className="sticky -top-6 z-10 -mx-4 mt-4 flex gap-2 overflow-x-auto bg-stone-50 px-4 py-2 sm:-mx-6 sm:px-6">
-              {categories.map((category) => {
-                const active = selectedCategory === category;
-
-                const hasMatchingProducts =
-                  searchQuery.trim() === "" ||
-                  filteredProducts.some(
-                    (product) => product.category_name === category,
-                  );
-
-                const isDisabled = hasMatchingProducts
-                  ? false
-                  : searchQuery.trim() !== "";
-
-                return (
-                  <Button
-                    key={category}
-                    type="button"
-                    variant={active ? "default" : "outline"}
-                    onClick={() => setSelectedCategory(category)}
-                    disabled={isDisabled}
-                    className={
-                      hasMatchingProducts
-                        ? active
-                          ? "shrink-0 rounded-xl bg-[#F36509] text-white hover:bg-[#d95a08]"
-                          : "shrink-0 rounded-xl border-stone-200 bg-white text-stone-600 hover:bg-stone-100"
-                        : "shrink-0 cursor-not-allowed rounded-xl border-stone-200 bg-stone-100 text-stone-400"
-                    }
-                  >
-                    {category}
-                  </Button>
-                );
-              })}
-            </div>
-
-            <div className="mt-6">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-stone-900">
-                    Products
-                  </h2>
-                  <p className="text-sm text-stone-500">
-                    Select an item to add it to the cart.
-                  </p>
-                </div>
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={loadProducts}
-                  disabled={isLoading}
-                  className="text-stone-500"
-                >
-                  <RefreshCw
-                    className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-                  />
-                  Refresh
-                </Button>
-              </div>
-
-              {isLoading ? (
-                <Card className="border-stone-200 bg-white">
-                  <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                    <RefreshCw className="h-6 w-6 animate-spin text-[#F36509]" />
-                    <p className="mt-4 text-sm font-medium text-stone-900">
-                      Loading products...
-                    </p>
-                    <p className="mt-1 text-sm text-stone-500">
-                      Getting products from the POS database.
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : filteredProducts.length === 0 ? (
-                <Card className="border-stone-200 bg-white">
-                  <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                    <div className="rounded-full bg-stone-100 p-4">
-                      <Package className="h-6 w-6 text-stone-400" />
-                    </div>
-                    <h3 className="mt-4 text-sm font-semibold text-stone-900">
-                      {searchQuery.trim()
-                        ? "No results found."
-                        : "No products available"}
-                    </h3>
-                    <p className="mt-1 max-w-sm text-sm text-stone-500">
-                      {searchQuery.trim()
-                        ? "Try a different search term or clear the search."
-                        : "Add active products to the POS database to display them here."}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 min-[110rem]:grid-cols-6 min-[130rem]:grid-cols-8">
-                  {filteredProducts.map((product) => (
-                    <button
-                      key={product.id}
-                      type="button"
-                      onClick={() => addToCart(product)}
-                      className="group text-left"
-                    >
-                      <Card className="h-full border-stone-200 bg-white transition-all group-hover:-translate-y-0.5 group-hover:border-[#F36509]/40 group-hover:shadow-sm">
-                        <CardContent className="p-3 sm:p-4">
-                          <div className="relative flex h-20 items-center justify-center overflow-hidden rounded-xl bg-stone-100 sm:h-24 lg:h-28">
-                            {product.image_url ? (
-                              <Image
-                                src={product.image_url}
-                                alt={product.name}
-                                fill
-                                className="object-cover"
-                                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                              />
-                            ) : (
-                              <Package className="h-8 w-8 text-stone-300 sm:h-10 sm:w-10" />
-                            )}
-                          </div>
-
-                          <div className="mt-3 sm:mt-4">
-                            <p className="truncate text-xs font-medium uppercase tracking-wider text-stone-400">
-                              {product.category_name}
-                            </p>
-
-                            <div className="mt-1 flex items-start justify-between gap-2 sm:gap-3">
-                              <h3 className="text-sm font-semibold leading-snug text-stone-900">
-                                {product.name}
-                              </h3>
-                              <Plus className="h-4 w-4 shrink-0 text-stone-300 transition-colors group-hover:text-[#F36509]" />
-                            </div>
-
-                            <p className="mt-2 text-sm font-semibold text-[#F36509] sm:text-base">
-                              {formatCurrency(product.price)}
-                            </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* Cart */}
-        <aside className="flex w-full flex-col border-t border-stone-200 bg-white xl:h-full xl:min-h-0 xl:w-[400px] xl:border-l xl:border-t-0">
-          {/* Cart header */}
-          <div className="border-b border-stone-100 px-4 py-4 sm:px-6 sm:py-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <ShoppingCart className="h-5 w-5 text-[#F36509]" />
-                  <h2 className="text-lg font-semibold text-stone-900">
-                    Current Order
-                  </h2>
-                </div>
-                <p className="mt-1 text-xs text-stone-500">
-                  Walk-in transaction
+      {/* Terminal body */}
+      {!contextReady ? (
+        <div className="flex flex-1 items-center justify-center bg-stone-50 p-6">
+          <p className="text-sm text-stone-500">
+            {contextError ?? "Initialising terminal…"}
+          </p>
+        </div>
+      ) : !shiftReady ? (
+        <div className="flex flex-1 items-center justify-center bg-stone-50 p-6">
+          <Card className="w-full max-w-md border-stone-200 bg-white">
+            <CardContent className="space-y-5 p-6">
+              <div className="text-center">
+                <p className="text-xs font-semibold uppercase tracking-wider text-[#F36509]">
+                  POS
+                </p>
+                <h2 className="mt-2 font-serif text-xl font-semibold text-stone-900">
+                  Start your shift
+                </h2>
+                <p className="mt-1 text-sm text-stone-500">
+                  {branchName} / {terminalName}
+                </p>
+                <p className="mt-3 text-sm text-stone-600">
+                  Enter opening cash before taking orders.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                {cart.length > 0 && (
+              {drawers.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Cash drawer</Label>
+                  <select
+                    value={startShiftForm.drawer_id}
+                    onChange={(e) =>
+                      setStartShiftForm((f) => {
+                        const selected = drawers.find((d) => d.id === e.target.value);
+                        return {
+                          ...f,
+                          drawer_id: e.target.value,
+                          starting_cash: selected
+                            ? String(selected.opening_float)
+                            : f.starting_cash,
+                          opening_counted_cash: "",
+                        };
+                      })
+                    }
+                    className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Select drawer…</option>
+                    {drawers.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                        {d.opening_float > 0
+                          ? ` · float ${formatCurrency(d.opening_float)}`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="starting_cash">Starting cash</Label>
+                <Input
+                  id="starting_cash"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  inputMode="decimal"
+                  value={startShiftForm.starting_cash}
+                  onChange={(e) =>
+                    setStartShiftForm((f) => ({
+                      ...f,
+                      starting_cash: e.target.value,
+                    }))
+                  }
+                  placeholder="0.00"
+                  className="h-11 rounded-xl"
+                  autoFocus
+                />
+              </div>
+
+              {drawers.find((d) => d.id === startShiftForm.drawer_id)?.pending_turnover && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  This drawer has a retained float from the previous shift.
+                  Count the cash physically and confirm the amount below before
+                  starting your shift.
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="opening_counted">
+                  Opening counted cash (required when receiving a retained float)
+                </Label>
+                <Input
+                  id="opening_counted"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  inputMode="decimal"
+                  value={startShiftForm.opening_counted_cash}
+                  onChange={(e) =>
+                    setStartShiftForm((f) => ({
+                      ...f,
+                      opening_counted_cash: e.target.value,
+                    }))
+                  }
+                  placeholder="Physical count"
+                  className="h-11 rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="shift_notes">Notes (optional)</Label>
+                <Input
+                  id="shift_notes"
+                  value={startShiftForm.notes}
+                  onChange={(e) =>
+                    setStartShiftForm((f) => ({ ...f, notes: e.target.value }))
+                  }
+                  className="h-11 rounded-xl"
+                />
+              </div>
+
+              <Button
+                type="button"
+                disabled={
+                  isStartingShift ||
+                  startShiftForm.starting_cash === "" ||
+                  !Number.isFinite(parseFloat(startShiftForm.starting_cash)) ||
+                  (Boolean(
+                    drawers.find((d) => d.id === startShiftForm.drawer_id)
+                      ?.pending_turnover,
+                  ) &&
+                    (startShiftForm.opening_counted_cash === "" ||
+                      !Number.isFinite(
+                        parseFloat(startShiftForm.opening_counted_cash),
+                      )))
+                }
+                onClick={handleStartShift}
+                className="h-12 w-full bg-[#F36509] text-white hover:bg-[#d95a08]"
+              >
+                {isStartingShift ? "Opening shift…" : "Start shift"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">
+          {/* Products */}
+          <section className="min-w-0 flex-1 bg-stone-50 p-4 sm:p-6 xl:overflow-y-auto">
+            <div className="mx-auto">
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search products..."
+                  className="h-12 rounded-xl border-stone-200 bg-white pl-11 pr-11"
+                />
+
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                  >
+                    <svg
+                      className="h-4 w-4"
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M6.28 5.22a.75.75 0 0 0-1.06 1.06l10 10a.75.75 0 1 0 1.06-1.06l-10-10ZM2.03 13.24a.75.75 0 0 0 1.06 1.06l10 10a.75.75 0 0 0 1.06-1.06l-10-10a.75.75 0 0 0-1.06 0Z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              <div className="sticky -top-6 z-10 -mx-4 mt-4 flex gap-2 overflow-x-auto bg-stone-50 px-4 py-2 sm:-mx-6 sm:px-6">
+                {categories.map((category) => {
+                  const active = selectedCategory === category;
+
+                  const hasMatchingProducts =
+                    searchQuery.trim() === "" ||
+                    filteredProducts.some(
+                      (product) => product.category_name === category,
+                    );
+
+                  const isDisabled = hasMatchingProducts
+                    ? false
+                    : searchQuery.trim() !== "";
+
+                  return (
+                    <Button
+                      key={category}
+                      type="button"
+                      variant={active ? "default" : "outline"}
+                      onClick={() => setSelectedCategory(category)}
+                      disabled={isDisabled}
+                      className={
+                        hasMatchingProducts
+                          ? active
+                            ? "shrink-0 rounded-xl bg-[#F36509] text-white hover:bg-[#d95a08]"
+                            : "shrink-0 rounded-xl border-stone-200 bg-white text-stone-600 hover:bg-stone-100"
+                          : "shrink-0 cursor-not-allowed rounded-xl border-stone-200 bg-stone-100 text-stone-400"
+                      }
+                    >
+                      {category}
+                    </Button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-stone-900">
+                      Products
+                    </h2>
+                    <p className="text-sm text-stone-500">
+                      Select an item to add it to the cart.
+                    </p>
+                  </div>
+
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={clearCart}
-                    className="text-xs text-stone-500 hover:text-red-600"
+                    onClick={loadProducts}
+                    disabled={isLoading}
+                    className="text-stone-500"
                   >
-                    Clear
+                    <RefreshCw
+                      className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
+                    />
+                    Refresh
                   </Button>
-                )}
+                </div>
 
-                <Link
-                  href="/admin/pos/terminal/qr-sessions"
-                  className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 transition-colors hover:border-[#F36509]/40"
-                >
-                  <QrCode className="h-4 w-4 text-[#F36509]" />
-                  <span className="hidden text-sm font-medium text-stone-900 sm:inline">
-                    QR Sessions
-                  </span>
-                  {activeCount > 0 && (
-                    <Badge
-                      variant="outline"
-                      className="border-emerald-200 bg-emerald-50 text-emerald-700"
-                    >
-                      {activeCount}
-                    </Badge>
-                  )}
-                </Link>
+                {isLoading ? (
+                  <Card className="border-stone-200 bg-white">
+                    <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                      <RefreshCw className="h-6 w-6 animate-spin text-[#F36509]" />
+                      <p className="mt-4 text-sm font-medium text-stone-900">
+                        Loading products...
+                      </p>
+                      <p className="mt-1 text-sm text-stone-500">
+                        Getting products from the POS database.
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : filteredProducts.length === 0 ? (
+                  <Card className="border-stone-200 bg-white">
+                    <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                      <div className="rounded-full bg-stone-100 p-4">
+                        <Package className="h-6 w-6 text-stone-400" />
+                      </div>
+                      <h3 className="mt-4 text-sm font-semibold text-stone-900">
+                        {searchQuery.trim()
+                          ? "No results found."
+                          : "No products available"}
+                      </h3>
+                      <p className="mt-1 max-w-sm text-sm text-stone-500">
+                        {searchQuery.trim()
+                          ? "Try a different search term or clear the search."
+                          : "Add active products to the POS database to display them here."}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 min-[110rem]:grid-cols-6 min-[130rem]:grid-cols-8">
+                    {filteredProducts.map((product) => (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() => addToCart(product)}
+                        disabled={
+                          !!activePaymentOrderId || !!pendingCompletionOrderId
+                        }
+                        className="group text-left disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Card className="h-full border-stone-200 bg-white transition-all group-hover:-translate-y-0.5 group-hover:border-[#F36509]/40 group-hover:shadow-sm">
+                          <CardContent className="p-3 sm:p-4">
+                            <div className="relative flex h-20 items-center justify-center overflow-hidden rounded-xl bg-stone-100 sm:h-24 lg:h-28">
+                              {product.image_url ? (
+                                <Image
+                                  src={product.image_url}
+                                  alt={product.name}
+                                  fill
+                                  className="object-cover"
+                                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                                />
+                              ) : (
+                                <Package className="h-8 w-8 text-stone-300 sm:h-10 sm:w-10" />
+                              )}
+                            </div>
+
+                            <div className="mt-3 sm:mt-4">
+                              <p className="truncate text-xs font-medium uppercase tracking-wider text-stone-400">
+                                {product.category_name}
+                              </p>
+
+                              <div className="mt-1 flex items-start justify-between gap-2 sm:gap-3">
+                                <h3 className="text-sm font-semibold leading-snug text-stone-900">
+                                  {product.name}
+                                </h3>
+                                <Plus className="h-4 w-4 shrink-0 text-stone-300 transition-colors group-hover:text-[#F36509]" />
+                              </div>
+
+                              <p className="mt-2 text-sm font-semibold text-[#F36509] sm:text-base">
+                                {formatCurrency(product.price)}
+                              </p>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
+          </section>
 
-          <div className="px-4 py-4 sm:px-6 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
-            {cart.length === 0 ? (
-              <div className="flex min-h-[200px] flex-col items-center justify-center text-center xl:min-h-[280px]">
-                <div className="rounded-full bg-stone-100 p-4">
-                  <ShoppingCart className="h-6 w-6 text-stone-400" />
+          {/* Cart */}
+          <aside className="flex w-full flex-col border-t border-stone-200 bg-white xl:h-full xl:min-h-0 xl:w-[400px] xl:border-l xl:border-t-0">
+            {/* Cart header */}
+            <div className="border-b border-stone-100 px-4 py-4 sm:px-6 sm:py-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="h-5 w-5 text-[#F36509]" />
+                    <h2 className="text-lg font-semibold text-stone-900">
+                      Current Order
+                    </h2>
+                  </div>
+                  <p className="mt-1 text-xs text-stone-500">
+                    Walk-in transaction
+                  </p>
                 </div>
-                <h3 className="mt-4 text-sm font-semibold text-stone-900">
-                  Your cart is empty
-                </h3>
-                <p className="mt-1 max-w-xs text-xs leading-5 text-stone-500">
-                  Select products from the terminal to start an order.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {cart.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-xl border border-stone-200 p-3"
+
+                <div className="flex items-center gap-2">
+                  {cart.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearCart}
+                      disabled={
+                        !!activePaymentOrderId || !!pendingCompletionOrderId
+                      }
+                      className="text-xs text-stone-500 hover:text-red-600"
+                    >
+                      Clear
+                    </Button>
+                  )}
+
+                  <Link
+                    href="/admin/pos/terminal/qr-sessions"
+                    className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 transition-colors hover:border-[#F36509]/40"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h3 className="truncate text-sm font-medium text-stone-900">
-                          {item.name}
-                        </h3>
-                        <p className="mt-1 text-xs text-stone-500">
-                          {formatCurrency(item.price)} each
+                    <QrCode className="h-4 w-4 text-[#F36509]" />
+                    <span className="hidden text-sm font-medium text-stone-900 sm:inline">
+                      QR Sessions
+                    </span>
+                    {activeCount > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                      >
+                        {activeCount}
+                      </Badge>
+                    )}
+                  </Link>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-4 py-4 sm:px-6 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
+              {cart.length === 0 ? (
+                <div className="flex min-h-[200px] flex-col items-center justify-center text-center xl:min-h-[280px]">
+                  <div className="rounded-full bg-stone-100 p-4">
+                    <ShoppingCart className="h-6 w-6 text-stone-400" />
+                  </div>
+                  <h3 className="mt-4 text-sm font-semibold text-stone-900">
+                    Your cart is empty
+                  </h3>
+                  <p className="mt-1 max-w-xs text-xs leading-5 text-stone-500">
+                    Select products from the terminal to start an order.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {cart.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-xl border border-stone-200 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-sm font-medium text-stone-900">
+                            {item.name}
+                          </h3>
+                          <p className="mt-1 text-xs text-stone-500">
+                            {formatCurrency(item.price)} each
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => removeItem(item.id)}
+                          disabled={
+                            !!activePaymentOrderId || !!pendingCompletionOrderId
+                          }
+                          className="rounded-lg p-1.5 text-stone-300 transition-colors hover:bg-red-50 hover:text-red-600"
+                          aria-label={`Remove ${item.name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between">
+                        <div className="flex items-center gap-2 rounded-lg border border-stone-200 p-1">
+                          <button
+                            type="button"
+                            onClick={() => decreaseQuantity(item.id)}
+                            disabled={
+                              !!activePaymentOrderId ||
+                              !!pendingCompletionOrderId
+                            }
+                            className="rounded-md p-1 text-stone-500 hover:bg-stone-100"
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </button>
+                          <span className="min-w-6 text-center text-sm font-medium text-stone-900">
+                            {item.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => increaseQuantity(item.id)}
+                            disabled={
+                              !!activePaymentOrderId ||
+                              !!pendingCompletionOrderId
+                            }
+                            className="rounded-md p-1 text-stone-500 hover:bg-stone-100"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+
+                        <p className="text-sm font-semibold text-stone-900">
+                          {formatCurrency(item.price * item.quantity)}
                         </p>
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => removeItem(item.id)}
-                        className="rounded-lg p-1.5 text-stone-300 transition-colors hover:bg-red-50 hover:text-red-600"
-                        aria-label={`Remove ${item.name}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
                     </div>
-
-                    <div className="mt-3 flex items-center justify-between">
-                      <div className="flex items-center gap-2 rounded-lg border border-stone-200 p-1">
-                        <button
-                          type="button"
-                          onClick={() => decreaseQuantity(item.id)}
-                          className="rounded-md p-1 text-stone-500 hover:bg-stone-100"
-                        >
-                          <Minus className="h-3.5 w-3.5" />
-                        </button>
-                        <span className="min-w-6 text-center text-sm font-medium text-stone-900">
-                          {item.quantity}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => increaseQuantity(item.id)}
-                          className="rounded-md p-1 text-stone-500 hover:bg-stone-100"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-
-                      <p className="text-sm font-semibold text-stone-900">
-                        {formatCurrency(item.price * item.quantity)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Totals — sticky bottom bar on mobile, static footer on xl */}
-          <div className="sticky bottom-0 z-10 border-t border-stone-100 bg-stone-50/80 px-4 py-4 backdrop-blur sm:px-6 xl:static xl:z-auto xl:bg-stone-50/70 xl:py-5">
-            <div className="flex justify-between text-sm">
-              <span className="text-stone-500">Subtotal</span>
-              <span className="font-medium">{formatCurrency(subtotal)}</span>
+                  ))}
+                </div>
+              )}
             </div>
-            {billingSettings?.vat_enabled && (
+
+            {/* Totals — sticky bottom bar on mobile, static footer on xl */}
+            <div className="sticky bottom-0 z-10 border-t border-stone-100 bg-stone-50/80 px-4 py-4 backdrop-blur sm:px-6 xl:static xl:z-auto xl:bg-stone-50/70 xl:py-5">
               <div className="flex justify-between text-sm">
-                <span className="text-stone-500">
-                  VAT ({billingSettings.vat_rate}%)
-                </span>
-                <span className="font-medium">{formatCurrency(taxAmount)}</span>
+                <span className="text-stone-500">Subtotal</span>
+                <span className="font-medium">{formatCurrency(subtotal)}</span>
               </div>
-            )}
-            {billingSettings?.service_charge_enabled && (
-              <div className="flex justify-between text-sm">
-                <span className="text-stone-500">
-                  Service Charge ({billingSettings.service_charge_rate}%) · Food
-                  & Drinks
-                </span>
-                <span className="font-medium">
-                  {formatCurrency(serviceChargeAmount)}
-                </span>
+              {billingSettings?.vat_enabled && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-stone-500">
+                    VAT ({billingSettings.vat_rate}%)
+                  </span>
+                  <span className="font-medium">
+                    {formatCurrency(taxAmount)}
+                  </span>
+                </div>
+              )}
+              {billingSettings?.service_charge_enabled && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-stone-500">
+                    Service Charge ({billingSettings.service_charge_rate}%) ·
+                    Food & Drinks
+                  </span>
+                  <span className="font-medium">
+                    {formatCurrency(serviceChargeAmount)}
+                  </span>
+                </div>
+              )}
+              <div className="mt-2 flex justify-between border-t border-stone-200 pt-2 text-sm font-semibold text-stone-900">
+                <span>Total</span>
+                <span>{formatCurrency(finalTotal)}</span>
               </div>
-            )}
-            <div className="mt-2 flex justify-between border-t border-stone-200 pt-2 text-sm font-semibold text-stone-900">
-              <span>Total</span>
-              <span>{formatCurrency(finalTotal)}</span>
+
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    cart.length === 0 ||
+                    !!activePaymentOrderId ||
+                    !!pendingCompletionOrderId ||
+                    isCreatingSession ||
+                    !contextReady ||
+                    !shiftReady
+                  }
+                  onClick={openHoldDialog}
+                  className="h-11 border-stone-200 bg-white"
+                >
+                  <Receipt className="mr-2 h-4 w-4" />
+                  {isCreatingSession ? "Holding…" : "Hold"}
+                </Button>
+
+                <Button
+                  type="button"
+                  disabled={!canPay}
+                  onClick={openPaymentDialog}
+                  className="h-11 bg-[#F36509] text-white hover:bg-[#d95a08]"
+                >
+                  <CreditCard className="mr-2 h-4 w-4" />
+                  Pay
+                </Button>
+              </div>
+
+              <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-stone-400">
+                <Banknote className="h-3.5 w-3.5" />
+                Cash, card, GCash, Maya &amp; Employee Charge
+              </p>
             </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={
-                  cart.length === 0 || isCreatingSession || !contextReady
-                }
-                onClick={openHoldDialog}
-                className="h-11 border-stone-200 bg-white"
-              >
-                <Receipt className="mr-2 h-4 w-4" />
-                {isCreatingSession ? "Holding…" : "Hold"}
-              </Button>
-
-              <Button
-                type="button"
-                disabled={!canPay}
-                onClick={openPaymentDialog}
-                className="h-11 bg-[#F36509] text-white hover:bg-[#d95a08]"
-              >
-                <CreditCard className="mr-2 h-4 w-4" />
-                Pay
-              </Button>
-            </div>
-
-            <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-stone-400">
-              <Banknote className="h-3.5 w-3.5" />
-              Cash, card, GCash, Maya &amp; Employee Charge
-            </p>
-          </div>
-        </aside>
-      </div>
+          </aside>
+        </div>
+      )}
 
       <Dialog
         open={showPaymentDialog}
@@ -1775,6 +2289,9 @@ export default function PrimaryTerminalPage() {
                   <button
                     key={id}
                     type="button"
+                    disabled={
+                      !!activePaymentOrderId || !!pendingCompletionOrderId
+                    }
                     onClick={() => {
                       setPaymentMethod(id);
                       if (id !== "cash") setAmountTendered("");
@@ -2091,7 +2608,7 @@ export default function PrimaryTerminalPage() {
             </Button>
             <Button
               type="button"
-              disabled={!canConfirmPayment}
+              disabled={!canConfirmPayment || !!pendingCompletionOrderId}
               onClick={handleConfirmPayment}
               className="bg-[#F36509] text-white hover:bg-[#d95a08]"
             >
@@ -2280,12 +2797,271 @@ export default function PrimaryTerminalPage() {
               onClick={() => {
                 setShowHoldQrDialog(false);
                 setHeldSessionUrl(null);
-                setHeldSessionToken(null);
                 setHeldOrderNumber(null);
               }}
               className="bg-[#F36509] text-white hover:bg-[#d95a08]"
             >
               Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={showEndShiftDialog}
+        onOpenChange={(open) => {
+          if (!open && isClosingShift) return;
+          setShowEndShiftDialog(open);
+        }}
+      >
+        <DialogContent className="w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto rounded-2xl sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">End shift</DialogTitle>
+            <DialogDescription>
+              Count the drawer and close your shift.
+              {branchName && terminalName
+                ? ` · ${branchName} / ${terminalName}`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoadingSummary || !shiftSummary ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <RefreshCw className="h-6 w-6 animate-spin text-[#F36509]" />
+              <p className="mt-3 text-sm text-stone-500">
+                Loading shift summary…
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              {shiftSummary.open_order_count > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  {shiftSummary.open_order_count} open order(s) must be
+                  completed or cancelled before you can end the shift.
+                </div>
+              )}
+
+              {/* Payment mix */}
+              <div className="rounded-xl border border-stone-200 bg-stone-50/50 p-3 text-sm">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-400">
+                  This shift
+                </p>
+                <div className="space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-stone-500">Orders</span>
+                    <span className="font-medium tabular-nums">
+                      {shiftSummary.order_count}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-500">Cash sales</span>
+                    <span className="font-medium tabular-nums">
+                      {formatCurrency(shiftSummary.cash_sales)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-500">Card</span>
+                    <span className="tabular-nums">
+                      {formatCurrency(shiftSummary.payment_breakdown.card)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-500">GCash</span>
+                    <span className="tabular-nums">
+                      {formatCurrency(shiftSummary.payment_breakdown.gcash)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-500">Maya</span>
+                    <span className="tabular-nums">
+                      {formatCurrency(shiftSummary.payment_breakdown.maya)}
+                    </span>
+                  </div>
+                  {shiftSummary.payment_breakdown.employee_charge > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-stone-500">Employee charge</span>
+                      <span className="tabular-nums">
+                        {formatCurrency(
+                          shiftSummary.payment_breakdown.employee_charge,
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  {shiftSummary.cash_expenses > 0 && (
+                    <div className="flex justify-between text-stone-500">
+                      <span>Cash expenses</span>
+                      <span className="tabular-nums">
+                        −{formatCurrency(shiftSummary.cash_expenses)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Expected drawer */}
+              <div className="rounded-xl border border-stone-200 bg-white p-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-stone-500">Opening float</span>
+                  <span className="tabular-nums">
+                    {formatCurrency(
+                      shiftSummary.opening_counted_cash ??
+                        shiftSummary.starting_cash,
+                    )}
+                  </span>
+                </div>
+                <div className="mt-1 flex justify-between">
+                  <span className="text-stone-500">+ Cash sales</span>
+                  <span className="tabular-nums">
+                    {formatCurrency(shiftSummary.cash_sales)}
+                  </span>
+                </div>
+                {shiftSummary.cash_expenses > 0 && (
+                  <div className="mt-1 flex justify-between">
+                    <span className="text-stone-500">− Expenses</span>
+                    <span className="tabular-nums">
+                      {formatCurrency(shiftSummary.cash_expenses)}
+                    </span>
+                  </div>
+                )}
+                <div className="mt-2 flex justify-between border-t border-stone-100 pt-2 font-semibold text-stone-900">
+                  <span>Expected in drawer</span>
+                  <span className="tabular-nums">
+                    {formatCurrency(shiftSummary.expected_cash)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Counted cash */}
+              <div className="space-y-2">
+                <Label htmlFor="actual_cash">Counted cash</Label>
+                <Input
+                  id="actual_cash"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  inputMode="decimal"
+                  value={endShiftForm.actual_cash}
+                  onChange={(e) =>
+                    setEndShiftForm((f) => ({
+                      ...f,
+                      actual_cash: e.target.value,
+                    }))
+                  }
+                  placeholder="0.00"
+                  className="h-11 rounded-xl"
+                  autoFocus
+                />
+                {endShiftForm.actual_cash !== "" &&
+                  Number.isFinite(endShiftActual) && (
+                    <div
+                      className={`flex justify-between rounded-lg px-3 py-2 text-sm ${
+                        endShiftVariance === 0
+                          ? "bg-emerald-50 text-emerald-800"
+                          : endShiftVariance > 0
+                            ? "bg-sky-50 text-sky-800"
+                            : "bg-red-50 text-red-800"
+                      }`}
+                    >
+                      <span>Variance</span>
+                      <span className="font-semibold tabular-nums">
+                        {endShiftVariance === 0
+                          ? "Balanced"
+                          : endShiftVariance > 0
+                            ? `+${formatCurrency(endShiftVariance)} over`
+                            : `${formatCurrency(endShiftVariance)} short`}
+                      </span>
+                    </div>
+                  )}
+              </div>
+
+              {/* Retained float for the next cashier */}
+              <div className="space-y-2 rounded-xl border border-stone-200 bg-stone-50/70 p-3">
+                <div>
+                  <Label htmlFor="retained_cash">Retained float for next shift</Label>
+                  <p className="mt-1 text-xs text-stone-500">
+                    Leave this amount in the same drawer. The remaining cash is
+                    prepared for remittance.
+                  </p>
+                </div>
+                <Input
+                  id="retained_cash"
+                  type="number"
+                  min={0}
+                  max={endShiftForm.actual_cash || undefined}
+                  step="0.01"
+                  inputMode="decimal"
+                  value={endShiftForm.retained_cash}
+                  onChange={(e) =>
+                    setEndShiftForm((f) => ({
+                      ...f,
+                      retained_cash: e.target.value,
+                    }))
+                  }
+                  placeholder="0.00"
+                  className="h-11 rounded-xl bg-white"
+                />
+                <div className="flex justify-between text-sm">
+                  <span className="text-stone-500">Cash to remit</span>
+                  <span className="font-semibold tabular-nums text-stone-900">
+                    {formatCurrency(
+                      Math.max(
+                        0,
+                        (Number(endShiftForm.actual_cash) || 0) -
+                          (Number(endShiftForm.retained_cash) || 0),
+                      ),
+                    )}
+                  </span>
+                </div>
+                {Number(endShiftForm.retained_cash) >
+                  Number(endShiftForm.actual_cash || 0) && (
+                  <p className="text-xs text-red-600">
+                    Retained float cannot exceed counted cash.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="end_notes">Notes (optional)</Label>
+                <Input
+                  id="end_notes"
+                  value={endShiftForm.notes}
+                  onChange={(e) =>
+                    setEndShiftForm((f) => ({ ...f, notes: e.target.value }))
+                  }
+                  placeholder="Variance explanation, etc."
+                  className="h-11 rounded-xl"
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowEndShiftDialog(false)}
+              disabled={isClosingShift}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                isClosingShift ||
+                isLoadingSummary ||
+                !shiftSummary ||
+                shiftSummary.open_order_count > 0 ||
+                endShiftForm.actual_cash === "" ||
+                !Number.isFinite(parseFloat(endShiftForm.actual_cash)) ||
+                endShiftForm.retained_cash === "" ||
+                !Number.isFinite(parseFloat(endShiftForm.retained_cash)) ||
+                parseFloat(endShiftForm.retained_cash) >
+                  parseFloat(endShiftForm.actual_cash)
+              }
+              onClick={handleEndShift}
+              className="bg-[#F36509] text-white hover:bg-[#d95a08]"
+            >
+              {isClosingShift ? "Closing…" : "End shift"}
             </Button>
           </DialogFooter>
         </DialogContent>
