@@ -128,6 +128,9 @@ export default function InventoryProductsSection(
 
   // ── Item form state ────────────────────────────────────────
   const [formName, setFormName] = useState("");
+  const [formPrice, setFormPrice] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formAreaCode, setFormAreaCode] = useState("");
   const [formCategoryId, setFormCategoryId] = useState("");
   const [formBranchId, setFormBranchId] = useState("");
   const [formQuantity, setFormQuantity] = useState("0");
@@ -135,8 +138,11 @@ export default function InventoryProductsSection(
 
   useEffect(() => {
     if (showItemDialog) {
-      setFormName(editingItem?.name ?? "");
-      setFormCategoryId(editingItem?.category_id ?? "");
+       setFormName(editingItem?.name ?? "");
+       setFormPrice(String(editingItem?.price ?? ""));
+       setFormDescription(editingItem?.description ?? "");
+       setFormAreaCode(editingItem?.area_code ?? "");
+       setFormCategoryId(editingItem?.category_id ?? "");
       setFormBranchId(editingItem?.branch_id ?? branches[0]?.id ?? "");
       setFormQuantity(String(editingItem?.quantity ?? 0));
       setFormMinStock(String(editingItem?.min_stock ?? 0));
@@ -158,9 +164,12 @@ export default function InventoryProductsSection(
   }, [showMovementDialog]);
 
   const submitItemForm = () => {
-    void handleSaveItem({
-      name: formName,
-      category_id: formCategoryId,
+     void handleSaveItem({
+       name: formName,
+       price: formPrice,
+       description: formDescription,
+       area_code: formAreaCode,
+       category_id: formCategoryId,
       branch_id: formBranchId,
       quantity: formQuantity,
       min_stock: formMinStock,
@@ -387,14 +396,9 @@ export default function InventoryProductsSection(
                   key={item.id}
                   className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
                 >
-                  <TableCell className="font-medium text-stone-900">
-                    {item.name}
-                    {item.sku && (
-                      <span className="ml-2 text-xs font-normal text-stone-400">
-                        {item.sku}
-                      </span>
-                    )}
-                  </TableCell>
+                   <TableCell className="font-medium text-stone-900">
+                     {item.name}
+                   </TableCell>
                   <TableCell className="text-stone-600">
                     {item.category}
                   </TableCell>
@@ -483,8 +487,21 @@ export default function InventoryProductsSection(
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="item-category">Category</Label>
+             <div className="space-y-2">
+               <Label htmlFor="item-price">Price</Label>
+               <Input
+                 id="item-price"
+                 type="number"
+                 min={0}
+                 step="0.01"
+                 value={formPrice}
+                 onChange={(e) => setFormPrice(e.target.value)}
+                 placeholder="0.00"
+               />
+             </div>
+
+             <div className="space-y-2">
+               <Label htmlFor="item-category">Category</Label>
               <select
                 id="item-category"
                 value={formCategoryId}
@@ -521,6 +538,36 @@ export default function InventoryProductsSection(
                 </p>
               </div>
             )}
+
+            <div className="space-y-2">
+              <Label htmlFor="item-description">Description</Label>
+              <textarea
+                id="item-description"
+                value={formDescription}
+                onChange={(e) => setFormDescription(e.target.value)}
+                placeholder="Optional description"
+                maxLength={500}
+                rows={3}
+                className="flex w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#F36509]/50 focus:ring-2 focus:ring-[#F36509]/20"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="item-area">Area</Label>
+              <select
+                id="item-area"
+                value={formAreaCode}
+                onChange={(e) => setFormAreaCode(e.target.value)}
+                className={selectClassName}
+              >
+                <option value="">Select an area</option>
+                <option value="ieat">ieat</option>
+                <option value="idrink">idrink</option>
+                <option value="iplay">iplay</option>
+                <option value="iwork">iwork</option>
+                <option value="istudy">istudy</option>
+              </select>
+            </div>
 
             {!editingItem && (
               <div className="space-y-2">
@@ -565,10 +612,11 @@ export default function InventoryProductsSection(
               type="button"
               onClick={submitItemForm}
               disabled={
-                isSubmitting ||
-                !formName.trim() ||
-                !formCategoryId ||
-                (!editingItem && !formBranchId)
+                 isSubmitting ||
+                 !formName.trim() ||
+                 !formPrice.trim() ||
+                 !formCategoryId ||
+                 (!editingItem && !formBranchId)
               }
               className="rounded-md bg-[#F36509] text-white hover:bg-[#d95a08]"
             >

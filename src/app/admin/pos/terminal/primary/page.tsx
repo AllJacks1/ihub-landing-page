@@ -654,7 +654,8 @@ export default function PrimaryTerminalPage() {
     return cart.reduce((total, item) => total + item.quantity, 0);
   }, [cart]);
 
-  function addToCart(product: PosProduct) {
+   function addToCart(product: PosProduct) {
+     if ((product.stock_quantity ?? 0) <= 0) return;
     setCart((currentCart) => {
       const existing = currentCart.find((item) => item.id === product.id);
 
@@ -1760,63 +1761,64 @@ export default function PrimaryTerminalPage() {
                   </Button>
                 </div>
 
-                {isLoading ? (
-                  <Card className="border-stone-200 bg-white">
-                    <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                      <RefreshCw className="h-6 w-6 animate-spin text-[#F36509]" />
-                      <p className="mt-4 text-sm font-medium text-stone-900">
-                        Loading products...
-                      </p>
-                      <p className="mt-1 text-sm text-stone-500">
-                        Getting products from the POS database.
-                      </p>
-                    </CardContent>
-                  </Card>
-                ) : filteredProducts.length === 0 ? (
-                  <Card className="border-stone-200 bg-white">
-                    <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                      <div className="rounded-full bg-stone-100 p-4">
-                        <Package className="h-6 w-6 text-stone-400" />
-                      </div>
-                      <h3 className="mt-4 text-sm font-semibold text-stone-900">
-                        {searchQuery.trim()
-                          ? "No results found."
-                          : "No products available"}
-                      </h3>
-                      <p className="mt-1 max-w-sm text-sm text-stone-500">
-                        {searchQuery.trim()
-                          ? "Try a different search term or clear the search."
-                          : "Add active products to the POS database to display them here."}
-                      </p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 min-[110rem]:grid-cols-6 min-[130rem]:grid-cols-8">
-                    {filteredProducts.map((product) => (
-                      <button
-                        key={product.id}
-                        type="button"
-                        onClick={() => addToCart(product)}
-                        disabled={
-                          !!activePaymentOrderId || !!pendingCompletionOrderId
-                        }
-                        className="group text-left disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <Card className="h-full border-stone-200 bg-white transition-all group-hover:-translate-y-0.5 group-hover:border-[#F36509]/40 group-hover:shadow-sm">
-                          <CardContent className="p-3 sm:p-4">
-                            <div className="relative flex h-20 items-center justify-center overflow-hidden rounded-xl bg-stone-100 sm:h-24 lg:h-28">
-                              {product.image_url ? (
-                                <Image
-                                  src={product.image_url}
-                                  alt={product.name}
-                                  fill
-                                  className="object-cover"
-                                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                                />
-                              ) : (
-                                <Package className="h-8 w-8 text-stone-300 sm:h-10 sm:w-10" />
-                              )}
-                            </div>
+              {isLoading ? (
+                <Card className="border-stone-200 bg-white">
+                  <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                    <RefreshCw className="h-6 w-6 animate-spin text-[#F36509]" />
+                    <p className="mt-4 text-sm font-medium text-stone-900">
+                      Loading products...
+                    </p>
+                    <p className="mt-1 text-sm text-stone-500">
+                      Getting products from the POS database.
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : filteredProducts.length === 0 ? (
+                <Card className="border-stone-200 bg-white">
+                  <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                    <div className="rounded-full bg-stone-100 p-4">
+                      <Package className="h-6 w-6 text-stone-400" />
+                    </div>
+                    <h3 className="mt-4 text-sm font-semibold text-stone-900">
+                      {searchQuery.trim()
+                        ? "No results found."
+                        : "No products available"}
+                    </h3>
+                    <p className="mt-1 max-w-sm text-sm text-stone-500">
+                      {searchQuery.trim()
+                        ? "Try a different search term or clear the search."
+                        : "Add active products to the POS database to display them here."}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 min-[110rem]:grid-cols-6 min-[130rem]:grid-cols-8">
+                  {filteredProducts.map((product) => (
+                     <button
+                       key={product.id}
+                       type="button"
+                       onClick={() => {
+                         if ((product.stock_quantity ?? 0) <= 0) return;
+                         addToCart(product);
+                       }}
+                       disabled={(product.stock_quantity ?? 0) <= 0}
+                       className="group text-left disabled:cursor-not-allowed disabled:opacity-60"
+                     >
+                      <Card className="h-full border-stone-200 bg-white transition-all group-hover:-translate-y-0.5 group-hover:border-[#F36509]/40 group-hover:shadow-sm">
+                        <CardContent className="p-3 sm:p-4">
+                          <div className="relative flex h-20 items-center justify-center overflow-hidden rounded-xl bg-stone-100 sm:h-24 lg:h-28">
+                            {product.image_url ? (
+                              <Image
+                                src={product.image_url}
+                                alt={product.name}
+                                fill
+                                className="object-cover"
+                                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                              />
+                            ) : (
+                              <Package className="h-8 w-8 text-stone-300 sm:h-10 sm:w-10" />
+                            )}
+                          </div>
 
                             <div className="mt-3 sm:mt-4">
                               <p className="truncate text-xs font-medium uppercase tracking-wider text-stone-400">
@@ -1830,19 +1832,24 @@ export default function PrimaryTerminalPage() {
                                 <Plus className="h-4 w-4 shrink-0 text-stone-300 transition-colors group-hover:text-[#F36509]" />
                               </div>
 
-                              <p className="mt-2 text-sm font-semibold text-[#F36509] sm:text-base">
-                                {formatCurrency(product.price)}
-                              </p>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+                             <p className="mt-2 text-sm font-semibold text-[#F36509] sm:text-base">
+                               {formatCurrency(product.price)}
+                             </p>
+                             <p className="mt-1 text-xs font-medium text-stone-500">
+                               {(product.stock_quantity ?? 0) > 0
+                                 ? `${product.stock_quantity} available`
+                                 : "Out of Stock"}
+                             </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          </section>
+          </div>
+        </section>
 
           {/* Cart */}
           <aside className="flex w-full flex-col border-t border-stone-200 bg-white xl:h-full xl:min-h-0 xl:w-[400px] xl:border-l xl:border-t-0">

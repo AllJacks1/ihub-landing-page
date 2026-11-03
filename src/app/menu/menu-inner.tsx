@@ -310,8 +310,9 @@ export default function MenuInner() {
   );
 
   /* ── Cart ops ──────────────────────────────────────────────────────── */
-  function addToCart(product: PosProduct) {
-    if (!canOrder) {
+   function addToCart(product: PosProduct) {
+     if (!(product.is_active && (product.stock_quantity ?? 0) > 0)) return;
+     if (!canOrder) {
       toast.error("A valid QR session is required to order");
       return;
     }
@@ -766,8 +767,13 @@ export default function MenuInner() {
                         className="mt-0.5 text-sm font-bold"
                         style={{ color: BRAND }}
                       >
-                        {formatCurrency(product.price)}
-                      </p>
+                         {formatCurrency(product.price)}
+                       </p>
+                       <p className="mt-1 text-xs font-medium text-stone-500">
+                         {product.is_active && (product.stock_quantity ?? 0) > 0
+                           ? "Available"
+                           : "Unavailable"}
+                       </p>
                     </div>
 
                     {/* Description — always present for consistent height */}
@@ -834,8 +840,11 @@ export default function MenuInner() {
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() => addToCart(product)}
-                          disabled={!canOrder}
+                           onClick={() => addToCart(product)}
+                           disabled={
+                             !canOrder ||
+                             !(product.is_active && (product.stock_quantity ?? 0) > 0)
+                           }
                           className="h-9 w-full rounded-xl font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
                           style={
                             canOrder ? { backgroundColor: BRAND } : undefined

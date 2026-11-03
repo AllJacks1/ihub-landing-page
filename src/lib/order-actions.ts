@@ -41,13 +41,14 @@ export type SessionOrder = {
   item_count?: number;
   items?: {
     id: string;
+    product_id: string;
     product_name: string;
     quantity: number;
     unit_price: number;
     line_total: number;
-    area_code?: string | null;
-    service_charge?: number;
     discount_amount?: number;
+    service_charge?: number;
+    area_code?: string | null;
   }[];
   payment_method?: string | null;
   service_charge_rate?: number;
@@ -395,7 +396,7 @@ async function recalculateOrderTotals(
   const { data: items, error: itemsErr } = await supabase
     .from("pos_order_items")
     .select(
-      "id, quantity, unit_price, discount_amount, area_id, area_code, is_vat_exempt",
+      "id, quantity, unit_price, discount_amount, area_id, area_code",
     )
     .eq("order_id", orderId);
 
@@ -449,7 +450,7 @@ async function recalculateOrderTotals(
     // VAT applies independently of service-charge eligibility.
     let itemVat = 0;
 
-    if (vatEnabled && !item.is_vat_exempt) {
+    if (vatEnabled) {
       itemVat =
         priceMode === "inclusive"
           ? (lineNet * vatRate) / (100 + vatRate)
@@ -574,9 +575,9 @@ async function recalculateOrderTotals(
           Math.round(toNumber(item.discount_amount)),
       );
 
-      const vatFactor =
-        vatEnabled && !item.is_vat_exempt
-          ? priceMode === "inclusive"
+       const vatFactor =
+         vatEnabled
+           ? priceMode === "inclusive"
             ? vatRate / (100 + vatRate)
             : vatRate / 100
           : 0;
@@ -590,7 +591,7 @@ async function recalculateOrderTotals(
         .update({
           service_charge: itemSc,
           vat_amount: Number(itemVat.toFixed(2)),
-          vat_rate: vatEnabled && !item.is_vat_exempt ? vatRate : 0,
+           vat_rate: vatEnabled ? vatRate : 0,
         })
         .eq("id", item.id);
 
@@ -622,15 +623,24 @@ async function recalculateOrderTotals(
     });
   }
 
-  // 6. Upsert area charge summaries
-  if (areaChargesRows.length > 0) {
-    const { error: areaErr } = await supabase
-      .from("pos_order_area_charges")
-      .upsert(areaChargesRows, {
-        onConflict: "order_id,area_id",
-      });
-
-    if (areaErr) {
+   // 6. Upsert area charge summaries
+   if (areaChargesRows.length > 0) {
+     const { error: deleteAreaErr } = await supabase
+       .from("pos_order_area_charges")
+       .delete()
+       .eq("order_id", orderId);
+     if (deleteAreaErr) {
+       return {
+         success: false,
+         subtotal: orderSubtotal,
+         total: 0,
+         error: `Failed to clear area charge summaries: ${deleteAreaErr.message}`,
+       };
+     }
+     const { error: areaErr } = await supabase
+       .from("pos_order_area_charges")
+       .insert(areaChargesRows);
+     if (areaErr) {
       return {
         success: false,
         subtotal: orderSubtotal,
@@ -840,8 +850,11 @@ async function addOrderItemsInternal(
     return { success: false, error: insertError.message };
   }
 
-  // 7. Recalculate totals
-  await recalculateOrderTotals(supabase, orderId);
+   // 7. Recalculate totals
+   const recalcResult = await recalculateOrderTotals(supabase, orderId);
+   if (!recalcResult.success) {
+     return { success: false, error: recalcResult.error ?? "Failed to recalculate order totals" };
+   }
 
   return {
     success: true,
@@ -1472,6 +1485,7 @@ export async function getOrdersBySessionId(sessionId: string): Promise<{
         item_count: o.pos_order_items?.length ?? 0,
         items: (o.pos_order_items ?? []).map((item: any) => ({
           id: item.id,
+          product_id: item.product_id,
           product_name: item.product_name,
           quantity: toNumber(item.quantity),
           unit_price: toNumber(item.unit_price),
@@ -1728,6 +1742,7 @@ export async function getOrdersBySessionToken(sessionToken: string): Promise<{
         created_at,
         pos_order_items (
           id,
+          product_id,
           product_name,
           quantity,
           unit_price,
@@ -1771,6 +1786,7 @@ export async function getOrdersBySessionToken(sessionToken: string): Promise<{
         item_count: o.pos_order_items?.length ?? 0,
         items: (o.pos_order_items ?? []).map((item: any) => ({
           id: item.id,
+          product_id: item.product_id,
           product_name: item.product_name,
           quantity: toNumber(item.quantity),
           unit_price: toNumber(item.unit_price),
@@ -2089,6 +2105,7 @@ export async function getOrdersByClientId(clientId: string): Promise<{
         item_count: o.pos_order_items?.length ?? 0,
         items: (o.pos_order_items ?? []).map((item: any) => ({
           id: item.id,
+          product_id: item.product_id,
           product_name: item.product_name,
           quantity: toNumber(item.quantity),
           unit_price: toNumber(item.unit_price),

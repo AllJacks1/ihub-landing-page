@@ -1525,27 +1525,56 @@ export default function QrSessionsPage({
                     {/* Line items */}
                     {order.items && order.items.length > 0 && (
                       <ul className="mt-2 space-y-1 border-t border-stone-200 pt-2">
-                        {order.items.map((item) => (
-                          <li
-                            key={item.id}
-                            className="flex items-baseline justify-between gap-2 text-xs text-stone-600"
-                          >
-                            <span className="min-w-0 truncate">
-                              <span className="font-medium text-stone-800">
-                                {item.quantity}×
-                              </span>{" "}
-                              {item.product_name}
-                              {item.area_code && (
-                                <span className="ml-1.5 rounded bg-stone-200/70 px-1 py-0.5 text-[10px] text-stone-500">
-                                  {item.area_code}
-                                </span>
-                              )}
-                            </span>
-                            <span className="shrink-0 tabular-nums">
-                              {formatCurrency(item.line_total)}
-                            </span>
-                          </li>
-                        ))}
+                        {(() => {
+                          const grouped = new Map<string, {
+                            key: string;
+                            product_id: string;
+                            product_name: string;
+                            unit_price: number;
+                            quantity: number;
+                            line_total: number;
+                            area_code: string | null;
+                          }>();
+                          for (const item of order.items) {
+                            const key = `${item.product_id}::${item.unit_price}`;
+                            const existing = grouped.get(key);
+                            if (existing) {
+                              existing.quantity += item.quantity;
+                              existing.line_total += item.line_total;
+                            } else {
+                              grouped.set(key, {
+                                key,
+                                product_id: item.product_id,
+                                product_name: item.product_name,
+                                unit_price: item.unit_price,
+                                quantity: item.quantity,
+                                line_total: item.line_total,
+                                area_code: item.area_code ?? null,
+                              });
+                            }
+                          }
+                          return Array.from(grouped.values()).map((item) => (
+                            <li
+                              key={item.key}
+                              className="flex items-baseline justify-between gap-2 text-xs text-stone-600"
+                            >
+                              <span className="min-w-0 truncate">
+                                <span className="font-medium text-stone-800">
+                                  {item.quantity}×
+                                </span>{" "}
+                                {item.product_name}
+                                {item.area_code && (
+                                  <span className="ml-1.5 rounded bg-stone-200/70 px-1 py-0.5 text-[10px] text-stone-500">
+                                    {item.area_code}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="shrink-0 tabular-nums">
+                                {formatCurrency(item.line_total)}
+                              </span>
+                            </li>
+                          ));
+                        })()}
                       </ul>
                     )}
 
