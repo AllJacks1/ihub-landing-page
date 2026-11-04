@@ -77,6 +77,11 @@ import {
   getEmployeeCreditAccounts,
   getEmployees,
 } from "@/lib/employee-charges";
+import {
+  ExpenseDialog,
+  ExpenseTriggerButton,
+} from "@/components/sections/ExpenseDialog";
+import { getShiftExpenses } from "@/lib/expense-actions";
 
 type CartItem = PosProduct & {
   quantity: number;
@@ -262,6 +267,9 @@ export default function PrimaryTerminalPage() {
     retained_cash: "",
     notes: "",
   });
+
+  const [showExpenseDialog, setShowExpenseDialog] = useState(false);
+  const [shiftExpenseTotal, setShiftExpenseTotal] = useState(0);
 
   async function openEndShiftDialog() {
     if (!shiftId) {
@@ -1564,22 +1572,29 @@ export default function PrimaryTerminalPage() {
 
           <div className="flex flex-wrap items-center gap-3">
             {contextReady && shiftReady && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={openEndShiftDialog}
-                disabled={
-                  !!activePaymentOrderId ||
-                  !!pendingCompletionOrderId ||
-                  isProcessingPayment
-                }
-                className="border-stone-200 text-stone-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
-              >
-                <LogOut className="mr-2 h-4 w-4" />
-                End shift
-              </Button>
+              <>
+                <ExpenseTriggerButton
+                  onClick={() => setShowExpenseDialog(true)}
+                  totalCash={shiftExpenseTotal}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={openEndShiftDialog}
+                  disabled={
+                    !!activePaymentOrderId ||
+                    !!pendingCompletionOrderId ||
+                    isProcessingPayment
+                  }
+                  className="border-stone-200 text-stone-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  End shift
+                </Button>
+              </>
             )}
+
             <div className="hidden items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-2.5 sm:flex">
               <User className="h-4 w-4 text-stone-400" />
               <div>
@@ -3270,6 +3285,19 @@ export default function PrimaryTerminalPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {branchId && shiftId && (
+        <ExpenseDialog
+          open={showExpenseDialog}
+          onOpenChange={setShowExpenseDialog}
+          branchId={branchId}
+          shiftId={shiftId}
+          terminalId={terminalId}
+          onChanged={async () => {
+            const res = await getShiftExpenses(shiftId);
+            if (res.success) setShiftExpenseTotal(res.totalCash);
+          }}
+        />
+      )}
     </main>
   );
 }
