@@ -128,20 +128,30 @@ export type PosShift = {
   variance: number | null;
   notes: string | null;
   closed_at: string | null;
+  /** @deprecated Legacy; no longer used by application logic */
   drawer_id: string | null;
   opening_counted_cash: number | null;
   retained_cash: number | null;
   turnover_status: string | null;
+  /** Shift from which this shift received a retained float */
+  previous_shift_id: string | null;
+  turnover_acknowledged_by: string | null;
+  turnover_acknowledged_at: string | null;
+  turnover_actual_cash: number | null;
+  turnover_difference: number | null;
 };
 
-export type CashDrawer = {
-  id: string;
+/** Pending retained-float handover from a previous closed shift on the same terminal */
+export type PendingTurnover = {
+  shift_id: string;
+  shift_number: string | null;
   branch_id: string;
-  terminal_id: string | null;
-  name: string;
-  opening_float: number;
-  is_active: boolean;
-  pending_turnover?: boolean;
+  terminal_id: string;
+  cashier_user_id: string;
+  cashier_name: string | null;
+  retained_cash: number;
+  closed_at: string | null;
+  turnover_status: string;
 };
 
 const createLocationSchema = z.object({
@@ -1212,8 +1222,16 @@ export async function openPosShift(params: {
   cashier_user_id: string;
   starting_cash: number;
   opening_counted_cash?: number | null;
-  drawer_id?: string | null;
   notes?: string | null;
+  /**
+   * When acknowledging a pending retained-float turnover:
+   * - previous_shift_id: the closed shift that left the float
+   * - turnover_actual_cash: physical count of cash received
+   * - acknowledge: must be true to complete the previous shift's turnover
+   */
+  previous_shift_id?: string | null;
+  turnover_actual_cash?: number | null;
+  acknowledge_turnover?: boolean;
 }): Promise<{
   success: boolean;
   data?: PosShift;
@@ -1253,7 +1271,109 @@ export async function openPosShift(params: {
         success: false,
         error: "You already have an open shift on this terminal",
       };
-      // Or: return { success: true, data: existing.data } if you prefer resume
+    }
+
+    let previousShiftId: string | null = null;
+    let turnoverAcked = false;
+
+    // Explicit acknowledgement of a pending retained-float turnover.
+    // Starting a shift alone must NEVER complete the previous turnover.
+    if (params.acknowledge_turnover && params.previous_shift_id) {
+      const actualReceived = Number(params.turnover_actual_cash);
+      if (!Number.isFinite(actualReceived) || actualReceived < 0) {
+        return {
+          success: false,
+          error: "Enter a valid physical cash count to acknowledge the turnover",
+        };
+      }
+
+      const { data: prev, error: prevErr } = await supabase
+        .from("pos_shifts")
+        .select(
+          "id, branch_id, terminal_id, status, turnover_status, retained_cash, cashier_user_id",
+        )
+        .eq("id", params.previous_shift_id)
+        .maybeSingle();
+
+      if (prevErr) return { success: false, error: prevErr.message };
+      if (!prev) {
+        return { success: false, error: "Previous shift not found" };
+      }
+      if (prev.status !== "closed") {
+        return {
+          success: false,
+          error: "Previous shift is not closed; cannot acknowledge turnover",
+        };
+      }
+      if (prev.turnover_status !== "pending") {
+        return {
+          success: false,
+          error:
+            prev.turnover_status === "completed"
+              ? "This turnover has already been acknowledged"
+              : "No pending turnover on the previous shift",
+        };
+      }
+      if (prev.terminal_id !== params.terminal_id) {
+        return {
+          success: false,
+          error: "Turnover does not belong to this terminal",
+        };
+      }
+      if (prev.branch_id !== params.branch_id) {
+        return {
+          success: false,
+          error: "Turnover does not belong to this branch",
+        };
+      }
+
+      const expectedRetained = Number(prev.retained_cash ?? 0);
+      const difference = Number((actualReceived - expectedRetained).toFixed(2));
+      const ackedAt = new Date().toISOString();
+
+      // Atomic-ish: update previous shift first; if it fails or was raced, abort.
+      // Condition on turnover_status = 'pending' prevents double acknowledgement.
+      const { data: updatedPrev, error: ackErr } = await supabase
+        .from("pos_shifts")
+        .update({
+          turnover_status: "completed",
+          turnover_acknowledged_by: staff.user.id,
+          turnover_acknowledged_at: ackedAt,
+          turnover_actual_cash: actualReceived,
+          turnover_difference: difference,
+          updated_at: ackedAt,
+        })
+        .eq("id", prev.id)
+        .eq("turnover_status", "pending")
+        .select("id")
+        .maybeSingle();
+
+      if (ackErr) {
+        return {
+          success: false,
+          error: `Failed to acknowledge turnover: ${ackErr.message}`,
+        };
+      }
+      if (!updatedPrev) {
+        return {
+          success: false,
+          error:
+            "Turnover was already acknowledged by another cashier. Refresh and try again.",
+        };
+      }
+
+      previousShiftId = prev.id;
+      turnoverAcked = true;
+
+      // Opening cash for the new shift is the physical count the cashier just confirmed.
+      // (Caller should already have set starting_cash / opening_counted_cash to this value.)
+    } else if (params.previous_shift_id && !params.acknowledge_turnover) {
+      // Safety: never silently complete a turnover just because a previous_shift_id was sent.
+      return {
+        success: false,
+        error:
+          "Turnover acknowledgement is required. Set acknowledge_turnover and provide the counted cash.",
+      };
     }
 
     const shiftNumber = `SH-${new Date()
@@ -1272,18 +1392,120 @@ export async function openPosShift(params: {
         starting_cash: starting,
         opening_counted_cash: counted,
         expected_cash: counted,
-        drawer_id: params.drawer_id ?? null,
+        drawer_id: null, // cash drawers removed from workflow
+        previous_shift_id: previousShiftId,
         notes: params.notes?.trim() || null,
       })
       .select("*")
       .single();
 
-    if (error) return { success: false, error: error.message };
+    if (error) {
+      // Best-effort rollback of the acknowledgement if insert fails after ack.
+      // (In production prefer a DB function / transaction.)
+      if (turnoverAcked && previousShiftId) {
+        await supabase
+          .from("pos_shifts")
+          .update({
+            turnover_status: "pending",
+            turnover_acknowledged_by: null,
+            turnover_acknowledged_at: null,
+            turnover_actual_cash: null,
+            turnover_difference: null,
+          })
+          .eq("id", previousShiftId)
+          .eq("turnover_status", "completed");
+      }
+      return { success: false, error: error.message };
+    }
     return { success: true, data: data as PosShift };
   } catch (error) {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to open shift",
+    };
+  }
+}
+
+/**
+ * Find the most recent closed shift on this terminal that still has a pending
+ * retained-float turnover (awaiting acknowledgement by the next cashier).
+ * Uses direct shift-to-shift relationship — no cash drawers.
+ */
+export async function getPendingTurnoverForTerminal(params: {
+  branch_id: string;
+  terminal_id: string;
+}): Promise<{
+  success: boolean;
+  data?: PendingTurnover | null;
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+
+    const { data: prev, error } = await supabase
+      .from("pos_shifts")
+      .select(
+        "id, shift_number, branch_id, terminal_id, cashier_user_id, retained_cash, closed_at, turnover_status, status",
+      )
+      .eq("branch_id", params.branch_id)
+      .eq("terminal_id", params.terminal_id)
+      .eq("status", "closed")
+      .eq("turnover_status", "pending")
+      .gt("retained_cash", 0)
+      .order("closed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return { success: false, error: error.message };
+    if (!prev) return { success: true, data: null };
+
+    // Resolve previous cashier display name (best-effort)
+    let cashierName: string | null = null;
+    if (prev.cashier_user_id) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, first_name, last_name")
+        .eq("auth_user_id", prev.cashier_user_id)
+        .maybeSingle();
+      if (profile) {
+        cashierName =
+          (profile as { full_name?: string }).full_name ||
+          [
+            (profile as { first_name?: string }).first_name,
+            (profile as { last_name?: string }).last_name,
+          ]
+            .filter(Boolean)
+            .join(" ") ||
+          null;
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        shift_id: prev.id,
+        shift_number: prev.shift_number,
+        branch_id: prev.branch_id,
+        terminal_id: prev.terminal_id,
+        cashier_user_id: prev.cashier_user_id,
+        cashier_name: cashierName,
+        retained_cash: Number(prev.retained_cash ?? 0),
+        closed_at: prev.closed_at,
+        turnover_status: prev.turnover_status,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load pending turnover",
     };
   }
 }
@@ -1409,54 +1631,19 @@ export async function getBranchBillingSettings(branchId: string): Promise<{
   }
 }
 
+/**
+ * @deprecated Cash drawers have been removed from the POS turnover workflow.
+ * Retained for any residual imports; always returns an empty list.
+ */
 export async function getCashDrawers(
-  branchId: string,
-  terminalId?: string,
+  _branchId: string,
+  _terminalId?: string,
 ): Promise<{
   success: boolean;
-  data: CashDrawer[];
+  data: never[];
   error?: string;
 }> {
-  try {
-    const staff = await requirePosStaff();
-    if (!staff.authorized) {
-      return { success: false, data: [], error: staff.error };
-    }
-
-    const supabase = createPosAdminClient();
-    let query = supabase
-      .from("cash_drawers")
-      .select("id, branch_id, terminal_id, name, opening_float, is_active")
-      .eq("branch_id", branchId)
-      .eq("is_active", true)
-      .order("name", { ascending: true });
-
-    // Prefer drawers for this terminal, but also allow branch-wide (terminal_id null)
-    if (terminalId) {
-      query = query.or(`terminal_id.eq.${terminalId},terminal_id.is.null`);
-    }
-
-    const { data, error } = await query;
-    if (error) return { success: false, data: [], error: error.message };
-
-    return {
-      success: true,
-      data: (data ?? []).map((d) => ({
-        id: d.id,
-        branch_id: d.branch_id,
-        terminal_id: d.terminal_id,
-        name: d.name,
-        opening_float: Number(d.opening_float ?? 0),
-        is_active: Boolean(d.is_active),
-      })),
-    };
-  } catch (error) {
-    return {
-      success: false,
-      data: [],
-      error: error instanceof Error ? error.message : "Failed to load drawers",
-    };
-  }
+  return { success: true, data: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -1679,9 +1866,9 @@ export async function getShiftCashSummary(shiftId: string): Promise<{
 
 const closeShiftSchema = z.object({
   shift_id: z.string().uuid(),
-  /** Physical count of all cash currently in the drawer */
+  /** Physical count of all cash currently on hand */
   actual_cash: z.coerce.number().min(0),
-  /** Amount intentionally left in the drawer for the next cashier */
+  /** Amount intentionally left as starting float for the next cashier */
   retained_cash: z.coerce.number().min(0),
   notes: z.string().max(1000).optional().nullable(),
   /** If true, refuse to close while any non-completed orders remain */
@@ -1727,7 +1914,7 @@ export async function closePosShift(
     if (retained > actual) {
       return {
         success: false,
-        error: "Retained float cannot be greater than the counted drawer cash.",
+        error: "Retained float cannot be greater than the counted cash.",
       };
     }
     const remittanceAmount = Number((actual - retained).toFixed(2));
@@ -1755,13 +1942,14 @@ export async function closePosShift(
 
     // Prepare the remittance before closing so a remittance insert failure
     // cannot leave the shift closed without its corresponding cash record.
+    // Remittance is independent of retained-float turnover acknowledgement.
     let remittanceId: string | null = null;
     if (remittanceAmount > 0) {
       const { data: remittance, error: remittanceError } = await supabase
         .from("cash_remittances")
         .insert({
           branch_id: shiftRow.branch_id,
-          drawer_id: shiftRow.drawer_id,
+          drawer_id: null, // cash drawers removed from workflow
           expected_amount: remittanceAmount,
           retained_cash: retained,
           status: "draft",
@@ -1823,7 +2011,7 @@ export async function closePosShift(
     const { error: ledgerErr } = await supabase.from("cash_ledger").upsert(
       {
         branch_id: shiftRow.branch_id,
-        drawer_id: shiftRow.drawer_id,
+        drawer_id: null,
         shift_id: shiftRow.id,
         movement_type: "shift_close",
         amount: actual,
@@ -1840,13 +2028,13 @@ export async function closePosShift(
       console.error("cash_ledger write after shift close:", ledgerErr);
     }
 
-    if (retained > 0 && shiftRow.drawer_id) {
+    if (retained > 0) {
       const { error: retainedLedgerError } = await supabase
         .from("cash_ledger")
         .upsert(
           {
             branch_id: shiftRow.branch_id,
-            drawer_id: shiftRow.drawer_id,
+            drawer_id: null,
             shift_id: shiftRow.id,
             movement_type: "float_retained",
             amount: retained,
@@ -2353,36 +2541,26 @@ export async function confirmRemittance(
 
     if (updateErr) return { success: false, error: updateErr.message };
 
-    // Optional ledger entry for the physical remittance
-    if (existing.drawer_id) {
-      await supabase.from("cash_ledger").upsert(
-        {
-          branch_id: existing.branch_id,
-          drawer_id: existing.drawer_id,
-          shift_id: existing.from_shift_id,
-          movement_type: "remittance_out",
-          amount: actual,
-          source_type: "cash_remittance",
-          source_id: existing.id,
-          idempotency_key: `remittance-confirm-${existing.id}`,
-          recorded_by: staff.user.id,
-          occurred_at: confirmedAt,
-        },
-        { onConflict: "idempotency_key", ignoreDuplicates: true },
-      );
-    }
+    // Optional ledger entry for the physical remittance (no drawer dependency)
+    await supabase.from("cash_ledger").upsert(
+      {
+        branch_id: existing.branch_id,
+        drawer_id: null,
+        shift_id: existing.from_shift_id,
+        movement_type: "remittance_out",
+        amount: actual,
+        source_type: "cash_remittance",
+        source_id: existing.id,
+        idempotency_key: `remittance-confirm-${existing.id}`,
+        recorded_by: staff.user.id,
+        occurred_at: confirmedAt,
+      },
+      { onConflict: "idempotency_key", ignoreDuplicates: true },
+    );
 
-    // Mark related shift turnover as completed if present
-    if (existing.from_shift_id) {
-      await supabase
-        .from("pos_shifts")
-        .update({
-          turnover_status: "completed",
-          updated_at: confirmedAt,
-        })
-        .eq("id", existing.from_shift_id)
-        .eq("turnover_status", "pending");
-    }
+    // CRITICAL: Remittance confirmation must NEVER update the previous shift's
+    // turnover_status. Retained-float acknowledgement is a separate process
+    // performed only by the incoming cashier via openPosShift(acknowledge_turnover).
 
     return {
       success: true,

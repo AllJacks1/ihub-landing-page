@@ -29,12 +29,12 @@ import {
   type PosProduct,
   getBranchBillingSettings,
   createPosSession,
-  CashDrawer,
-  getCashDrawers,
   openPosShift,
   ShiftCashSummary,
   getShiftCashSummary,
   closePosShift,
+  getPendingTurnoverForTerminal,
+  type PendingTurnover,
 } from "@/lib/pos-actions";
 import Image from "next/image";
 import Link from "next/link";
@@ -238,13 +238,17 @@ export default function PrimaryTerminalPage() {
 
   const [shiftReady, setShiftReady] = useState(false);
   const [cashierUserId, setCashierUserId] = useState<string | null>(null);
-  const [drawers, setDrawers] = useState<CashDrawer[]>([]);
+  const [pendingTurnover, setPendingTurnover] =
+    useState<PendingTurnover | null>(null);
+  const [isLoadingPendingTurnover, setIsLoadingPendingTurnover] =
+    useState(false);
   const [isStartingShift, setIsStartingShift] = useState(false);
   const [startShiftForm, setStartShiftForm] = useState({
-    drawer_id: "",
     starting_cash: "",
-    opening_counted_cash: "",
     notes: "",
+    /** Physical count when acknowledging a pending retained float */
+    turnover_actual_cash: "",
+    acknowledge_turnover: false,
   });
 
   const [showEndShiftDialog, setShowEndShiftDialog] = useState(false);
@@ -260,42 +264,42 @@ export default function PrimaryTerminalPage() {
   });
 
   async function openEndShiftDialog() {
-  if (!shiftId) {
-    toast.error("No open shift");
-    return;
-  }
-
-  setIsLoadingSummary(true);
-  setShowEndShiftDialog(true);
-  setEndShiftForm({ actual_cash: "", retained_cash: "", notes: "" });
-  setShiftSummary(null);
-
-  try {
-    const res = await getShiftCashSummary(shiftId);
-
-    if (!res.success || !res.data) {
-      toast.error(res.error ?? "Could not load shift summary");
-      setShowEndShiftDialog(false);
+    if (!shiftId) {
+      toast.error("No open shift");
       return;
     }
 
-    const data = res.data;
+    setIsLoadingSummary(true);
+    setShowEndShiftDialog(true);
+    setEndShiftForm({ actual_cash: "", retained_cash: "", notes: "" });
+    setShiftSummary(null);
 
-    setShiftSummary(data);
+    try {
+      const res = await getShiftCashSummary(shiftId);
 
-    setEndShiftForm((f) => ({
-      ...f,
-      retained_cash: String(
-        data.opening_counted_cash ?? data.starting_cash ?? 0,
-      ),
-    }));
-  } catch (e) {
-    toast.error(e instanceof Error ? e.message : "Failed to load summary");
-    setShowEndShiftDialog(false);
-  } finally {
-    setIsLoadingSummary(false);
+      if (!res.success || !res.data) {
+        toast.error(res.error ?? "Could not load shift summary");
+        setShowEndShiftDialog(false);
+        return;
+      }
+
+      const data = res.data;
+
+      setShiftSummary(data);
+
+      setEndShiftForm((f) => ({
+        ...f,
+        retained_cash: String(
+          data.opening_counted_cash ?? data.starting_cash ?? 0,
+        ),
+      }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load summary");
+      setShowEndShiftDialog(false);
+    } finally {
+      setIsLoadingSummary(false);
+    }
   }
-}
 
   async function handleEndShift() {
     if (!shiftId || !shiftSummary) return;
@@ -308,7 +312,9 @@ export default function PrimaryTerminalPage() {
       return;
     }
     if (!Number.isFinite(retained) || retained < 0 || retained > actual) {
-      toast.error("Retained float must be a valid amount not greater than counted cash");
+      toast.error(
+        "Retained float must be a valid amount not greater than counted cash",
+      );
       return;
     }
 
@@ -335,8 +341,13 @@ export default function PrimaryTerminalPage() {
             ? `over by ${formatCurrency(v)}`
             : `short by ${formatCurrency(Math.abs(v))}`;
 
+      const retainedAmt = result.data.shift.retained_cash;
+      const remitAmt = result.data.shift.remittance_amount;
       toast.success(
-        `Shift closed · ${formatCurrency(result.data.shift.retained_cash)} retained for next shift · ${formatCurrency(result.data.shift.remittance_amount)} to remit · Drawer ${varianceLabel}`,
+        `Shift closed · ${formatCurrency(retainedAmt)} retained for next shift · ${formatCurrency(remitAmt)} to remit · ${varianceLabel}` +
+          (retainedAmt > 0
+            ? " · Retained float awaits next cashier acknowledgement"
+            : ""),
       );
 
       // Reset terminal to "start shift" state
@@ -349,22 +360,33 @@ export default function PrimaryTerminalPage() {
       setPendingCompletionOrderId(null);
       setPaymentIdempotencyKey(null);
 
-      // Reload drawers for the next shift start screen
+      // Load any pending turnover left by this (or another) closed shift
+      setStartShiftForm({
+        starting_cash: "",
+        notes: "",
+        turnover_actual_cash: "",
+        acknowledge_turnover: false,
+      });
       if (branchId && terminalId) {
-        const drawersRes = await getCashDrawers(branchId, terminalId);
-        if (drawersRes.success) {
-          setDrawers(drawersRes.data);
-          if (drawersRes.data.length === 1) {
-            const d = drawersRes.data[0];
-            setStartShiftForm((f) => ({
-              ...f,
-              drawer_id: d.id,
-              starting_cash:
-                d.opening_float > 0 ? String(d.opening_float) : f.starting_cash,
-              opening_counted_cash: "",
-              notes: "",
-            }));
+        setIsLoadingPendingTurnover(true);
+        try {
+          const pendingRes = await getPendingTurnoverForTerminal({
+            branch_id: branchId,
+            terminal_id: terminalId,
+          });
+          if (pendingRes.success) {
+            setPendingTurnover(pendingRes.data ?? null);
+            if (pendingRes.data) {
+              setStartShiftForm((f) => ({
+                ...f,
+                starting_cash: String(pendingRes.data!.retained_cash),
+                turnover_actual_cash: "",
+                acknowledge_turnover: false,
+              }));
+            }
           }
+        } finally {
+          setIsLoadingPendingTurnover(false);
         }
       }
     } catch (e) {
@@ -567,30 +589,34 @@ export default function PrimaryTerminalPage() {
 
           await loadTerminalData(branch.id, () => cancelled);
         } else {
-          // No active shift — require cashier to start one
+          // No active shift — require cashier to start one (and possibly acknowledge turnover)
           setShiftId(null);
           setShiftReady(false);
 
-          const drawersRes = await getCashDrawers(branch.id, terminal.id);
-
-          if (!cancelled && drawersRes.success) {
-            setDrawers(drawersRes.data);
-
-            if (drawersRes.data.length === 1) {
-              const d = drawersRes.data[0];
-
-              setStartShiftForm((f) => ({
-                ...f,
-                drawer_id: d.id,
-                starting_cash:
-                  d.opening_float > 0
-                    ? String(d.opening_float)
-                    : f.starting_cash,
-              }));
-            }
-          }
-
+          setIsLoadingPendingTurnover(true);
+          const pendingRes = await getPendingTurnoverForTerminal({
+            branch_id: branch.id,
+            terminal_id: terminal.id,
+          });
           if (!cancelled) {
+            if (pendingRes.success && pendingRes.data) {
+              setPendingTurnover(pendingRes.data);
+              setStartShiftForm({
+                starting_cash: String(pendingRes.data.retained_cash),
+                notes: "",
+                turnover_actual_cash: "",
+                acknowledge_turnover: false,
+              });
+            } else {
+              setPendingTurnover(null);
+              setStartShiftForm({
+                starting_cash: "",
+                notes: "",
+                turnover_actual_cash: "",
+                acknowledge_turnover: false,
+              });
+            }
+            setIsLoadingPendingTurnover(false);
             setContextReady(true);
           }
         }
@@ -654,34 +680,34 @@ export default function PrimaryTerminalPage() {
     return cart.reduce((total, item) => total + item.quantity, 0);
   }, [cart]);
 
-   function addToCart(product: PosProduct) {
-     const stock = product.stock_quantity ?? 0;
-     if (stock <= 0) return;
-     setCart((currentCart) => {
-       const existing = currentCart.find((item) => item.id === product.id);
-       const currentQty = existing?.quantity ?? 0;
-       if (currentQty + 1 > stock) return currentCart;
-       if (existing) {
-         return currentCart.map((item) =>
-           item.id === product.id
-             ? { ...item, quantity: item.quantity + 1 }
-             : item,
-         );
-       }
-       return [...currentCart, { ...product, quantity: 1 }];
-     });
-   }
+  function addToCart(product: PosProduct) {
+    const stock = product.stock_quantity ?? 0;
+    if (stock <= 0) return;
+    setCart((currentCart) => {
+      const existing = currentCart.find((item) => item.id === product.id);
+      const currentQty = existing?.quantity ?? 0;
+      if (currentQty + 1 > stock) return currentCart;
+      if (existing) {
+        return currentCart.map((item) =>
+          item.id === product.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item,
+        );
+      }
+      return [...currentCart, { ...product, quantity: 1 }];
+    });
+  }
 
-   function increaseQuantity(id: string) {
-     setCart((currentCart) =>
-       currentCart.map((item) => {
-         if (item.id !== id) return item;
-         const stock = item.stock_quantity ?? 0;
-         if (item.quantity + 1 > stock) return item;
-         return { ...item, quantity: item.quantity + 1 };
-       }),
-     );
-   }
+  function increaseQuantity(id: string) {
+    setCart((currentCart) =>
+      currentCart.map((item) => {
+        if (item.id !== id) return item;
+        const stock = item.stock_quantity ?? 0;
+        if (item.quantity + 1 > stock) return item;
+        return { ...item, quantity: item.quantity + 1 };
+      }),
+    );
+  }
 
   function decreaseQuantity(id: string) {
     setCart((currentCart) =>
@@ -1385,6 +1411,65 @@ export default function PrimaryTerminalPage() {
       return;
     }
 
+    // When a pending turnover exists, the cashier must count the received cash
+    // and explicitly acknowledge it. Starting the shift alone does not complete
+    // the previous shift's turnover.
+    if (pendingTurnover) {
+      const actualReceived = parseFloat(startShiftForm.turnover_actual_cash);
+      if (!Number.isFinite(actualReceived) || actualReceived < 0) {
+        toast.error("Enter the physical cash count you received");
+        return;
+      }
+      if (!startShiftForm.acknowledge_turnover) {
+        toast.error(
+          "You must acknowledge receipt of the retained float before starting",
+        );
+        return;
+      }
+
+      setIsStartingShift(true);
+      try {
+        const result = await openPosShift({
+          branch_id: branchId,
+          terminal_id: terminalId,
+          cashier_user_id: cashierUserId,
+          starting_cash: actualReceived,
+          opening_counted_cash: actualReceived,
+          notes: startShiftForm.notes.trim() || null,
+          previous_shift_id: pendingTurnover.shift_id,
+          turnover_actual_cash: actualReceived,
+          acknowledge_turnover: true,
+        });
+
+        if (!result.success || !result.data) {
+          toast.error(result.error ?? "Failed to start shift");
+          return;
+        }
+
+        setShiftId(result.data.id);
+        setShiftReady(true);
+        setPendingTurnover(null);
+        toast.success(
+          actualReceived === pendingTurnover.retained_cash
+            ? "Turnover acknowledged (matched) · Shift started"
+            : `Turnover acknowledged (${
+                actualReceived > pendingTurnover.retained_cash
+                  ? "excess"
+                  : "shortage"
+              } ${formatCurrency(
+                Math.abs(actualReceived - pendingTurnover.retained_cash),
+              )}) · Shift started`,
+        );
+        await loadTerminalData(branchId);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to start shift");
+      } finally {
+        setIsStartingShift(false);
+      }
+      return;
+    }
+
+    // No pending turnover — normal start
     const starting = parseFloat(startShiftForm.starting_cash);
     if (!Number.isFinite(starting) || starting < 0) {
       toast.error("Enter a valid starting cash amount");
@@ -1398,11 +1483,7 @@ export default function PrimaryTerminalPage() {
         terminal_id: terminalId,
         cashier_user_id: cashierUserId,
         starting_cash: starting,
-        opening_counted_cash: (() => {
-          const v = parseFloat(startShiftForm.opening_counted_cash);
-          return Number.isFinite(v) ? v : undefined;
-        })(),
-        drawer_id: startShiftForm.drawer_id || null,
+        opening_counted_cash: starting,
         notes: startShiftForm.notes.trim() || null,
       });
 
@@ -1545,126 +1626,235 @@ export default function PrimaryTerminalPage() {
                   {branchName} / {terminalName}
                 </p>
                 <p className="mt-3 text-sm text-stone-600">
-                  Enter opening cash before taking orders.
+                  {pendingTurnover
+                    ? "Acknowledge the retained float from the previous shift before taking orders."
+                    : "Enter opening cash before taking orders."}
                 </p>
               </div>
 
-              {drawers.length > 0 && (
-                <div className="space-y-2">
-                  <Label>Cash drawer</Label>
-                  <select
-                    value={startShiftForm.drawer_id}
-                    onChange={(e) =>
-                      setStartShiftForm((f) => {
-                        const selected = drawers.find((d) => d.id === e.target.value);
-                        return {
+              {isLoadingPendingTurnover ? (
+                <div className="flex flex-col items-center py-6">
+                  <RefreshCw className="h-5 w-5 animate-spin text-[#F36509]" />
+                  <p className="mt-2 text-sm text-stone-500">
+                    Checking for pending turnover…
+                  </p>
+                </div>
+              ) : pendingTurnover ? (
+                <>
+                  {/* Pending retained-float turnover */}
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2 text-sm">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                      Pending retained float
+                    </p>
+                    <div className="flex justify-between">
+                      <span className="text-stone-600">Previous cashier</span>
+                      <span className="font-medium text-stone-900">
+                        {pendingTurnover.cashier_name || "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-stone-600">Previous shift</span>
+                      <span className="font-medium text-stone-900">
+                        {pendingTurnover.shift_number ||
+                          pendingTurnover.shift_id.slice(0, 8)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-stone-600">Closed at</span>
+                      <span className="font-medium text-stone-900">
+                        {pendingTurnover.closed_at
+                          ? new Date(pendingTurnover.closed_at).toLocaleString()
+                          : "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t border-amber-200 pt-2">
+                      <span className="text-stone-600">
+                        Expected retained float
+                      </span>
+                      <span className="font-semibold text-[#F36509]">
+                        {formatCurrency(pendingTurnover.retained_cash)}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-800">
+                      Status: {pendingTurnover.turnover_status}. Count the cash
+                      you received and acknowledge below. This completes the
+                      previous shift&apos;s turnover.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="turnover_actual">
+                      Actual cash received (physical count)
+                    </Label>
+                    <Input
+                      id="turnover_actual"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      inputMode="decimal"
+                      value={startShiftForm.turnover_actual_cash}
+                      onChange={(e) =>
+                        setStartShiftForm((f) => ({
                           ...f,
-                          drawer_id: e.target.value,
-                          starting_cash: selected
-                            ? String(selected.opening_float)
-                            : f.starting_cash,
-                          opening_counted_cash: "",
-                        };
-                      })
-                    }
-                    className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">Select drawer…</option>
-                    {drawers.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                        {d.opening_float > 0
-                          ? ` · float ${formatCurrency(d.opening_float)}`
-                          : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+                          turnover_actual_cash: e.target.value,
+                        }))
+                      }
+                      placeholder="0.00"
+                      className="h-11 rounded-xl"
+                      autoFocus
+                    />
+                    {startShiftForm.turnover_actual_cash !== "" &&
+                      Number.isFinite(
+                        parseFloat(startShiftForm.turnover_actual_cash),
+                      ) && (
+                        <div
+                          className={`flex justify-between rounded-lg px-3 py-2 text-sm ${
+                            parseFloat(startShiftForm.turnover_actual_cash) ===
+                            pendingTurnover.retained_cash
+                              ? "bg-emerald-50 text-emerald-800"
+                              : parseFloat(
+                                    startShiftForm.turnover_actual_cash,
+                                  ) > pendingTurnover.retained_cash
+                                ? "bg-sky-50 text-sky-800"
+                                : "bg-red-50 text-red-800"
+                          }`}
+                        >
+                          <span>Difference</span>
+                          <span className="font-semibold tabular-nums">
+                            {(() => {
+                              const diff =
+                                parseFloat(
+                                  startShiftForm.turnover_actual_cash,
+                                ) - pendingTurnover.retained_cash;
+                              if (diff === 0) return "Matched";
+                              return diff > 0
+                                ? `+${formatCurrency(diff)} excess`
+                                : `${formatCurrency(diff)} shortage`;
+                            })()}
+                          </span>
+                        </div>
+                      )}
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="starting_cash">Starting cash</Label>
-                <Input
-                  id="starting_cash"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  inputMode="decimal"
-                  value={startShiftForm.starting_cash}
-                  onChange={(e) =>
-                    setStartShiftForm((f) => ({
-                      ...f,
-                      starting_cash: e.target.value,
-                    }))
-                  }
-                  placeholder="0.00"
-                  className="h-11 rounded-xl"
-                  autoFocus
-                />
-              </div>
+                  <label className="flex items-start gap-3 rounded-xl border border-stone-200 bg-white px-3 py-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={startShiftForm.acknowledge_turnover}
+                      onChange={(e) =>
+                        setStartShiftForm((f) => ({
+                          ...f,
+                          acknowledge_turnover: e.target.checked,
+                        }))
+                      }
+                      className="mt-0.5 h-4 w-4 rounded border-stone-300 text-[#F36509] focus:ring-[#F36509]"
+                    />
+                    <span className="text-stone-700">
+                      I confirm I have counted the cash and acknowledge receipt
+                      of the retained float. This will mark the previous
+                      shift&apos;s turnover as <strong>completed</strong>.
+                    </span>
+                  </label>
 
-              {drawers.find((d) => d.id === startShiftForm.drawer_id)?.pending_turnover && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  This drawer has a retained float from the previous shift.
-                  Count the cash physically and confirm the amount below before
-                  starting your shift.
-                </div>
-              )}
+                  <div className="space-y-2">
+                    <Label htmlFor="shift_notes">Notes (optional)</Label>
+                    <Input
+                      id="shift_notes"
+                      value={startShiftForm.notes}
+                      onChange={(e) =>
+                        setStartShiftForm((f) => ({
+                          ...f,
+                          notes: e.target.value,
+                        }))
+                      }
+                      className="h-11 rounded-xl"
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="opening_counted">
-                  Opening counted cash (required when receiving a retained float)
-                </Label>
-                <Input
-                  id="opening_counted"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  inputMode="decimal"
-                  value={startShiftForm.opening_counted_cash}
-                  onChange={(e) =>
-                    setStartShiftForm((f) => ({
-                      ...f,
-                      opening_counted_cash: e.target.value,
-                    }))
-                  }
-                  placeholder="Physical count"
-                  className="h-11 rounded-xl"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="shift_notes">Notes (optional)</Label>
-                <Input
-                  id="shift_notes"
-                  value={startShiftForm.notes}
-                  onChange={(e) =>
-                    setStartShiftForm((f) => ({ ...f, notes: e.target.value }))
-                  }
-                  className="h-11 rounded-xl"
-                />
-              </div>
-
-              <Button
-                type="button"
-                disabled={
-                  isStartingShift ||
-                  startShiftForm.starting_cash === "" ||
-                  !Number.isFinite(parseFloat(startShiftForm.starting_cash)) ||
-                  (Boolean(
-                    drawers.find((d) => d.id === startShiftForm.drawer_id)
-                      ?.pending_turnover,
-                  ) &&
-                    (startShiftForm.opening_counted_cash === "" ||
+                  <Button
+                    type="button"
+                    disabled={
+                      isStartingShift ||
+                      startShiftForm.turnover_actual_cash === "" ||
                       !Number.isFinite(
-                        parseFloat(startShiftForm.opening_counted_cash),
-                      )))
-                }
-                onClick={handleStartShift}
-                className="h-12 w-full bg-[#F36509] text-white hover:bg-[#d95a08]"
-              >
-                {isStartingShift ? "Opening shift…" : "Start shift"}
-              </Button>
+                        parseFloat(startShiftForm.turnover_actual_cash),
+                      ) ||
+                      !startShiftForm.acknowledge_turnover
+                    }
+                    onClick={handleStartShift}
+                    className="h-12 w-full bg-[#F36509] text-white hover:bg-[#d95a08]"
+                  >
+                    {isStartingShift
+                      ? "Acknowledging & opening…"
+                      : "Acknowledge turnover & start shift"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {/* Normal start — no pending turnover */}
+                  <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                      Opening cash
+                    </p>
+                    <div className="flex justify-between text-sm">
+                      <span>Starting cash</span>
+                      <span className="font-semibold text-[#F36509]">
+                        {formatCurrency(
+                          Number(startShiftForm.starting_cash || 0),
+                        )}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="starting_cash">Starting cash</Label>
+                    <Input
+                      id="starting_cash"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      inputMode="decimal"
+                      value={startShiftForm.starting_cash}
+                      onChange={(e) =>
+                        setStartShiftForm((f) => ({
+                          ...f,
+                          starting_cash: e.target.value,
+                        }))
+                      }
+                      placeholder="0.00"
+                      className="h-11 rounded-xl"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="shift_notes">Notes (optional)</Label>
+                    <Input
+                      id="shift_notes"
+                      value={startShiftForm.notes}
+                      onChange={(e) =>
+                        setStartShiftForm((f) => ({
+                          ...f,
+                          notes: e.target.value,
+                        }))
+                      }
+                      className="h-11 rounded-xl"
+                    />
+                  </div>
+
+                  <Button
+                    type="button"
+                    disabled={
+                      isStartingShift ||
+                      startShiftForm.starting_cash === "" ||
+                      !Number.isFinite(parseFloat(startShiftForm.starting_cash))
+                    }
+                    onClick={handleStartShift}
+                    className="h-12 w-full bg-[#F36509] text-white hover:bg-[#d95a08]"
+                  >
+                    {isStartingShift ? "Opening shift…" : "Start shift"}
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -1765,64 +1955,64 @@ export default function PrimaryTerminalPage() {
                   </Button>
                 </div>
 
-              {isLoading ? (
-                <Card className="border-stone-200 bg-white">
-                  <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                    <RefreshCw className="h-6 w-6 animate-spin text-[#F36509]" />
-                    <p className="mt-4 text-sm font-medium text-stone-900">
-                      Loading products...
-                    </p>
-                    <p className="mt-1 text-sm text-stone-500">
-                      Getting products from the POS database.
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : filteredProducts.length === 0 ? (
-                <Card className="border-stone-200 bg-white">
-                  <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                    <div className="rounded-full bg-stone-100 p-4">
-                      <Package className="h-6 w-6 text-stone-400" />
-                    </div>
-                    <h3 className="mt-4 text-sm font-semibold text-stone-900">
-                      {searchQuery.trim()
-                        ? "No results found."
-                        : "No products available"}
-                    </h3>
-                    <p className="mt-1 max-w-sm text-sm text-stone-500">
-                      {searchQuery.trim()
-                        ? "Try a different search term or clear the search."
-                        : "Add active products to the POS database to display them here."}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 min-[110rem]:grid-cols-6 min-[130rem]:grid-cols-8">
-                  {filteredProducts.map((product) => (
-                     <button
-                       key={product.id}
-                       type="button"
-                       onClick={() => {
-                         if ((product.stock_quantity ?? 0) <= 0) return;
-                         addToCart(product);
-                       }}
-                       disabled={(product.stock_quantity ?? 0) <= 0}
-                       className="group text-left disabled:cursor-not-allowed disabled:opacity-60"
-                     >
-                      <Card className="h-full border-stone-200 bg-white transition-all group-hover:-translate-y-0.5 group-hover:border-[#F36509]/40 group-hover:shadow-sm">
-                        <CardContent className="p-3 sm:p-4">
-                          <div className="relative flex h-20 items-center justify-center overflow-hidden rounded-xl bg-stone-100 sm:h-24 lg:h-28">
-                            {product.image_url ? (
-                              <Image
-                                src={product.image_url}
-                                alt={product.name}
-                                fill
-                                className="object-cover"
-                                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                              />
-                            ) : (
-                              <Package className="h-8 w-8 text-stone-300 sm:h-10 sm:w-10" />
-                            )}
-                          </div>
+                {isLoading ? (
+                  <Card className="border-stone-200 bg-white">
+                    <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                      <RefreshCw className="h-6 w-6 animate-spin text-[#F36509]" />
+                      <p className="mt-4 text-sm font-medium text-stone-900">
+                        Loading products...
+                      </p>
+                      <p className="mt-1 text-sm text-stone-500">
+                        Getting products from the POS database.
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : filteredProducts.length === 0 ? (
+                  <Card className="border-stone-200 bg-white">
+                    <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                      <div className="rounded-full bg-stone-100 p-4">
+                        <Package className="h-6 w-6 text-stone-400" />
+                      </div>
+                      <h3 className="mt-4 text-sm font-semibold text-stone-900">
+                        {searchQuery.trim()
+                          ? "No results found."
+                          : "No products available"}
+                      </h3>
+                      <p className="mt-1 max-w-sm text-sm text-stone-500">
+                        {searchQuery.trim()
+                          ? "Try a different search term or clear the search."
+                          : "Add active products to the POS database to display them here."}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 min-[110rem]:grid-cols-6 min-[130rem]:grid-cols-8">
+                    {filteredProducts.map((product) => (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() => {
+                          if ((product.stock_quantity ?? 0) <= 0) return;
+                          addToCart(product);
+                        }}
+                        disabled={(product.stock_quantity ?? 0) <= 0}
+                        className="group text-left disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Card className="h-full border-stone-200 bg-white transition-all group-hover:-translate-y-0.5 group-hover:border-[#F36509]/40 group-hover:shadow-sm">
+                          <CardContent className="p-3 sm:p-4">
+                            <div className="relative flex h-20 items-center justify-center overflow-hidden rounded-xl bg-stone-100 sm:h-24 lg:h-28">
+                              {product.image_url ? (
+                                <Image
+                                  src={product.image_url}
+                                  alt={product.name}
+                                  fill
+                                  className="object-cover"
+                                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                                />
+                              ) : (
+                                <Package className="h-8 w-8 text-stone-300 sm:h-10 sm:w-10" />
+                              )}
+                            </div>
 
                             <div className="mt-3 sm:mt-4">
                               <p className="truncate text-xs font-medium uppercase tracking-wider text-stone-400">
@@ -1836,24 +2026,24 @@ export default function PrimaryTerminalPage() {
                                 <Plus className="h-4 w-4 shrink-0 text-stone-300 transition-colors group-hover:text-[#F36509]" />
                               </div>
 
-                             <p className="mt-2 text-sm font-semibold text-[#F36509] sm:text-base">
-                               {formatCurrency(product.price)}
-                             </p>
-                             <p className="mt-1 text-xs font-medium text-stone-500">
-                               {(product.stock_quantity ?? 0) > 0
-                                 ? `${product.stock_quantity} available`
-                                 : "Out of Stock"}
-                             </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </button>
-                  ))}
-                </div>
-              )}
+                              <p className="mt-2 text-sm font-semibold text-[#F36509] sm:text-base">
+                                {formatCurrency(product.price)}
+                              </p>
+                              <p className="mt-1 text-xs font-medium text-stone-500">
+                                {(product.stock_quantity ?? 0) > 0
+                                  ? `${product.stock_quantity} available`
+                                  : "Out of Stock"}
+                              </p>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
 
           {/* Cart */}
           <aside className="flex w-full flex-col border-t border-stone-200 bg-white xl:h-full xl:min-h-0 xl:w-[400px] xl:border-l xl:border-t-0">
@@ -2829,7 +3019,7 @@ export default function PrimaryTerminalPage() {
           <DialogHeader>
             <DialogTitle className="font-serif text-xl">End shift</DialogTitle>
             <DialogDescription>
-              Count the drawer and close your shift.
+              Count the cash on hand and close your shift.
               {branchName && terminalName
                 ? ` · ${branchName} / ${terminalName}`
                 : ""}
@@ -2909,7 +3099,7 @@ export default function PrimaryTerminalPage() {
                 </div>
               </div>
 
-              {/* Expected drawer */}
+              {/* Expected cash */}
               <div className="rounded-xl border border-stone-200 bg-white p-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-stone-500">Opening float</span>
@@ -2935,7 +3125,7 @@ export default function PrimaryTerminalPage() {
                   </div>
                 )}
                 <div className="mt-2 flex justify-between border-t border-stone-100 pt-2 font-semibold text-stone-900">
-                  <span>Expected in drawer</span>
+                  <span>Expected cash</span>
                   <span className="tabular-nums">
                     {formatCurrency(shiftSummary.expected_cash)}
                   </span>
@@ -2988,10 +3178,13 @@ export default function PrimaryTerminalPage() {
               {/* Retained float for the next cashier */}
               <div className="space-y-2 rounded-xl border border-stone-200 bg-stone-50/70 p-3">
                 <div>
-                  <Label htmlFor="retained_cash">Retained float for next shift</Label>
+                  <Label htmlFor="retained_cash">
+                    Retained float for next shift
+                  </Label>
                   <p className="mt-1 text-xs text-stone-500">
-                    Leave this amount in the same drawer. The remaining cash is
-                    prepared for remittance.
+                    Leave this amount as starting float for the next cashier.
+                    The remaining cash is prepared for remittance. The next
+                    cashier must explicitly acknowledge the retained float.
                   </p>
                 </div>
                 <Input
