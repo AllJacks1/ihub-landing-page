@@ -26,6 +26,8 @@ import {
   Warehouse,
   ChefHat,
   Coffee,
+  BanknoteArrowDown,
+  BanknoteArrowUp,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -163,6 +165,12 @@ const sidebarGroups: SidebarGroup[] = [
         label: "Sales",
         icon: Tag,
         href: "/admin/pos/sales",
+      },
+      {
+        id: "remit",
+        label: "Remittance",
+        icon: BanknoteArrowUp,
+        href: "/admin/pos/remit-reports",
       },
       {
         id: "inventory",
