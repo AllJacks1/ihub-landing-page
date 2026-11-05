@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/lib/actions";
 import { getReportsData } from "@/lib/report-actions";
+import { getBranchExpenses } from "@/lib/expense-actions";
 import ReportsClient from "./reports-client";
 
 export default async function ReportsPage() {
@@ -27,9 +28,21 @@ export default async function ReportsPage() {
     );
   }
 
-  const result = await getReportsData();
+  const [result, expensesResult] = await Promise.all([
+    getReportsData(),
+    getBranchExpenses({ limit: 200 }),
+  ]);
+
   const totalSales = result.success && result.data ? result.data.totalSales : 0;
   const totalItems = result.success && result.data ? result.data.totalItems : 0;
+  const expenses =
+    expensesResult.success && expensesResult.data ? expensesResult.data : [];
 
-  return <ReportsClient totalSales={totalSales} totalItems={totalItems} />;
+  return (
+    <ReportsClient
+      totalSales={totalSales}
+      totalItems={totalItems}
+      expenses={expenses}
+    />
+  );
 }

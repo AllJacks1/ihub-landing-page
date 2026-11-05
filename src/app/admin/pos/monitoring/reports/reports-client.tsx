@@ -15,11 +15,13 @@ import {
   Target,
   ChevronLeft,
   ChevronRight,
+  Banknote,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import type { CashExpense } from "@/lib/expense-actions";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -39,51 +41,35 @@ type ReportTab =
   | "returns"
   | "product"
   | "receipts"
-  | "performance";
+  | "performance"
+  | "expenses";
 
 type CashierRow = {
   id: string;
   name: string;
   branch: string;
-
-  // Core volume
   transactions: number;
   items: number;
   refundsCount: number;
   refundsAmount: number;
-
-  // Sales composition
-  grossSales: number; // before any discount / charge
-  vatableSales: number; // sales subject to 12% VAT
-  vatExemptSales: number; // zero-rated / exempt
-  discounts: number; // total discounts given
-  charges: number; // service charge, delivery, etc.
-  vatAmount: number; // 12% of vatableSales
-  netSales: number; // final amount after discount + charges + VAT
-
-  // Payment methods (dynamic – users can enable/disable)
+  grossSales: number;
+  vatableSales: number;
+  vatExemptSales: number;
+  discounts: number;
+  charges: number;
+  vatAmount: number;
+  netSales: number;
   payments: PaymentBreakdown;
-
-  // Convenience
   avgTicket: number;
 };
-
-const AVAILABLE_PAYMENT_METHODS = [
-  { key: "cash", label: "Cash" },
-  { key: "card", label: "Card" },
-  { key: "gcash", label: "GCash" },
-  { key: "maya", label: "Maya" },
-  { key: "other", label: "Other" },
-  // users can add more later
-] as const;
 
 type DailyRow = {
   id: string;
   date: string;
-  receiptBegin: string; // first receipt no. of the day
-  receiptEnd: string; // last receipt no. of the day
-  salesBegin: number; // opening cumulative sales counter
-  salesEnd: number; // closing cumulative sales counter
+  receiptBegin: string;
+  receiptEnd: string;
+  salesBegin: number;
+  salesEnd: number;
   transactions: number;
   items: number;
   vatableSales: number;
@@ -164,8 +150,8 @@ const MOCK_CASHIERS: CashierRow[] = [
     vatExemptSales: 1_800,
     discounts: 2_400,
     charges: 850,
-    vatAmount: 8184, // 68200 * 0.12
-    netSales: 68_200, // example – adjust to your exact formula
+    vatAmount: 8184,
+    netSales: 68_200,
     payments: {
       cash: 28_400,
       card: 12_100,
@@ -246,72 +232,6 @@ const MOCK_DAILY: DailyRow[] = [
     discounts: 1_800,
     net: 76_000,
   },
-  {
-    id: "3",
-    date: "Oct 10, 2026",
-    receiptBegin: "R-10210",
-    receiptEnd: "R-10280",
-    salesBegin: 133_400,
-    salesEnd: 227_500,
-    transactions: 71,
-    items: 156,
-    vatableSales: 90_600,
-    payments: {
-      cash: 36_000,
-      card: 13_000,
-      gcash: 27_000,
-      maya: 7_000,
-      credit: 5_000,
-      bankTransfer: 3_000,
-      other: 0,
-    },
-    discounts: 3_100,
-    net: 91_000,
-  },
-  {
-    id: "2",
-    date: "Oct 9, 2026",
-    receiptBegin: "R-10158",
-    receiptEnd: "R-10209",
-    salesBegin: 63_100,
-    salesEnd: 133_400,
-    transactions: 52,
-    items: 109,
-    vatableSales: 68_200,
-    payments: {
-      cash: 27_000,
-      card: 10_000,
-      gcash: 20_000,
-      maya: 5_000,
-      credit: 4_000,
-      bankTransfer: 2_800,
-      other: 0,
-    },
-    discounts: 1_500,
-    net: 68_800,
-  },
-  {
-    id: "1",
-    date: "Oct 8, 2026",
-    receiptBegin: "R-10111",
-    receiptEnd: "R-10157",
-    salesBegin: 0,
-    salesEnd: 63_100,
-    transactions: 47,
-    items: 98,
-    vatableSales: 61_400,
-    payments: {
-      cash: 25_000,
-      card: 9_000,
-      gcash: 18_000,
-      maya: 4_000,
-      credit: 3_900,
-      bankTransfer: 2_000,
-      other: 0,
-    },
-    discounts: 1_200,
-    net: 61_900,
-  },
 ];
 
 const MOCK_RETURNS: ReturnRow[] = [
@@ -326,39 +246,6 @@ const MOCK_RETURNS: ReturnRow[] = [
     status: "refunded",
     date: "Oct 12, 2026",
   },
-  {
-    id: "2",
-    receiptNo: "R-10229",
-    product: "Burger Combo",
-    cashier: "Carlos Mendoza",
-    qty: 1,
-    amount: 1475,
-    reason: "Spoiled",
-    status: "refunded",
-    date: "Oct 12, 2026",
-  },
-  {
-    id: "3",
-    receiptNo: "R-10215",
-    product: "Chocolate Cake Slice",
-    cashier: "Juan Dela Cruz",
-    qty: 2,
-    amount: 800,
-    reason: "Changed mind",
-    status: "replaced",
-    date: "Oct 11, 2026",
-  },
-  {
-    id: "4",
-    receiptNo: "R-10202",
-    product: "Chicken Rice Meal",
-    cashier: "Carlos Mendoza",
-    qty: 1,
-    amount: 1200,
-    reason: "Foreign object",
-    status: "pending",
-    date: "Oct 10, 2026",
-  },
 ];
 
 const MOCK_PRODUCTS: ProductRow[] = [
@@ -371,46 +258,6 @@ const MOCK_PRODUCTS: ProductRow[] = [
     netQty: 139,
     revenue: 27800,
     avgPrice: 200,
-  },
-  {
-    id: "2",
-    name: "Chicken Rice Meal",
-    category: "Meals",
-    sold: 19,
-    returned: 0,
-    netQty: 19,
-    revenue: 22800,
-    avgPrice: 1200,
-  },
-  {
-    id: "3",
-    name: "French Fries",
-    category: "Snacks",
-    sold: 93,
-    returned: 1,
-    netQty: 92,
-    revenue: 18400,
-    avgPrice: 200,
-  },
-  {
-    id: "4",
-    name: "Chocolate Cake Slice",
-    category: "Dessert",
-    sold: 38,
-    returned: 2,
-    netQty: 36,
-    revenue: 14400,
-    avgPrice: 400,
-  },
-  {
-    id: "5",
-    name: "Bottled Water",
-    category: "Beverages",
-    sold: 124,
-    returned: 0,
-    netQty: 124,
-    revenue: 12400,
-    avgPrice: 100,
   },
 ];
 
@@ -425,46 +272,6 @@ const MOCK_RECEIPTS: ReceiptRow[] = [
     payment: "gcash",
     date: "Oct 12, 2026 · 14:32",
   },
-  {
-    id: "2",
-    receiptNo: "R-10240",
-    cashier: "Juan Dela Cruz",
-    branch: "Main Branch",
-    items: 2,
-    total: 1400,
-    payment: "cash",
-    date: "Oct 12, 2026 · 14:18",
-  },
-  {
-    id: "3",
-    receiptNo: "R-10239",
-    cashier: "Ana Reyes",
-    branch: "SM Mall Branch",
-    items: 6,
-    total: 2350,
-    payment: "card",
-    date: "Oct 12, 2026 · 13:57",
-  },
-  {
-    id: "4",
-    receiptNo: "R-10238",
-    cashier: "Carlos Mendoza",
-    branch: "Airport Kiosk",
-    items: 1,
-    total: 200,
-    payment: "cash",
-    date: "Oct 12, 2026 · 13:41",
-  },
-  {
-    id: "5",
-    receiptNo: "R-10237",
-    cashier: "Maria Santos",
-    branch: "Main Branch",
-    items: 3,
-    total: 1075,
-    payment: "gcash",
-    date: "Oct 12, 2026 · 13:22",
-  },
 ];
 
 const MOCK_PERFORMANCE: PerformanceRow[] = [
@@ -475,33 +282,6 @@ const MOCK_PERFORMANCE: PerformanceRow[] = [
     target: 80000,
     actual: 68200,
     returns: 400,
-    period: "October 2026",
-  },
-  {
-    id: "2",
-    name: "Juan Dela Cruz",
-    type: "cashier",
-    target: 70000,
-    actual: 59450,
-    returns: 0,
-    period: "October 2026",
-  },
-  {
-    id: "3",
-    name: "Main Branch",
-    type: "branch",
-    target: 200000,
-    actual: 142300,
-    returns: 2675,
-    period: "October 2026",
-  },
-  {
-    id: "4",
-    name: "SM Mall Branch",
-    type: "branch",
-    target: 90000,
-    actual: 68400,
-    returns: 800,
     period: "October 2026",
   },
 ];
@@ -522,6 +302,14 @@ const RETURN_STYLES: Record<ReturnRow["status"], string> = {
   replaced: "border-sky-200 bg-sky-50 text-sky-700",
   pending: "border-amber-200 bg-amber-50 text-amber-700",
 };
+const EXPENSE_STATUS_STYLES: Record<string, string> = {
+  paid: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  completed: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  draft: "border-stone-200 bg-stone-50 text-stone-600",
+  void: "border-red-200 bg-red-50 text-red-700",
+  cancelled: "border-red-200 bg-red-50 text-red-700",
+};
 
 const TABS: { id: ReportTab; label: string; icon: typeof Users }[] = [
   { id: "cashier", label: "Cashier Sales", icon: Users },
@@ -530,16 +318,27 @@ const TABS: { id: ReportTab; label: string; icon: typeof Users }[] = [
   { id: "product", label: "Product Sales", icon: Package },
   { id: "receipts", label: "Receipt Details", icon: Receipt },
   { id: "performance", label: "Performance", icon: Target },
+  { id: "expenses", label: "Expenses", icon: Banknote },
 ];
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-export default function ReportsClient({ totalSales, totalItems }: { totalSales: number; totalItems: number }) {
+type Props = {
+  totalSales: number;
+  totalItems: number;
+  expenses?: CashExpense[];
+};
+
+export default function ReportsClient({
+  totalSales,
+  totalItems,
+  expenses = [],
+}: Props) {
   const [activeTab, setActiveTab] = useState<ReportTab>("cashier");
   const [isLoading, setIsLoading] = useState(true);
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
-    d.setDate(d.getDate() - 14); // 15 days total
+    d.setDate(d.getDate() - 14);
     return d.toISOString().slice(0, 10);
   });
   const [endDate, setEndDate] = useState(() => {
@@ -555,16 +354,42 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
   const shiftRange = (days: number) => {
     const start = new Date(startDate + "T00:00:00");
     const end = new Date(endDate + "T00:00:00");
-
     start.setDate(start.getDate() + days);
     end.setDate(end.getDate() + days);
-
     setStartDate(start.toISOString().slice(0, 10));
     setEndDate(end.toISOString().slice(0, 10));
     setIsLoading(true);
   };
 
-  const totalNet = MOCK_CASHIERS.reduce((s, c) => s + c.netSales, 0);
+  // Filter expenses by selected date range (client-side; server already returns recent)
+  const filteredExpenses = useMemo(() => {
+    const from = new Date(startDate + "T00:00:00").getTime();
+    const to = new Date(endDate + "T23:59:59").getTime();
+    return expenses.filter((e) => {
+      const t = new Date(e.occurred_at).getTime();
+      return t >= from && t <= to;
+    });
+  }, [expenses, startDate, endDate]);
+
+  const expenseStats = useMemo(() => {
+    const active = filteredExpenses.filter(
+      (e) => !["void", "cancelled"].includes(e.status),
+    );
+    const cashTotal = active
+      .filter((e) => e.payment_method === "cash")
+      .reduce((s, e) => s + e.amount, 0);
+    const allTotal = active.reduce((s, e) => s + e.amount, 0);
+    const voided = filteredExpenses.filter((e) =>
+      ["void", "cancelled"].includes(e.status),
+    ).length;
+    return {
+      count: active.length,
+      cashTotal,
+      allTotal,
+      voided,
+    };
+  }, [filteredExpenses]);
+
   const totalVat = MOCK_CASHIERS.reduce((s, c) => s + c.vatAmount, 0);
   const totalDisc = MOCK_CASHIERS.reduce((s, c) => s + c.discounts, 0);
   const totalCash =
@@ -608,7 +433,7 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
           {
             label: "Gross Sales",
             value: formatCurrency(391700),
-            sub: "5 days shown",
+            sub: "Period shown",
             icon: TrendingUp,
             iconCls: "bg-orange-50 text-[#F36509]",
           },
@@ -622,14 +447,14 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
           {
             label: "Transactions",
             value: formatNumber(292),
-            sub: "Avg 58/day",
+            sub: "Avg / day",
             icon: BarChart3,
             iconCls: "bg-stone-100 text-stone-500",
           },
           {
             label: "Discounts",
             value: formatCurrency(10000),
-            sub: "2.6% of gross",
+            sub: "Of gross",
             icon: Receipt,
             iconCls: "bg-amber-50 text-amber-600",
           },
@@ -677,7 +502,7 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
           {
             label: "Units Returned",
             value: "6",
-            sub: "1.4% rate",
+            sub: "Return rate",
             icon: RotateCcw,
             iconCls: "bg-red-50 text-red-600",
           },
@@ -691,7 +516,7 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
           {
             label: "Top Product",
             value: "Iced Coffee",
-            sub: "139 net units",
+            sub: "Net units",
             icon: BarChart3,
             iconCls: "bg-stone-100 text-stone-500",
           },
@@ -758,12 +583,51 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
             iconCls: "bg-stone-100 text-stone-500",
           },
         ];
+      case "expenses":
+        return [
+          {
+            label: "Expenses",
+            value: formatNumber(expenseStats.count),
+            sub: "In date range",
+            icon: Banknote,
+            iconCls: "bg-orange-50 text-[#F36509]",
+          },
+          {
+            label: "Cash from till",
+            value: formatCurrency(expenseStats.cashTotal),
+            sub: "Reduces expected cash",
+            icon: Store,
+            iconCls: "bg-amber-50 text-amber-600",
+          },
+          {
+            label: "All methods",
+            value: formatCurrency(expenseStats.allTotal),
+            sub: "Cash + non-cash",
+            icon: TrendingUp,
+            iconCls: "bg-stone-100 text-stone-500",
+          },
+          {
+            label: "Voided",
+            value: formatNumber(expenseStats.voided),
+            sub: "Not counted",
+            icon: RotateCcw,
+            iconCls: "bg-red-50 text-red-600",
+          },
+        ];
     }
-  }, [activeTab, totalSales, totalItems]);
+  }, [
+    activeTab,
+    totalSales,
+    totalItems,
+    totalVat,
+    totalDisc,
+    totalCash,
+    expenseStats,
+  ]);
 
   return (
     <main className="flex min-h-[calc(100vh-4rem)] flex-1 flex-col bg-stone-50">
-      {/* Header — matches Sales / Inventory pages */}
+      {/* Header */}
       <div className="border-b border-stone-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -774,15 +638,13 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
               Reports
             </h1>
             <p className="mt-1 text-sm text-stone-500">
-              Cashier, daily, returns, product, receipt &amp; performance
-              reports
+              Cashier, daily, returns, product, receipt, performance &amp;
+              expenses
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 justify-end">
-            {/* Date range control */}
             <div className="flex h-11 overflow-hidden rounded-xl border border-stone-200 bg-white focus-within:border-[#F36509]/50 focus-within:ring-2 focus-within:ring-[#F36509]/20">
-              {/* Previous – flushed left + accent */}
               <button
                 type="button"
                 onClick={() => shiftRange(-15)}
@@ -791,15 +653,11 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-
-              {/* Center */}
               <div className="flex flex-1 items-center justify-center">
                 {isEditingRange ? (
-                  // ── Edit mode ──────────────────────────────────────────────
                   <div
                     className="flex items-center gap-1.5 px-2"
                     onBlur={(e) => {
-                      // Only exit when focus leaves the whole edit area
                       if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                         setIsEditingRange(false);
                       }
@@ -829,7 +687,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                     />
                   </div>
                 ) : (
-                  // ── Display mode (month names) ─────────────────────────────
                   <button
                     type="button"
                     onClick={() => setIsEditingRange(true)}
@@ -839,29 +696,19 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                     <span>
                       {new Date(startDate + "T00:00:00").toLocaleDateString(
                         "en-PH",
-                        {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        },
+                        { month: "short", day: "numeric", year: "numeric" },
                       )}
                     </span>
                     <span className="text-stone-400">–</span>
                     <span>
                       {new Date(endDate + "T00:00:00").toLocaleDateString(
                         "en-PH",
-                        {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        },
+                        { month: "short", day: "numeric", year: "numeric" },
                       )}
                     </span>
                   </button>
                 )}
               </div>
-
-              {/* Next – flushed right + accent */}
               <button
                 type="button"
                 onClick={() => shiftRange(15)}
@@ -872,7 +719,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
               </button>
             </div>
 
-            {/* Export & Refresh */}
             <Button
               type="button"
               variant="outline"
@@ -901,7 +747,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
       </div>
 
       <div className="flex-1 p-4 sm:p-6">
-        {/* KPI cards — per tab */}
         <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {kpis.map(({ label, value, sub, icon: Icon, iconCls }) => (
             <Card key={label} className="border-stone-200 bg-white">
@@ -923,7 +768,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
           ))}
         </div>
 
-        {/* Tab bar */}
         <div className="mb-4 flex gap-1 overflow-x-auto rounded-xl border border-stone-200 bg-white p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
@@ -942,7 +786,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
           ))}
         </div>
 
-        {/* Report table */}
         <Card className="border-stone-200 bg-white">
           <CardContent className="p-0">
             {isLoading ? (
@@ -1074,6 +917,32 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                           </th>
                         </>
                       )}
+                      {activeTab === "expenses" && (
+                        <>
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            When
+                          </th>
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            Description
+                          </th>
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            Category
+                          </th>
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            Shift
+                          </th>
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            Method
+                          </th>
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            Reference
+                          </th>
+                          <th className="px-5 py-3.5 font-medium text-stone-500">
+                            Status
+                          </th>
+                          <th className={headCls}>Amount</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -1144,7 +1013,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                         </tr>
                       ))}
 
-                    {/* Daily sales */}
                     {activeTab === "daily" &&
                       MOCK_DAILY.map((r) => (
                         <tr
@@ -1195,7 +1063,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                         </tr>
                       ))}
 
-                    {/* Customer returns */}
                     {activeTab === "returns" &&
                       MOCK_RETURNS.map((r) => (
                         <tr
@@ -1236,7 +1103,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                         </tr>
                       ))}
 
-                    {/* Product sales */}
                     {activeTab === "product" &&
                       MOCK_PRODUCTS.map((r) => (
                         <tr
@@ -1276,7 +1142,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                         </tr>
                       ))}
 
-                    {/* Receipt details */}
                     {activeTab === "receipts" &&
                       MOCK_RECEIPTS.map((r) => (
                         <tr
@@ -1314,7 +1179,6 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                         </tr>
                       ))}
 
-                    {/* Performance */}
                     {activeTab === "performance" &&
                       MOCK_PERFORMANCE.map((r) => {
                         const net = r.actual - r.returns;
@@ -1382,6 +1246,87 @@ export default function ReportsClient({ totalSales, totalItems }: { totalSales: 
                           </tr>
                         );
                       })}
+
+                    {activeTab === "expenses" &&
+                      (filteredExpenses.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={8}
+                            className="px-5 py-16 text-center text-sm text-stone-400"
+                          >
+                            No expenses in this date range.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredExpenses.map((e) => (
+                          <tr
+                            key={e.id}
+                            className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
+                          >
+                            <td className="px-5 py-4 text-stone-500 whitespace-nowrap">
+                              {new Date(e.occurred_at).toLocaleString("en-PH", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </td>
+                            <td className="px-5 py-4">
+                              <p className="font-medium text-stone-900">
+                                {e.description}
+                              </p>
+                              {e.notes && (
+                                <p className="mt-0.5 text-xs text-stone-400">
+                                  {e.notes}
+                                </p>
+                              )}
+                            </td>
+                            <td className="px-5 py-4 text-stone-600">
+                              {e.category_name ?? "—"}
+                            </td>
+                            <td className="px-5 py-4 text-stone-500">
+                              {e.shift_number ?? e.shift_id.slice(0, 8)}
+                            </td>
+                            <td className="px-5 py-4">
+                              <Badge
+                                variant="outline"
+                                className={
+                                  PAYMENT_STYLES[
+                                    (e.payment_method as ReceiptRow["payment"]) ||
+                                      "other"
+                                  ] ?? PAYMENT_STYLES.other
+                                }
+                              >
+                                {e.payment_method}
+                              </Badge>
+                            </td>
+                            <td className="px-5 py-4 text-stone-500">
+                              {e.reference_number ?? "—"}
+                            </td>
+                            <td className="px-5 py-4">
+                              <Badge
+                                variant="outline"
+                                className={
+                                  EXPENSE_STATUS_STYLES[e.status] ??
+                                  EXPENSE_STATUS_STYLES.draft
+                                }
+                              >
+                                {e.status}
+                              </Badge>
+                            </td>
+                            <td
+                              className={`${cellRight} font-semibold ${
+                                ["void", "cancelled"].includes(e.status)
+                                  ? "text-stone-400 line-through"
+                                  : "text-stone-900"
+                              }`}
+                            >
+                              {formatCurrency(e.amount)}
+                            </td>
+                          </tr>
+                        ))
+                      ))}
                   </tbody>
                 </table>
               </div>
