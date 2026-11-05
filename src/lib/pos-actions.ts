@@ -1283,7 +1283,8 @@ export async function openPosShift(params: {
       if (!Number.isFinite(actualReceived) || actualReceived < 0) {
         return {
           success: false,
-          error: "Enter a valid physical cash count to acknowledge the turnover",
+          error:
+            "Enter a valid physical cash count to acknowledge the turnover",
         };
       }
 
@@ -1856,6 +1857,525 @@ export async function getShiftCashSummary(shiftId: string): Promise<{
         error instanceof Error
           ? error.message
           : "Failed to load shift cash summary",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// getRemittanceVerificationSummary
+// ---------------------------------------------------------------------------
+
+export type RemittanceExpenseLine = {
+  id: string;
+  description: string;
+  amount: number;
+  payment_method: string;
+  status: string;
+  category_name: string | null;
+  reference_number: string | null;
+  notes: string | null;
+  occurred_at: string;
+};
+
+/** Individual completed cash payment that entered the till during a shift */
+export type RemittanceCashSaleLine = {
+  payment_id: string;
+  order_id: string;
+  order_number: string | null;
+  amount: number;
+  paid_at: string | null;
+};
+
+/** One shift in the float/remittance chain */
+export type RemittanceChainShift = {
+  id: string;
+  shift_number: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  cashier_user_id: string;
+  previous_shift_id: string | null;
+  opening: number;
+  cash_sales: number;
+  cash_expenses: number;
+  cash_topups: number;
+  cash_refunds: number;
+  expected_in_drawer: number;
+  actual_counted: number | null;
+  variance: number | null;
+  retained_for_next: number;
+  /** Cash this shift sent out as remittance (0 if it only retained) */
+  remitted_amount: number;
+  payment_breakdown: {
+    cash: number;
+    card: number;
+    gcash: number;
+    maya: number;
+    employee_charge: number;
+    other: number;
+  };
+  order_count: number;
+  cash_sales_lines: RemittanceCashSaleLine[];
+  expenses: RemittanceExpenseLine[];
+  /** true for the shift that prepared this remittance */
+  is_source_shift: boolean;
+};
+
+export type RemittanceVerificationSummary = {
+  remittance: {
+    id: string;
+    expected_amount: number;
+    retained_cash: number;
+    status: string;
+    prepared_at: string;
+    from_shift_id: string | null;
+    notes: string | null;
+  };
+  /** Source shift (same as the last item in chain that is_source_shift) */
+  shift: {
+    id: string;
+    shift_number: string | null;
+    opened_at: string;
+    closed_at: string | null;
+    starting_cash: number;
+    opening_counted_cash: number | null;
+    expected_cash: number;
+    actual_cash: number | null;
+    variance: number | null;
+    retained_cash: number;
+    cashier_user_id: string;
+    previous_shift_id: string | null;
+  };
+  cash: {
+    opening: number;
+    cash_sales: number;
+    cash_expenses: number;
+    cash_topups: number;
+    cash_refunds: number;
+    expected_in_drawer: number;
+    actual_counted: number | null;
+    retained_for_next: number;
+    implied_remittance: number | null;
+  };
+  payment_breakdown: {
+    cash: number;
+    card: number;
+    gcash: number;
+    maya: number;
+    employee_charge: number;
+    other: number;
+  };
+  order_count: number;
+  cash_sales_lines: RemittanceCashSaleLine[];
+  expenses: RemittanceExpenseLine[];
+  /**
+   * Full float chain from the earliest connected shift → source shift
+   * (oldest first). Every shift that passed retained cash into this bag.
+   */
+  chain: RemittanceChainShift[];
+  /** Aggregates across the whole chain (for finance glance) */
+  chain_totals: {
+    cash_sales: number;
+    cash_expenses: number;
+    order_count: number;
+    shift_count: number;
+  };
+};
+
+const MAX_CHAIN_DEPTH = 30;
+
+async function loadShiftCashDetail(
+  supabase: ReturnType<typeof createPosAdminClient>,
+  shiftId: string,
+): Promise<{
+  shift: {
+    id: string;
+    shift_number: string | null;
+    opened_at: string;
+    closed_at: string | null;
+    starting_cash: number;
+    opening_counted_cash: number | null;
+    expected_cash: number | null;
+    actual_cash: number | null;
+    variance: number | null;
+    retained_cash: number;
+    cashier_user_id: string;
+    previous_shift_id: string | null;
+    status: string;
+  };
+  cash_sales: number;
+  cash_expenses: number;
+  cash_topups: number;
+  cash_refunds: number;
+  breakdown: {
+    cash: number;
+    card: number;
+    gcash: number;
+    maya: number;
+    employee_charge: number;
+    other: number;
+  };
+  order_count: number;
+  cash_sales_lines: RemittanceCashSaleLine[];
+  expenses: RemittanceExpenseLine[];
+} | null> {
+  const { data: shift, error } = await supabase
+    .from("pos_shifts")
+    .select(
+      "id, shift_number, opened_at, closed_at, starting_cash, opening_counted_cash, expected_cash, actual_cash, variance, retained_cash, cashier_user_id, status, previous_shift_id",
+    )
+    .eq("id", shiftId)
+    .maybeSingle();
+
+  if (error || !shift) return null;
+
+  const { data: orders } = await supabase
+    .from("pos_orders")
+    .select("id, order_number, status")
+    .eq("shift_id", shift.id);
+
+  const orderIds = (orders ?? []).map((o) => o.id);
+  const orderNumberById = new Map(
+    (orders ?? []).map((o) => [o.id, o.order_number as string | null]),
+  );
+
+  const breakdown = {
+    cash: 0,
+    card: 0,
+    gcash: 0,
+    maya: 0,
+    employee_charge: 0,
+    other: 0,
+  };
+  let cashSales = 0;
+  let cashRefunds = 0;
+  const cashSalesLines: RemittanceCashSaleLine[] = [];
+
+  if (orderIds.length > 0) {
+    const { data: payments } = await supabase
+      .from("pos_payments")
+      .select("id, order_id, payment_method, amount, status, paid_at")
+      .in("order_id", orderIds)
+      .eq("status", "completed");
+
+    for (const p of payments ?? []) {
+      const method = String(p.payment_method ?? "other").toLowerCase();
+      const amt = Number(p.amount ?? 0);
+      if (!Number.isFinite(amt)) continue;
+
+      if (method === "cash") {
+        breakdown.cash += amt;
+        if (amt >= 0) {
+          cashSales += amt;
+          cashSalesLines.push({
+            payment_id: p.id as string,
+            order_id: p.order_id as string,
+            order_number: orderNumberById.get(p.order_id as string) ?? null,
+            amount: amt,
+            paid_at: (p.paid_at as string) ?? null,
+          });
+        } else {
+          cashRefunds += Math.abs(amt);
+        }
+      } else if (method === "card") {
+        breakdown.card += amt;
+      } else if (method === "gcash") {
+        breakdown.gcash += amt;
+      } else if (method === "maya") {
+        breakdown.maya += amt;
+      } else if (method === "employee_charge") {
+        breakdown.employee_charge += amt;
+      } else {
+        breakdown.other += amt;
+      }
+    }
+  }
+
+  cashSalesLines.sort((a, b) => {
+    const ta = a.paid_at ? new Date(a.paid_at).getTime() : 0;
+    const tb = b.paid_at ? new Date(b.paid_at).getTime() : 0;
+    return ta - tb;
+  });
+
+  const { data: expenseRows } = await supabase
+    .from("cash_expenses")
+    .select(
+      `
+      id, description, amount, payment_method, status, occurred_at,
+      reference_number, notes,
+      cash_expense_categories:category_id ( name )
+    `,
+    )
+    .eq("shift_id", shift.id)
+    .order("occurred_at", { ascending: true });
+
+  const expenses: RemittanceExpenseLine[] = (expenseRows ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    const cat = r.cash_expense_categories as
+      | { name: string }
+      | { name: string }[]
+      | null;
+    const catName = Array.isArray(cat) ? cat[0]?.name : cat?.name;
+    return {
+      id: r.id as string,
+      description: (r.description as string) ?? "",
+      amount: Number(r.amount ?? 0),
+      payment_method: String(r.payment_method ?? "cash"),
+      status: String(r.status ?? "paid"),
+      category_name: catName ?? null,
+      reference_number: (r.reference_number as string) ?? null,
+      notes: (r.notes as string) ?? null,
+      occurred_at: r.occurred_at as string,
+    };
+  });
+
+  let cashExpenses = 0;
+  for (const e of expenses) {
+    if (
+      e.payment_method === "cash" &&
+      !["void", "cancelled"].includes(e.status)
+    ) {
+      cashExpenses += e.amount;
+    }
+  }
+
+  let cashTopups = 0;
+  const { data: ledger } = await supabase
+    .from("cash_ledger")
+    .select("movement_type, amount")
+    .eq("shift_id", shift.id);
+  for (const row of ledger ?? []) {
+    const t = String(row.movement_type ?? "").toLowerCase();
+    const amt = Number(row.amount ?? 0);
+    if (t === "topup" || t === "float_in" || t === "paid_in") {
+      cashTopups += amt;
+    }
+  }
+
+  return {
+    shift: {
+      id: shift.id,
+      shift_number: shift.shift_number,
+      opened_at: shift.opened_at,
+      closed_at: shift.closed_at,
+      starting_cash: Number(shift.starting_cash ?? 0),
+      opening_counted_cash:
+        shift.opening_counted_cash != null
+          ? Number(shift.opening_counted_cash)
+          : null,
+      expected_cash:
+        shift.expected_cash != null ? Number(shift.expected_cash) : null,
+      actual_cash: shift.actual_cash != null ? Number(shift.actual_cash) : null,
+      variance: shift.variance != null ? Number(shift.variance) : null,
+      retained_cash: Number(shift.retained_cash ?? 0),
+      cashier_user_id: shift.cashier_user_id,
+      previous_shift_id: (shift.previous_shift_id as string) ?? null,
+      status: shift.status,
+    },
+    cash_sales: Number(cashSales.toFixed(2)),
+    cash_expenses: Number(cashExpenses.toFixed(2)),
+    cash_topups: Number(cashTopups.toFixed(2)),
+    cash_refunds: Number(cashRefunds.toFixed(2)),
+    breakdown: {
+      cash: Number(breakdown.cash.toFixed(2)),
+      card: Number(breakdown.card.toFixed(2)),
+      gcash: Number(breakdown.gcash.toFixed(2)),
+      maya: Number(breakdown.maya.toFixed(2)),
+      employee_charge: Number(breakdown.employee_charge.toFixed(2)),
+      other: Number(breakdown.other.toFixed(2)),
+    },
+    order_count: orderIds.length,
+    cash_sales_lines: cashSalesLines,
+    expenses,
+  };
+}
+
+/**
+ * Full verification package: walks previous_shift_id from the remitting shift
+ * back to the start of the float chain so finance sees every connected shift.
+ */
+export async function getRemittanceVerificationSummary(
+  remittanceId: string,
+): Promise<{
+  success: boolean;
+  data?: RemittanceVerificationSummary;
+  error?: string;
+}> {
+  try {
+    const staff = await requirePosStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createPosAdminClient();
+
+    const { data: rem, error: remErr } = await supabase
+      .from("cash_remittances")
+      .select(
+        "id, expected_amount, retained_cash, status, prepared_at, from_shift_id, notes, branch_id",
+      )
+      .eq("id", remittanceId)
+      .maybeSingle();
+
+    if (remErr) return { success: false, error: remErr.message };
+    if (!rem) return { success: false, error: "Remittance not found" };
+    if (!rem.from_shift_id) {
+      return {
+        success: false,
+        error: "This remittance is not linked to a source shift",
+      };
+    }
+
+    // Walk previous_shift_id → root of the chain
+    const idChain: string[] = [];
+    let cursor: string | null = rem.from_shift_id;
+    const seen = new Set<string>();
+    while (cursor && idChain.length < MAX_CHAIN_DEPTH) {
+      if (seen.has(cursor)) break; // cycle guard
+      seen.add(cursor);
+      idChain.push(cursor);
+
+      const { data: link } = await supabase
+        .from("pos_shifts")
+        .select("previous_shift_id")
+        .eq("id", cursor)
+        .maybeSingle();
+      cursor = (link?.previous_shift_id as string) ?? null;
+    }
+
+    // idChain is source → ... → oldest; reverse to oldest → source
+    idChain.reverse();
+
+    const chain: RemittanceChainShift[] = [];
+    for (const sid of idChain) {
+      const detail = await loadShiftCashDetail(supabase, sid);
+      if (!detail) continue;
+
+      const opening = Number(
+        detail.shift.opening_counted_cash ?? detail.shift.starting_cash ?? 0,
+      );
+      const expectedInDrawer = Number(
+        (
+          opening +
+          detail.cash_sales -
+          detail.cash_refunds -
+          detail.cash_expenses +
+          detail.cash_topups
+        ).toFixed(2),
+      );
+      const actual = detail.shift.actual_cash;
+      const retained = detail.shift.retained_cash;
+      const isSource = sid === rem.from_shift_id;
+      // Only the source shift's remittance amount is this record; earlier
+      // shifts in the chain typically retained everything (remitted 0).
+      const remitted = isSource
+        ? Number(rem.expected_amount ?? 0)
+        : actual != null
+          ? Number(Math.max(0, actual - retained).toFixed(2))
+          : 0;
+
+      chain.push({
+        id: detail.shift.id,
+        shift_number: detail.shift.shift_number,
+        opened_at: detail.shift.opened_at,
+        closed_at: detail.shift.closed_at,
+        cashier_user_id: detail.shift.cashier_user_id,
+        previous_shift_id: detail.shift.previous_shift_id,
+        opening,
+        cash_sales: detail.cash_sales,
+        cash_expenses: detail.cash_expenses,
+        cash_topups: detail.cash_topups,
+        cash_refunds: detail.cash_refunds,
+        expected_in_drawer: expectedInDrawer,
+        actual_counted: actual,
+        variance: detail.shift.variance,
+        retained_for_next: retained,
+        remitted_amount: remitted,
+        payment_breakdown: detail.breakdown,
+        order_count: detail.order_count,
+        cash_sales_lines: detail.cash_sales_lines,
+        expenses: detail.expenses,
+        is_source_shift: isSource,
+      });
+    }
+
+    const sourceDetail =
+      chain.find((c) => c.is_source_shift) ?? chain[chain.length - 1];
+    if (!sourceDetail) {
+      return { success: false, error: "Source shift not found" };
+    }
+
+    const impliedRemittance =
+      sourceDetail.actual_counted != null
+        ? Number(
+            (
+              sourceDetail.actual_counted - sourceDetail.retained_for_next
+            ).toFixed(2),
+          )
+        : null;
+
+    const chain_totals = {
+      cash_sales: Number(
+        chain.reduce((s, c) => s + c.cash_sales, 0).toFixed(2),
+      ),
+      cash_expenses: Number(
+        chain.reduce((s, c) => s + c.cash_expenses, 0).toFixed(2),
+      ),
+      order_count: chain.reduce((s, c) => s + c.order_count, 0),
+      shift_count: chain.length,
+    };
+
+    return {
+      success: true,
+      data: {
+        remittance: {
+          id: rem.id,
+          expected_amount: Number(rem.expected_amount ?? 0),
+          retained_cash: Number(rem.retained_cash ?? 0),
+          status: rem.status,
+          prepared_at: rem.prepared_at,
+          from_shift_id: rem.from_shift_id,
+          notes: rem.notes,
+        },
+        shift: {
+          id: sourceDetail.id,
+          shift_number: sourceDetail.shift_number,
+          opened_at: sourceDetail.opened_at,
+          closed_at: sourceDetail.closed_at,
+          starting_cash: sourceDetail.opening,
+          opening_counted_cash: sourceDetail.opening,
+          expected_cash: sourceDetail.expected_in_drawer,
+          actual_cash: sourceDetail.actual_counted,
+          variance: sourceDetail.variance,
+          retained_cash: sourceDetail.retained_for_next,
+          cashier_user_id: sourceDetail.cashier_user_id,
+          previous_shift_id: sourceDetail.previous_shift_id,
+        },
+        cash: {
+          opening: sourceDetail.opening,
+          cash_sales: sourceDetail.cash_sales,
+          cash_expenses: sourceDetail.cash_expenses,
+          cash_topups: sourceDetail.cash_topups,
+          cash_refunds: sourceDetail.cash_refunds,
+          expected_in_drawer: sourceDetail.expected_in_drawer,
+          actual_counted: sourceDetail.actual_counted,
+          retained_for_next: sourceDetail.retained_for_next,
+          implied_remittance: impliedRemittance,
+        },
+        payment_breakdown: sourceDetail.payment_breakdown,
+        order_count: sourceDetail.order_count,
+        cash_sales_lines: sourceDetail.cash_sales_lines,
+        expenses: sourceDetail.expenses,
+        chain,
+        chain_totals,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load remittance verification summary",
     };
   }
 }

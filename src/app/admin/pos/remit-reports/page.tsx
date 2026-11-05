@@ -9,7 +9,6 @@ import {
   ArrowRightLeft,
   History,
   ClipboardList,
-  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,10 +31,12 @@ import {
   getShiftHandoverStatus,
   getClosedShiftsWithCashSummary,
   confirmRemittance,
+  getRemittanceVerificationSummary,
   type CashRemittance,
   type ShiftHandoverRow,
   type ClosedShiftCashRow,
   type PosBranch,
+  type RemittanceVerificationSummary,
 } from "@/lib/pos-actions";
 
 function formatCurrency(value: number) {
@@ -75,6 +76,9 @@ export default function RemitReportsPage() {
     notes: "",
   });
   const [isConfirming, setIsConfirming] = useState(false);
+  const [verification, setVerification] =
+    useState<RemittanceVerificationSummary | null>(null);
+  const [isLoadingVerification, setIsLoadingVerification] = useState(false);
 
   const loadAll = useCallback(async () => {
     setIsLoading(true);
@@ -115,13 +119,29 @@ export default function RemitReportsPage() {
     loadAll();
   }, [loadAll]);
 
-  function openConfirm(r: CashRemittance) {
+  async function openConfirm(r: CashRemittance) {
     setConfirmTarget(r);
     setConfirmForm({
       actual_amount: String(r.expected_amount),
       recipient_name: r.recipient_name ?? "",
       notes: "",
     });
+    setVerification(null);
+    setIsLoadingVerification(true);
+    try {
+      const res = await getRemittanceVerificationSummary(r.id);
+      if (res.success && res.data) {
+        setVerification(res.data);
+      } else {
+        toast.message(res.error ?? "Could not load shift summary");
+      }
+    } catch (e) {
+      toast.message(
+        e instanceof Error ? e.message : "Could not load shift summary",
+      );
+    } finally {
+      setIsLoadingVerification(false);
+    }
   }
 
   async function handleConfirm() {
@@ -153,6 +173,7 @@ export default function RemitReportsPage() {
           : `Remittance adjusted · difference ${formatCurrency(diff)}`,
       );
       setConfirmTarget(null);
+      setVerification(null);
       await loadAll();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to confirm");
@@ -184,7 +205,6 @@ export default function RemitReportsPage() {
 
   return (
     <main className="flex min-h-[calc(100vh-4rem)] flex-1 flex-col overflow-hidden">
-      {/* Header */}
       <div className="border-b border-stone-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -230,7 +250,6 @@ export default function RemitReportsPage() {
           </div>
         </div>
 
-        {/* Summary chips */}
         <div className="mt-4 flex flex-wrap gap-3">
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5">
             <p className="text-[10px] uppercase tracking-wider text-amber-700">
@@ -249,13 +268,12 @@ export default function RemitReportsPage() {
                 Handover mismatches
               </p>
               <p className="text-sm font-semibold text-red-900">
-                {mismatchCount} drawer{mismatchCount === 1 ? "" : "s"}
+                {mismatchCount} terminal{mismatchCount === 1 ? "" : "s"}
               </p>
             </div>
           )}
         </div>
 
-        {/* Tabs */}
         <div className="mt-5 flex gap-2 overflow-x-auto">
           {tabs.map((t) => (
             <button
@@ -285,7 +303,6 @@ export default function RemitReportsPage() {
         </div>
       </div>
 
-      {/* Body */}
       <div className="flex-1 overflow-y-auto bg-stone-50 p-4 sm:p-6">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-20">
@@ -300,10 +317,6 @@ export default function RemitReportsPage() {
           <ClosedShiftsTab
             rows={closedShifts}
             onConfirmRemittance={(id) => {
-              const r =
-                pending.find((p) => p.id === id) ??
-                history.find((h) => h.id === id);
-              // Prefer pending list; if already confirmed it won't appear here
               const target = pending.find((p) => p.id === id);
               if (target) openConfirm(target);
               else
@@ -317,14 +330,17 @@ export default function RemitReportsPage() {
         )}
       </div>
 
-      {/* Confirm dialog */}
+      {/* Confirm dialog with verification summary */}
       <Dialog
         open={!!confirmTarget}
         onOpenChange={(open) => {
-          if (!open && !isConfirming) setConfirmTarget(null);
+          if (!open && !isConfirming) {
+            setConfirmTarget(null);
+            setVerification(null);
+          }
         }}
       >
-        <DialogContent className="w-[calc(100vw-2rem)] rounded-2xl sm:max-w-md">
+        <DialogContent className="w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto rounded-2xl sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-serif text-xl">
               Confirm remittance
@@ -346,20 +362,22 @@ export default function RemitReportsPage() {
 
           {confirmTarget && (
             <div className="space-y-4 py-2">
-              <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-stone-500">Drawer</span>
-                  <span>{confirmTarget.drawer_name ?? "—"}</span>
+              {/* Shift sales & cash verification */}
+              {isLoadingVerification ? (
+                <div className="flex flex-col items-center py-8">
+                  <RefreshCw className="h-5 w-5 animate-spin text-[#F36509]" />
+                  <p className="mt-2 text-sm text-stone-500">
+                    Loading shift summary…
+                  </p>
                 </div>
-                <div className="mt-1 flex justify-between">
-                  <span className="text-stone-500">Retained float</span>
-                  <span>{formatCurrency(confirmTarget.retained_cash)}</span>
+              ) : verification ? (
+                <VerificationSummaryBlock data={verification} />
+              ) : (
+                <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-sm text-stone-500">
+                  Shift summary unavailable. You can still confirm the
+                  remittance amount.
                 </div>
-                <div className="mt-1 flex justify-between">
-                  <span className="text-stone-500">Prepared</span>
-                  <span>{formatDateTime(confirmTarget.prepared_at)}</span>
-                </div>
-              </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="actual_amount">Actual amount received</Label>
@@ -435,7 +453,10 @@ export default function RemitReportsPage() {
               type="button"
               variant="outline"
               disabled={isConfirming}
-              onClick={() => setConfirmTarget(null)}
+              onClick={() => {
+                setConfirmTarget(null);
+                setVerification(null);
+              }}
             >
               Cancel
             </Button>
@@ -455,6 +476,318 @@ export default function RemitReportsPage() {
         </DialogContent>
       </Dialog>
     </main>
+  );
+}
+
+/* ---------- Verification summary (sales + expenses) ---------- */
+
+function VerificationSummaryBlock({
+  data,
+}: {
+  data: RemittanceVerificationSummary;
+}) {
+  const { cash, remittance, chain, chain_totals } = data;
+
+  const remittanceMatches =
+    cash.implied_remittance != null &&
+    Math.abs(cash.implied_remittance - remittance.expected_amount) < 0.005;
+
+  return (
+    <div className="space-y-3">
+      {/* Chain overview */}
+      <div className="rounded-xl border border-stone-200 bg-stone-50/80 p-3 text-sm">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-400">
+          Float chain · {chain_totals.shift_count} shift
+          {chain_totals.shift_count === 1 ? "" : "s"}
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div>
+            <p className="text-[10px] uppercase text-stone-400">Cash sales</p>
+            <p className="font-semibold tabular-nums text-stone-900">
+              {formatCurrency(chain_totals.cash_sales)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-stone-400">Cash expenses</p>
+            <p className="font-semibold tabular-nums text-stone-900">
+              {formatCurrency(chain_totals.cash_expenses)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-stone-400">Orders</p>
+            <p className="font-semibold tabular-nums text-stone-900">
+              {chain_totals.order_count}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-stone-400">Remittance</p>
+            <p
+              className={`font-semibold tabular-nums ${
+                remittanceMatches ? "text-emerald-700" : "text-amber-700"
+              }`}
+            >
+              {formatCurrency(remittance.expected_amount)}
+            </p>
+          </div>
+        </div>
+        {chain.length > 1 && (
+          <p className="mt-2 text-xs text-stone-500">
+            {chain
+              .map((c) => c.shift_number ?? c.id.slice(0, 6))
+              .join(" → ")}
+          </p>
+        )}
+      </div>
+
+      {/* Each shift in the chain (oldest → remitting) */}
+      {chain.map((s, idx) => {
+        const activeExpenses = s.expenses.filter(
+          (e) => !["void", "cancelled"].includes(e.status),
+        );
+        return (
+          <div
+            key={s.id}
+            className={`rounded-xl border p-3 text-sm ${
+              s.is_source_shift
+                ? "border-[#F36509]/40 bg-orange-50/30"
+                : "border-stone-200 bg-white"
+            }`}
+          >
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-stone-400">
+                Shift {idx + 1} of {chain.length}
+              </span>
+              <span className="font-medium text-stone-900">
+                {s.shift_number ?? s.id.slice(0, 8)}
+              </span>
+              {s.is_source_shift && (
+                <Badge
+                  variant="outline"
+                  className="border-[#F36509]/30 bg-orange-50 text-[#F36509]"
+                >
+                  Prepared this remittance
+                </Badge>
+              )}
+              {!s.is_source_shift && s.retained_for_next > 0 && (
+                <Badge
+                  variant="outline"
+                  className="border-sky-200 bg-sky-50 text-sky-700"
+                >
+                  Retained {formatCurrency(s.retained_for_next)} → next
+                </Badge>
+              )}
+            </div>
+            <p className="mb-2 text-xs text-stone-500">
+              {formatDateTime(s.opened_at)}
+              {s.closed_at && <> → {formatDateTime(s.closed_at)}</>}
+              {" · "}
+              {s.order_count} order(s)
+            </p>
+
+            {/* Reconciliation */}
+            <div className="space-y-0.5 rounded-lg bg-white/80 px-2 py-1.5">
+              <Row label="Opening float" value={s.opening} />
+              <Row label="+ Cash sales" value={s.cash_sales} />
+              {s.cash_topups > 0 && (
+                <Row label="+ Top-ups" value={s.cash_topups} />
+              )}
+              {s.cash_refunds > 0 && (
+                <Row label="− Cash refunds" value={s.cash_refunds} negative />
+              )}
+              <Row label="− Cash expenses" value={s.cash_expenses} negative />
+              <div className="flex justify-between border-t border-stone-100 pt-1 text-xs font-semibold text-stone-900">
+                <span>Expected / actual</span>
+                <span className="tabular-nums">
+                  {formatCurrency(s.expected_in_drawer)}
+                  {s.actual_counted != null && (
+                    <> · counted {formatCurrency(s.actual_counted)}</>
+                  )}
+                </span>
+              </div>
+              {s.variance != null && s.variance !== 0 && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-stone-500">Variance</span>
+                  <span
+                    className={
+                      s.variance > 0 ? "text-sky-700" : "text-red-700"
+                    }
+                  >
+                    {formatCurrency(s.variance)}
+                  </span>
+                </div>
+              )}
+              <Row
+                label="Retained for next"
+                value={s.retained_for_next}
+              />
+              {s.is_source_shift && (
+                <div className="flex justify-between border-t border-stone-100 pt-1 font-semibold text-stone-900">
+                  <span>Remittance</span>
+                  <span className="tabular-nums">
+                    {formatCurrency(s.remitted_amount)}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Payment mix */}
+            {(s.payment_breakdown.cash > 0 ||
+              s.payment_breakdown.card > 0 ||
+              s.payment_breakdown.gcash > 0 ||
+              s.payment_breakdown.maya > 0) && (
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-stone-600 sm:grid-cols-4">
+                <span>
+                  Cash{" "}
+                  <span className="tabular-nums font-medium text-stone-800">
+                    {formatCurrency(s.payment_breakdown.cash)}
+                  </span>
+                </span>
+                <span>
+                  Card{" "}
+                  <span className="tabular-nums font-medium text-stone-800">
+                    {formatCurrency(s.payment_breakdown.card)}
+                  </span>
+                </span>
+                <span>
+                  GCash{" "}
+                  <span className="tabular-nums font-medium text-stone-800">
+                    {formatCurrency(s.payment_breakdown.gcash)}
+                  </span>
+                </span>
+                <span>
+                  Maya{" "}
+                  <span className="tabular-nums font-medium text-stone-800">
+                    {formatCurrency(s.payment_breakdown.maya)}
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {/* Cash sale lines */}
+            {s.cash_sales_lines.length > 0 && (
+              <div className="mt-2">
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-stone-400">
+                  Cash receipts ({s.cash_sales_lines.length})
+                </p>
+                <ul className="max-h-28 space-y-0.5 overflow-y-auto text-xs">
+                  {s.cash_sales_lines.map((line) => (
+                    <li
+                      key={line.payment_id}
+                      className="flex justify-between gap-2"
+                    >
+                      <span className="text-stone-600">
+                        {line.order_number ?? line.order_id.slice(0, 8)}
+                      </span>
+                      <span className="tabular-nums text-stone-900">
+                        {formatCurrency(line.amount)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Expenses */}
+            {activeExpenses.length > 0 && (
+              <div className="mt-2">
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-stone-400">
+                  Expenses ({activeExpenses.length})
+                </p>
+                <ul className="max-h-28 space-y-1 overflow-y-auto text-xs">
+                  {activeExpenses.map((e) => (
+                    <li
+                      key={e.id}
+                      className="flex items-start justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-stone-800">
+                          {e.description}
+                        </p>
+                        <p className="text-stone-400">
+                          {e.category_name ? `${e.category_name} · ` : ""}
+                          {e.payment_method}
+                          {e.payment_method === "cash"
+                            ? " · affects drawer"
+                            : ""}
+                        </p>
+                      </div>
+                      <span className="shrink-0 tabular-nums font-medium text-stone-900">
+                        {formatCurrency(e.amount)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {s.cash_sales === 0 &&
+              activeExpenses.length === 0 &&
+              s.order_count === 0 && (
+                <p className="mt-2 text-xs text-stone-400">
+                  No sales or expenses on this shift (float pass-through).
+                </p>
+              )}
+          </div>
+        );
+      })}
+
+      {/* Final remittance check */}
+      <div className="rounded-xl border border-stone-200 bg-white p-3 text-sm">
+        <div className="flex justify-between font-semibold text-stone-900">
+          <span>Implied remittance (last shift)</span>
+          <span className="tabular-nums">
+            {cash.implied_remittance != null
+              ? formatCurrency(cash.implied_remittance)
+              : "—"}
+          </span>
+        </div>
+        <div className="mt-1 flex justify-between">
+          <span className="text-stone-500">Remittance expected</span>
+          <span
+            className={`tabular-nums font-semibold ${
+              remittanceMatches ? "text-emerald-700" : "text-amber-700"
+            }`}
+          >
+            {formatCurrency(remittance.expected_amount)}
+            {remittanceMatches ? " · matches" : " · check"}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({
+  label,
+  value,
+  negative,
+  emphasize,
+}: {
+  label: string;
+  value: number | null;
+  negative?: boolean;
+  emphasize?: boolean;
+}) {
+  if (value == null) {
+    return (
+      <div className="flex justify-between text-xs">
+        <span className="text-stone-500">{label}</span>
+        <span className="text-stone-400">—</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex justify-between text-xs">
+      <span className="text-stone-500">{label}</span>
+      <span
+        className={`tabular-nums ${
+          emphasize ? "font-medium text-stone-900" : "text-stone-700"
+        }`}
+      >
+        {negative && value > 0 ? "−" : ""}
+        {formatCurrency(value)}
+      </span>
+    </div>
   );
 }
 
@@ -497,7 +830,7 @@ function PendingTab({
                     </span>
                   )}
                   <span className="text-sm font-medium text-stone-900">
-                    {r.drawer_name ?? "Drawer"} · {r.branch_name ?? "—"}
+                    {r.branch_name ?? "—"}
                   </span>
                 </div>
                 <p className="text-sm text-stone-500">
@@ -529,7 +862,7 @@ function PendingTab({
                   className="bg-[#F36509] text-white hover:bg-[#d95a08]"
                 >
                   <CheckCircle2 className="mr-1.5 h-4 w-4" />
-                  Confirm
+                  Review &amp; confirm
                 </Button>
               </div>
             </div>
@@ -661,7 +994,6 @@ function ClosedShiftsTab({
         <thead className="border-b border-stone-100 bg-stone-50 text-xs uppercase tracking-wider text-stone-500">
           <tr>
             <th className="px-4 py-3 font-medium">Shift</th>
-            <th className="px-4 py-3 font-medium">Drawer</th>
             <th className="px-4 py-3 font-medium text-right">Expected</th>
             <th className="px-4 py-3 font-medium text-right">Actual</th>
             <th className="px-4 py-3 font-medium text-right">Variance</th>
@@ -682,9 +1014,6 @@ function ClosedShiftsTab({
                 <p className="text-xs text-stone-400">
                   {formatDateTime(s.closed_at)}
                 </p>
-              </td>
-              <td className="px-4 py-3 text-stone-600">
-                {s.drawer_name ?? "—"}
               </td>
               <td className="px-4 py-3 text-right tabular-nums">
                 {formatCurrency(s.expected_cash)}
@@ -740,7 +1069,7 @@ function ClosedShiftsTab({
                         className="h-7 justify-start px-0 text-xs text-[#F36509]"
                         onClick={() => onConfirmRemittance(s.remittance_id!)}
                       >
-                        Confirm →
+                        Review →
                       </Button>
                     )}
                   </div>
@@ -788,7 +1117,7 @@ function HistoryTab({ rows }: { rows: CashRemittance[] }) {
                     {r.status}
                   </Badge>
                   <span className="text-sm font-medium text-stone-900">
-                    {r.drawer_name ?? "Drawer"} · {r.branch_name ?? "—"}
+                    {r.branch_name ?? "—"}
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-stone-500">
