@@ -1744,11 +1744,19 @@ export async function getShiftCashSummary(shiftId: string): Promise<{
       (o) =>
         o.status !== "completed" &&
         o.status !== "cancelled" &&
-        o.status !== "void",
+        o.status !== "void" &&
+        o.status !== "voided",
     ).length;
 
+    const completedOrderIds = (orders ?? [])
+      .filter((o) => o.status === "completed")
+      .map((o) => o.id);
+    const voidedOrderIds = (orders ?? [])
+      .filter((o) => o.status === "voided" || o.status === "void")
+      .map((o) => o.id);
+
     let cashSales = 0;
-    const cashRefunds = 0;
+    let cashRefunds = 0;
     const breakdown = {
       cash: 0,
       card: 0,
@@ -1758,11 +1766,12 @@ export async function getShiftCashSummary(shiftId: string): Promise<{
       other: 0,
     };
 
-    if (orderIds.length > 0) {
+    // Sales: only payments still marked completed on still-completed orders
+    if (completedOrderIds.length > 0) {
       const { data: payments, error: payError } = await supabase
         .from("pos_payments")
         .select("order_id, payment_method, amount, status, received_amount")
-        .in("order_id", orderIds)
+        .in("order_id", completedOrderIds)
         .eq("status", "completed");
 
       if (payError) {
@@ -1787,6 +1796,27 @@ export async function getShiftCashSummary(shiftId: string): Promise<{
           breakdown.employee_charge += amt;
         } else {
           breakdown.other += amt;
+        }
+      }
+    }
+
+    // Cash refunds: cash amounts from voided orders (payments marked refunded or any cash on voided order)
+    if (voidedOrderIds.length > 0) {
+      const { data: refundPayments, error: refundError } = await supabase
+        .from("pos_payments")
+        .select("order_id, payment_method, amount, status")
+        .in("order_id", voidedOrderIds);
+
+      if (refundError) {
+        return { success: false, error: refundError.message };
+      }
+
+      for (const p of refundPayments ?? []) {
+        const method = String(p.payment_method ?? "other").toLowerCase();
+        const amt = Number(p.amount ?? 0);
+        if (!Number.isFinite(amt) || amt <= 0) continue;
+        if (method === "cash") {
+          cashRefunds += amt;
         }
       }
     }
@@ -2037,6 +2067,12 @@ async function loadShiftCashDetail(
   const orderNumberById = new Map(
     (orders ?? []).map((o) => [o.id, o.order_number as string | null]),
   );
+  const completedOrderIds = (orders ?? [])
+    .filter((o) => o.status === "completed")
+    .map((o) => o.id);
+  const voidedOrderIds = (orders ?? [])
+    .filter((o) => o.status === "voided" || o.status === "void")
+    .map((o) => o.id);
 
   const breakdown = {
     cash: 0,
@@ -2050,11 +2086,12 @@ async function loadShiftCashDetail(
   let cashRefunds = 0;
   const cashSalesLines: RemittanceCashSaleLine[] = [];
 
-  if (orderIds.length > 0) {
+  // Only completed orders contribute to sales / payment breakdown
+  if (completedOrderIds.length > 0) {
     const { data: payments } = await supabase
       .from("pos_payments")
       .select("id, order_id, payment_method, amount, status, paid_at")
-      .in("order_id", orderIds)
+      .in("order_id", completedOrderIds)
       .eq("status", "completed");
 
     for (const p of payments ?? []) {
@@ -2086,6 +2123,23 @@ async function loadShiftCashDetail(
         breakdown.employee_charge += amt;
       } else {
         breakdown.other += amt;
+      }
+    }
+  }
+
+  // Cash refunds from voided orders
+  if (voidedOrderIds.length > 0) {
+    const { data: refundPayments } = await supabase
+      .from("pos_payments")
+      .select("order_id, payment_method, amount, status")
+      .in("order_id", voidedOrderIds);
+
+    for (const p of refundPayments ?? []) {
+      const method = String(p.payment_method ?? "other").toLowerCase();
+      const amt = Number(p.amount ?? 0);
+      if (!Number.isFinite(amt) || amt <= 0) continue;
+      if (method === "cash") {
+        cashRefunds += amt;
       }
     }
   }

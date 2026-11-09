@@ -15,6 +15,7 @@ import {
   Package,
   QrCode,
   LogOut,
+  Ban,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -81,6 +82,7 @@ import {
   ExpenseDialog,
   ExpenseTriggerButton,
 } from "@/components/sections/ExpenseDialog";
+import { VoidOrderLookupDialog } from "@/components/sections/VoidOrderLookupDialog";
 import { getShiftExpenses } from "@/lib/expense-actions";
 
 type CartItem = PosProduct & {
@@ -269,6 +271,7 @@ export default function PrimaryTerminalPage() {
   });
 
   const [showExpenseDialog, setShowExpenseDialog] = useState(false);
+  const [showVoidLookupDialog, setShowVoidLookupDialog] = useState(false);
   const [shiftExpenseTotal, setShiftExpenseTotal] = useState(0);
 
   async function openEndShiftDialog() {
@@ -1577,6 +1580,21 @@ export default function PrimaryTerminalPage() {
                   onClick={() => setShowExpenseDialog(true)}
                   totalCash={shiftExpenseTotal}
                 />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowVoidLookupDialog(true)}
+                  disabled={
+                    !!activePaymentOrderId ||
+                    !!pendingCompletionOrderId ||
+                    isProcessingPayment
+                  }
+                  className="border-red-200 text-red-700 hover:bg-red-50"
+                >
+                  <Ban className="mr-2 h-4 w-4" />
+                  Void order
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -3286,17 +3304,23 @@ export default function PrimaryTerminalPage() {
         </DialogContent>
       </Dialog>
       {branchId && shiftId && (
-        <ExpenseDialog
-          open={showExpenseDialog}
-          onOpenChange={setShowExpenseDialog}
-          branchId={branchId}
-          shiftId={shiftId}
-          terminalId={terminalId}
-          onChanged={async () => {
-            const res = await getShiftExpenses(shiftId);
-            if (res.success) setShiftExpenseTotal(res.totalCash);
-          }}
-        />
+        <>
+          <VoidOrderLookupDialog
+            open={showVoidLookupDialog}
+            onOpenChange={setShowVoidLookupDialog}
+          />
+          <ExpenseDialog
+            open={showExpenseDialog}
+            onOpenChange={setShowExpenseDialog}
+            branchId={branchId}
+            shiftId={shiftId}
+            terminalId={terminalId}
+            onChanged={async () => {
+              const res = await getShiftExpenses(shiftId);
+              if (res.success) setShiftExpenseTotal(res.totalCash);
+            }}
+          />
+        </>
       )}
     </main>
   );

@@ -212,7 +212,7 @@ function getOrderStatusBadge(status: string) {
       </Badge>
     );
   }
-  if (s === "cancelled" || s === "void") {
+  if (s === "cancelled" || s === "void" || s === "voided") {
     return (
       <Badge
         variant="outline"
@@ -653,7 +653,9 @@ export default function QrSessionsPage({
 
   function isOrderPayable(status: string) {
     const s = status.toLowerCase();
-    return s !== "completed" && s !== "cancelled" && s !== "void";
+    return (
+      s !== "completed" && s !== "cancelled" && s !== "void" && s !== "voided"
+    );
   }
 
   async function handleConfirmPayment() {

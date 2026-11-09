@@ -3,7 +3,13 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { z } from "zod";
-import { StockItem, MonitorData, MonitorItem, PreparationStatus, DepartmentStatus } from "./monitor-types";
+import {
+  StockItem,
+  MonitorData,
+  MonitorItem,
+  PreparationStatus,
+  DepartmentStatus,
+} from "./monitor-types";
 import { createOrderAdminClient } from "./order-admin-client";
 import { requireRole } from "./actions";
 
@@ -37,7 +43,7 @@ async function currentSupabaseAdmin() {
         },
         setAll() {},
       },
-    }
+    },
   );
 }
 
@@ -69,7 +75,7 @@ function mapPreparationStatus(status: string | null | undefined): {
 function classifyItemForStation(
   areaId: string | null | undefined,
   areaIdToCode: Map<string, string>,
-  station: "kitchen" | "bar"
+  station: "kitchen" | "bar",
 ): { eligible: boolean; areaCode: string | null; areaName: string | null } {
   if (!areaId) {
     return { eligible: false, areaCode: null, areaName: null };
@@ -103,12 +109,17 @@ function extractLocationFromSession(session: any): string | null {
     return val ?? null;
   };
 
-  const tables = normalize(session.tables); 
+  const tables = normalize(session.tables);
   const rooms = normalize(session.rooms);
   const cubicles = normalize(session.cubicles);
 
   // Check nested tables first (object or array)
-  const tableNumber = tables?.table_number ?? tables?.number ?? tables?.name ?? session.table_number ?? session.tableNumber;
+  const tableNumber =
+    tables?.table_number ??
+    tables?.number ??
+    tables?.name ??
+    session.table_number ??
+    session.tableNumber;
   if (tableNumber !== undefined && tableNumber !== null && tableNumber !== "") {
     const tableStr = String(tableNumber).trim();
     if (tableStr !== "") {
@@ -127,13 +138,18 @@ function extractLocationFromSession(session: any): string | null {
     }
   }
 
-  const roomName = rooms?.name ?? rooms?.room_name ?? session.room_name ?? session.rooms?.name;
+  const roomName =
+    rooms?.name ?? rooms?.room_name ?? session.room_name ?? session.rooms?.name;
   if (roomName !== undefined && roomName !== null && roomName !== "") {
     const roomStr = String(roomName).trim();
     if (roomStr !== "") return roomStr;
   }
 
-  const cubicleName = cubicles?.name ?? cubicles?.cubicle_name ?? session.cubicle_name ?? session.cubicles?.name;
+  const cubicleName =
+    cubicles?.name ??
+    cubicles?.cubicle_name ??
+    session.cubicle_name ??
+    session.cubicles?.name;
   if (cubicleName !== undefined && cubicleName !== null && cubicleName !== "") {
     const cubicleStr = String(cubicleName).trim();
     if (cubicleStr !== "") return cubicleStr;
@@ -143,11 +159,13 @@ function extractLocationFromSession(session: any): string | null {
 }
 
 export async function getMonitorData(
-  station: "kitchen" | "bar"
+  station: "kitchen" | "bar",
 ): Promise<{ success: boolean; data?: MonitorData; error?: string }> {
   try {
     const user = await requireRole(
-      station === "kitchen" ? ["management", "partner"] : ["management", "crew"]
+      station === "kitchen"
+        ? ["management", "partner"]
+        : ["management", "crew"],
     );
     if (!user) {
       return { success: false, error: "Unauthorized" };
@@ -194,7 +212,7 @@ export async function getMonitorData(
           area_code,
           created_at
         )
-      `
+      `,
       )
       .in("status", ["open", "in_progress", "ready"])
       .in("order_source", ["pos", "qr", "manual"])
@@ -218,21 +236,28 @@ export async function getMonitorData(
 
     for (const o of orders || []) {
       const rawSession = (o as any).pos_sessions;
-      let session = Array.isArray(rawSession) ? rawSession[0] ?? null : rawSession;
-      const deptStatus = (o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"];
+      let session = Array.isArray(rawSession)
+        ? (rawSession[0] ?? null)
+        : rawSession;
+      const deptStatus = (o as any)[
+        station === "kitchen" ? "kitchen_status" : "bar_status"
+      ];
       const source = (o as any).order_source ?? "pos";
       // Fallback: fetch session by id if not embedded.
       if (source === "qr" && !session && (o as any).session_id) {
         const { data: fetched } = await supabase
           .from("pos_sessions")
-          .select("id, is_active, expires_at, table_id, room_id, cubicle_id, tables:table_id ( table_number ), rooms:room_id ( name ), cubicles:cubicle_id ( name )")
+          .select(
+            "id, is_active, expires_at, table_id, room_id, cubicle_id, tables:table_id ( table_number ), rooms:room_id ( name ), cubicles:cubicle_id ( name )",
+          )
           .eq("id", (o as any).session_id)
           .maybeSingle();
         if (fetched) session = fetched;
       }
       // Hide orders whose associated session is expired or manually deactivated.
       if (session) {
-        const isExpired = session.expires_at && new Date(session.expires_at) <= new Date();
+        const isExpired =
+          session.expires_at && new Date(session.expires_at) <= new Date();
         const isDeactivated = session.is_active === false;
         if (isExpired || isDeactivated) continue;
       }
@@ -253,7 +278,11 @@ export async function getMonitorData(
       if (deptStatus === "served") continue;
       const itemsRaw = (o as any).pos_order_items || [];
       for (const it of itemsRaw) {
-        const classification = classifyItemForStation(it.area_id, areaIdToCode, station);
+        const classification = classifyItemForStation(
+          it.area_id,
+          areaIdToCode,
+          station,
+        );
         if (!classification.eligible) {
           const isRecognizedArea =
             classification.areaCode === "ieat" ||
@@ -261,14 +290,20 @@ export async function getMonitorData(
             classification.areaCode === "istudy";
           if (isRecognizedArea) continue;
           const mappedStatus = mapPreparationStatus(undefined);
-          const elapsed = it.created_at ? elapsedSecondsSince(it.created_at) : 0;
+          const elapsed = it.created_at
+            ? elapsedSecondsSince(it.created_at)
+            : 0;
           unassignedItems.push({
             itemId: it.id,
             orderId: (o as any).id,
             orderNumber: (o as any).order_number ?? "",
             orderTime: it.created_at || (o as any).created_at,
             orderSource: (o as any).order_source ?? "pos",
-            location: session ? extractLocationFromSession(session) : ((o as any).order_source === "pos" ? "Walk-in" : "Unavailable"),
+            location: session
+              ? extractLocationFromSession(session)
+              : (o as any).order_source === "pos"
+                ? "Walk-in"
+                : "Unavailable",
             productName: it.product_name,
             quantity: it.quantity,
             unitPrice: it.unit_price,
@@ -277,14 +312,16 @@ export async function getMonitorData(
             areaName: classification.areaName,
             preparationStatus: mappedStatus.value,
             preparationLabel: mappedStatus.label,
-            departmentStatus: ((o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"] ?? null) as DepartmentStatus | null,
+            departmentStatus: ((o as any)[
+              station === "kitchen" ? "kitchen_status" : "bar_status"
+            ] ?? null) as DepartmentStatus | null,
             specialInstructions: null,
             elapsedSeconds: elapsed,
             isNew: elapsed < 60,
           });
           continue;
         }
-     
+
         const mappedStatus = mapPreparationStatus(undefined);
         const elapsed = it.created_at ? elapsedSecondsSince(it.created_at) : 0;
         const monitorItem: MonitorItem = {
@@ -293,7 +330,11 @@ export async function getMonitorData(
           orderNumber: (o as any).order_number ?? "",
           orderTime: it.created_at || (o as any).created_at,
           orderSource: (o as any).order_source ?? "pos",
-          location: session ? extractLocationFromSession(session) : ((o as any).order_source === "pos" ? "Walk-in" : "Unavailable"),
+          location: session
+            ? extractLocationFromSession(session)
+            : (o as any).order_source === "pos"
+              ? "Walk-in"
+              : "Unavailable",
           productName: it.product_name,
           quantity: it.quantity,
           unitPrice: it.unit_price,
@@ -302,7 +343,9 @@ export async function getMonitorData(
           areaName: classification.areaName,
           preparationStatus: mappedStatus.value,
           preparationLabel: mappedStatus.label,
-            departmentStatus: ((o as any)[station === "kitchen" ? "kitchen_status" : "bar_status"] ?? null) as DepartmentStatus | null,
+          departmentStatus: ((o as any)[
+            station === "kitchen" ? "kitchen_status" : "bar_status"
+          ] ?? null) as DepartmentStatus | null,
           specialInstructions: null,
           elapsedSeconds: elapsed,
           isNew: elapsed < 60,
@@ -314,7 +357,11 @@ export async function getMonitorData(
             orderNumber: (o as any).order_number ?? "",
             orderTime: it.created_at || (o as any).created_at,
             orderSource: (o as any).order_source ?? "pos",
-            location: session ? extractLocationFromSession(session) : ((o as any).order_source === "pos" ? "Walk-in" : "Unavailable"),
+            location: session
+              ? extractLocationFromSession(session)
+              : (o as any).order_source === "pos"
+                ? "Walk-in"
+                : "Unavailable",
             status: (o as any).status ?? "open",
             items: [],
           });
@@ -338,7 +385,7 @@ export async function getMonitorData(
     const { data: inventoryRows, error: inventoryError } = await supabase
       .from("pos_inventory")
       .select(
-        "id, branch_id, product_id, stock_quantity, reorder_level, updated_at, pos_products(id, name, category_id, is_active, pos_categories(name)), pos_branches(name)"
+        "id, branch_id, product_id, stock_quantity, reorder_level, updated_at, pos_products(id, name, category_id, is_active, pos_categories(name)), pos_branches(name)",
       );
 
     const stockItems: StockItem[] = [];
@@ -363,7 +410,8 @@ export async function getMonitorData(
     const outOfStock: StockItem[] = [];
     for (const item of stockItems) {
       if (item.quantity <= 0) outOfStock.push(item);
-      else if (item.min_stock > 0 && item.quantity <= item.min_stock) lowStock.push(item);
+      else if (item.min_stock > 0 && item.quantity <= item.min_stock)
+        lowStock.push(item);
     }
 
     const data: MonitorData = {
@@ -371,7 +419,9 @@ export async function getMonitorData(
       unassignedItems,
       stockItems: lowStock,
       outOfStockItems: outOfStock,
-      stockViewItems: [...lowStock, ...outOfStock].sort((a, b) => a.quantity - b.quantity),
+      stockViewItems: [...lowStock, ...outOfStock].sort(
+        (a, b) => a.quantity - b.quantity,
+      ),
       elapsedBuckets: [5, 30, 60, 120, 300, 600, 1800, 3600],
     };
 
@@ -388,22 +438,26 @@ export async function getMonitorData(
 const updatePrepStatusSchema = z.object({
   orderId: z.string().uuid(),
   itemId: z.string().uuid(),
-  preparationStatus: z.enum(["new", "preparing", "ready", "completed", "cancelled"]),
+  preparationStatus: z.enum([
+    "new",
+    "preparing",
+    "ready",
+    "completed",
+    "cancelled",
+  ]),
   station: z.enum(["kitchen", "bar"]),
 });
 
-function utcNow(): string {
-  return new Date().toISOString();
-}
-
 export async function updateMonitorPrepStatus(
-  input: z.infer<typeof updatePrepStatusSchema>
+  input: z.infer<typeof updatePrepStatusSchema>,
 ): Promise<{ success: boolean; error?: string; stale?: boolean }> {
   try {
     const validated = updatePrepStatusSchema.parse(input);
 
     const user = await requireRole(
-      validated.station === "kitchen" ? ["management", "partner"] : ["management", "crew"]
+      validated.station === "kitchen"
+        ? ["management", "partner"]
+        : ["management", "crew"],
     );
     if (!user) {
       return { success: false, error: "Unauthorized" };
@@ -433,41 +487,64 @@ export async function updateMonitorPrepStatus(
       return { success: false, error: "Order not found" };
     }
 
-    if (orderRow.status === "cancelled" || orderRow.status === "completed") {
+    if (
+      orderRow.status === "cancelled" ||
+      orderRow.status === "completed" ||
+      orderRow.status === "voided"
+    ) {
       return {
         success: false,
         error: `Cannot update prep status on a ${orderRow.status} order`,
       };
     }
 
-    return { success: false, error: "Preparation status persistence is not supported by the current schema" };
+    return {
+      success: false,
+      error:
+        "Preparation status persistence is not supported by the current schema",
+    };
   } catch (err) {
     console.error("updateMonitorPrepStatus error:", err);
     return {
       success: false,
       error:
         err instanceof z.ZodError
-          ? err.issues[0]?.message ?? "Invalid input"
+          ? (err.issues[0]?.message ?? "Invalid input")
           : err instanceof Error
-          ? err.message
-          : "Failed to update preparation status",
+            ? err.message
+            : "Failed to update preparation status",
     };
   }
 }
 
-export async function updateDepartmentStatus(input: { orderId: string; station: "kitchen" | "bar"; newStatus: DepartmentStatus }) {
+export async function updateDepartmentStatus(input: {
+  orderId: string;
+  station: "kitchen" | "bar";
+  newStatus: DepartmentStatus;
+}) {
   try {
-    const user = await requireRole(input.station === "kitchen" ? ["management", "partner"] : ["management", "crew"]);
+    const user = await requireRole(
+      input.station === "kitchen"
+        ? ["management", "partner"]
+        : ["management", "crew"],
+    );
     if (!user) return { success: false, error: "Unauthorized" };
     const supabase = await currentSupabaseAdmin();
     if (process.env.NODE_ENV === "development") {
-      console.log("[monitor] RPC call", { orderId: input.orderId, department: input.station, newStatus: input.newStatus });
+      console.log("[monitor] RPC call", {
+        orderId: input.orderId,
+        department: input.station,
+        newStatus: input.newStatus,
+      });
     }
-    const { data, error } = await supabase.rpc("update_order_department_status", {
-      p_order_id: input.orderId,
-      p_department: input.station,
-      p_new_status: input.newStatus,
-    });
+    const { data, error } = await supabase.rpc(
+      "update_order_department_status",
+      {
+        p_order_id: input.orderId,
+        p_department: input.station,
+        p_new_status: input.newStatus,
+      },
+    );
     if (error) {
       if (/invalid transition/i.test(error.message)) {
         const { data: current } = await supabase
@@ -475,24 +552,45 @@ export async function updateDepartmentStatus(input: { orderId: string; station: 
           .select(input.station === "kitchen" ? "kitchen_status" : "bar_status")
           .eq("id", input.orderId)
           .single();
-        const currentStatus = current ? (current as any)[input.station === "kitchen" ? "kitchen_status" : "bar_status"] : null;
+        const currentStatus = current
+          ? (current as any)[
+              input.station === "kitchen" ? "kitchen_status" : "bar_status"
+            ]
+          : null;
         if (currentStatus === input.newStatus) {
           return { success: true, data: current };
         }
       }
       if (process.env.NODE_ENV === "development") {
-        console.log("[monitor] RPC error", { orderId: input.orderId, department: input.station, newStatus: input.newStatus, error: error.message });
+        console.log("[monitor] RPC error", {
+          orderId: input.orderId,
+          department: input.station,
+          newStatus: input.newStatus,
+          error: error.message,
+        });
       }
       return { success: false, error: error.message };
     }
     if (process.env.NODE_ENV === "development") {
-      console.log("[monitor] RPC success", { orderId: input.orderId, department: input.station, newStatus: input.newStatus });
+      console.log("[monitor] RPC success", {
+        orderId: input.orderId,
+        department: input.station,
+        newStatus: input.newStatus,
+      });
     }
     return { success: true, data };
   } catch (err) {
     if (process.env.NODE_ENV === "development") {
-      console.log("[monitor] RPC exception", { orderId: input.orderId, department: input.station, newStatus: input.newStatus, err: err instanceof Error ? err.message : err });
+      console.log("[monitor] RPC exception", {
+        orderId: input.orderId,
+        department: input.station,
+        newStatus: input.newStatus,
+        err: err instanceof Error ? err.message : err,
+      });
     }
-    return { success: false, error: err instanceof Error ? err.message : "Failed" };
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed",
+    };
   }
 }

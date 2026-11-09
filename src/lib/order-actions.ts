@@ -1,7 +1,7 @@
 "use server";
 
 import { createServerClient } from "@supabase/ssr";
-import { type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { z } from "zod";
 import { createOrderAdminClient } from "./order-admin-client";
@@ -16,7 +16,8 @@ export type OrderStatus =
   | "in_progress"
   | "ready"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  | "voided";
 
 export type OrderSource = "pos" | "qr" | "manual";
 
@@ -395,9 +396,7 @@ async function recalculateOrderTotals(
   // 3. Fetch order items
   const { data: items, error: itemsErr } = await supabase
     .from("pos_order_items")
-    .select(
-      "id, quantity, unit_price, discount_amount, area_id, area_code",
-    )
+    .select("id, quantity, unit_price, discount_amount, area_id, area_code")
     .eq("order_id", orderId);
 
   if (itemsErr) {
@@ -575,12 +574,11 @@ async function recalculateOrderTotals(
           Math.round(toNumber(item.discount_amount)),
       );
 
-       const vatFactor =
-         vatEnabled
-           ? priceMode === "inclusive"
-            ? vatRate / (100 + vatRate)
-            : vatRate / 100
-          : 0;
+      const vatFactor = vatEnabled
+        ? priceMode === "inclusive"
+          ? vatRate / (100 + vatRate)
+          : vatRate / 100
+        : 0;
 
       const itemVat = itemNet * vatFactor;
 
@@ -591,7 +589,7 @@ async function recalculateOrderTotals(
         .update({
           service_charge: itemSc,
           vat_amount: Number(itemVat.toFixed(2)),
-           vat_rate: vatEnabled ? vatRate : 0,
+          vat_rate: vatEnabled ? vatRate : 0,
         })
         .eq("id", item.id);
 
@@ -623,24 +621,24 @@ async function recalculateOrderTotals(
     });
   }
 
-   // 6. Upsert area charge summaries
-   if (areaChargesRows.length > 0) {
-     const { error: deleteAreaErr } = await supabase
-       .from("pos_order_area_charges")
-       .delete()
-       .eq("order_id", orderId);
-     if (deleteAreaErr) {
-       return {
-         success: false,
-         subtotal: orderSubtotal,
-         total: 0,
-         error: `Failed to clear area charge summaries: ${deleteAreaErr.message}`,
-       };
-     }
-     const { error: areaErr } = await supabase
-       .from("pos_order_area_charges")
-       .insert(areaChargesRows);
-     if (areaErr) {
+  // 6. Upsert area charge summaries
+  if (areaChargesRows.length > 0) {
+    const { error: deleteAreaErr } = await supabase
+      .from("pos_order_area_charges")
+      .delete()
+      .eq("order_id", orderId);
+    if (deleteAreaErr) {
+      return {
+        success: false,
+        subtotal: orderSubtotal,
+        total: 0,
+        error: `Failed to clear area charge summaries: ${deleteAreaErr.message}`,
+      };
+    }
+    const { error: areaErr } = await supabase
+      .from("pos_order_area_charges")
+      .insert(areaChargesRows);
+    if (areaErr) {
       return {
         success: false,
         subtotal: orderSubtotal,
@@ -767,7 +765,11 @@ async function addOrderItemsInternal(
     return { success: false, error: "Order not found" };
   }
 
-  if (order.status === "completed" || order.status === "cancelled") {
+  if (
+    order.status === "completed" ||
+    order.status === "cancelled" ||
+    order.status === "voided"
+  ) {
     return {
       success: false,
       error: `Cannot add items to a ${order.status} order`,
@@ -850,11 +852,14 @@ async function addOrderItemsInternal(
     return { success: false, error: insertError.message };
   }
 
-   // 7. Recalculate totals
-   const recalcResult = await recalculateOrderTotals(supabase, orderId);
-   if (!recalcResult.success) {
-     return { success: false, error: recalcResult.error ?? "Failed to recalculate order totals" };
-   }
+  // 7. Recalculate totals
+  const recalcResult = await recalculateOrderTotals(supabase, orderId);
+  if (!recalcResult.success) {
+    return {
+      success: false,
+      error: recalcResult.error ?? "Failed to recalculate order totals",
+    };
+  }
 
   return {
     success: true,
@@ -1228,7 +1233,9 @@ export async function updateOrderItem(
 
     if (
       order &&
-      (order.status === "completed" || order.status === "cancelled")
+      (order.status === "completed" ||
+        order.status === "cancelled" ||
+        order.status === "voided")
     ) {
       return {
         success: false,
@@ -1289,7 +1296,9 @@ export async function removeOrderItem(itemId: string): Promise<{
 
     if (
       order &&
-      (order.status === "completed" || order.status === "cancelled")
+      (order.status === "completed" ||
+        order.status === "cancelled" ||
+        order.status === "voided")
     ) {
       return {
         success: false,
@@ -1537,6 +1546,9 @@ export async function completeOrder(orderId: string): Promise<{
     if (order.status === "cancelled") {
       return { success: false, error: "Cannot complete a cancelled order" };
     }
+    if (order.status === "voided") {
+      return { success: false, error: "Cannot complete a voided order" };
+    }
 
     const { data: items } = await supabase
       .from("pos_order_items")
@@ -1610,6 +1622,9 @@ export async function cancelOrder(
     if (order.status === "completed") {
       return { success: false, error: "Cannot cancel a completed order" };
     }
+    if (order.status === "voided") {
+      return { success: false, error: "Cannot cancel a voided order" };
+    }
 
     const { error } = await supabase
       .from("pos_orders")
@@ -1661,29 +1676,41 @@ export async function recordPayment(
 
     // Validate idempotency key using the existing Zod approach.
     const idempotencyKeySchema = z.string().uuid().optional().nullable();
-    const parsedKey = idempotencyKeySchema.safeParse(input.idempotencyKey ?? null);
+    const parsedKey = idempotencyKeySchema.safeParse(
+      input.idempotencyKey ?? null,
+    );
     if (!parsedKey.success) {
       return { success: false, error: "Invalid idempotency key" };
     }
     const idempotencyKey = parsedKey.data ?? null;
 
-    const { data, error } = await supabase.rpc("rpc_record_payment_and_start_session_timer", {
-      p_order_id: validated.order_id,
-      p_payment_method: validated.payment_method,
-      p_amount: validated.amount,
-      p_received_amount: validated.received_amount ?? validated.amount,
-      p_change_amount: Math.max(0, (validated.received_amount ?? validated.amount) - validated.amount),
-      p_reference_number: validated.reference_number ?? null,
-      p_idempotency_key: idempotencyKey,
-      p_staff_user_id: staff.user.id,
-    });
+    const { data, error } = await supabase.rpc(
+      "rpc_record_payment_and_start_session_timer",
+      {
+        p_order_id: validated.order_id,
+        p_payment_method: validated.payment_method,
+        p_amount: validated.amount,
+        p_received_amount: validated.received_amount ?? validated.amount,
+        p_change_amount: Math.max(
+          0,
+          (validated.received_amount ?? validated.amount) - validated.amount,
+        ),
+        p_reference_number: validated.reference_number ?? null,
+        p_idempotency_key: idempotencyKey,
+        p_staff_user_id: staff.user.id,
+      },
+    );
 
     if (error) {
       return { success: false, error: error.message };
     }
 
     if (data?.success) {
-      return { success: true, data: mapPosPayment(data.payment), duplicate: data.duplicate };
+      return {
+        success: true,
+        data: mapPosPayment(data.payment),
+        duplicate: data.duplicate,
+      };
     }
 
     return { success: false, error: "Payment failed" };
@@ -1860,7 +1887,11 @@ export async function updatePosOrder(
       return { success: false, error: "Order not found" };
     }
 
-    if (existing.status === "completed" || existing.status === "cancelled") {
+    if (
+      existing.status === "completed" ||
+      existing.status === "cancelled" ||
+      existing.status === "voided"
+    ) {
       return {
         success: false,
         error: `Cannot update a ${existing.status} order`,
@@ -1962,7 +1993,9 @@ export async function updateOrderItemDiscount(
 
     if (
       order &&
-      (order.status === "completed" || order.status === "cancelled")
+      (order.status === "completed" ||
+        order.status === "cancelled" ||
+        order.status === "voided")
     ) {
       return {
         success: false,
@@ -2188,6 +2221,347 @@ export async function getCrmUser(userId: string) {
       data: null,
       error:
         err instanceof Error ? err.message : "An unexpected error occurred",
+    };
+  }
+}
+
+// =============================================================================
+// Void completed order (manager-authorized)
+// =============================================================================
+
+export type PosOrderVoid = {
+  id: string;
+  order_id: string;
+  order_number: string | null;
+  original_status: string;
+  original_total: number;
+  reason: string;
+  voided_by_auth_id: string;
+  voided_by_profile_id: string | null;
+  voided_by_email: string | null;
+  cashier_user_id: string | null;
+  shift_id: string | null;
+  branch_id: string | null;
+  voided_at: string;
+};
+
+const voidOrderSchema = z.object({
+  orderId: z.string().uuid("Invalid order id"),
+  reason: z
+    .string()
+    .trim()
+    .min(3, "Reason must be at least 3 characters")
+    .max(500, "Reason is too long"),
+  managerEmail: z.string().trim().email("Enter a valid manager email").max(255),
+  managerPassword: z.string().min(1, "Manager password is required").max(200),
+});
+
+/**
+ * Verify manager email/password without touching the cashier session cookies.
+ * Requires profiles.role === "management" and a different user than the cashier.
+ */
+async function verifyManagerForVoid(
+  email: string,
+  password: string,
+  cashierAuthUserId: string,
+): Promise<
+  | {
+      ok: true;
+      managerAuthUserId: string;
+      managerProfileId: string | null;
+      managerEmail: string;
+    }
+  | { ok: false; error: string }
+> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    return { ok: false, error: "Auth is not configured" };
+  }
+
+  const temp = createClient(supabaseUrl, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+
+  const { data, error } = await temp.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+
+  if (error || !data.user) {
+    return { ok: false, error: "Invalid manager credentials" };
+  }
+
+  if (data.user.id === cashierAuthUserId) {
+    await temp.auth.signOut().catch(() => undefined);
+    return {
+      ok: false,
+      error: "A different management account must authorize the void",
+    };
+  }
+
+  const admin = createOrderAdminClient();
+  const { data: profile, error: profileError } = await admin
+    .from("profiles")
+    .select("id, role, auth_user_id")
+    .eq("auth_user_id", data.user.id)
+    .maybeSingle();
+
+  await temp.auth.signOut().catch(() => undefined);
+
+  if (profileError) {
+    return { ok: false, error: "Failed to verify manager profile" };
+  }
+  if (!profile || profile.role !== "management") {
+    return {
+      ok: false,
+      error: "Only management accounts can authorize a void",
+    };
+  }
+
+  return {
+    ok: true,
+    managerAuthUserId: data.user.id,
+    managerProfileId: profile.id ?? null,
+    managerEmail: email.trim(),
+  };
+}
+
+/**
+ * Void a completed (paid) order.
+ * - Requires live manager email + password (role = management)
+ * - Manager must not be the same account as the current cashier session
+ * - Atomically: audit row, status → voided, inventory reversal, payments → refunded
+ * - Voided orders are excluded from sales (status is no longer completed)
+ */
+export async function voidCompletedOrder(input: {
+  orderId: string;
+  reason: string;
+  managerEmail: string;
+  managerPassword: string;
+}): Promise<{
+  success: boolean;
+  alreadyVoided?: boolean;
+  voidId?: string;
+  originalTotal?: number;
+  error?: string;
+}> {
+  try {
+    const validated = voidOrderSchema.parse(input);
+
+    const staff = await requireOrderStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const manager = await verifyManagerForVoid(
+      validated.managerEmail,
+      validated.managerPassword,
+      staff.user.id,
+    );
+    if (!manager.ok) {
+      return { success: false, error: manager.error };
+    }
+
+    const supabase = createOrderAdminClient();
+
+    // Pre-check for clearer errors (RPC still enforces)
+    const { data: order, error: orderError } = await supabase
+      .from("pos_orders")
+      .select("id, status, total_amount, order_number")
+      .eq("id", validated.orderId)
+      .maybeSingle();
+
+    if (orderError) {
+      return { success: false, error: orderError.message };
+    }
+    if (!order) {
+      return { success: false, error: "Order not found" };
+    }
+    if (order.status === "voided") {
+      return { success: true, alreadyVoided: true };
+    }
+    if (order.status !== "completed") {
+      return {
+        success: false,
+        error: `Only completed orders can be voided (current status: ${order.status})`,
+      };
+    }
+
+    const { data, error } = await supabase.rpc("rpc_void_completed_order", {
+      p_order_id: validated.orderId,
+      p_reason: validated.reason,
+      p_manager_auth_user_id: manager.managerAuthUserId,
+      p_manager_profile_id: manager.managerProfileId,
+      p_manager_email: manager.managerEmail,
+      p_cashier_user_id: staff.user.id,
+    });
+
+    if (error) {
+      // Surface unique-violation / business errors cleanly
+      const msg = error.message ?? "Void failed";
+      if (/only completed orders/i.test(msg)) {
+        return { success: false, error: msg };
+      }
+      if (/void reason/i.test(msg)) {
+        return { success: false, error: msg };
+      }
+      return { success: false, error: msg };
+    }
+
+    const result = data as {
+      success?: boolean;
+      alreadyVoided?: boolean;
+      void_id?: string;
+      original_total?: number;
+    } | null;
+
+    if (!result?.success) {
+      return { success: false, error: "Void failed" };
+    }
+
+    return {
+      success: true,
+      alreadyVoided: Boolean(result.alreadyVoided),
+      voidId: result.void_id,
+      originalTotal:
+        result.original_total != null
+          ? Number(result.original_total)
+          : toNumber(order.total_amount),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: zodErrorMessage(error),
+    };
+  }
+}
+
+/**
+ * Look up a completed order by order number (for POS void flow).
+ */
+export async function getOrderByNumber(orderNumber: string): Promise<{
+  success: boolean;
+  data?: PosOrder & { items: PosOrderItem[]; payments: PosPayment[] };
+  error?: string;
+}> {
+  try {
+    const trimmed = orderNumber?.trim();
+    if (!trimmed) {
+      return { success: false, error: "Order number is required" };
+    }
+
+    const staff = await requireOrderStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createOrderAdminClient();
+
+    const { data: order, error: orderError } = await supabase
+      .from("pos_orders")
+      .select("*")
+      .eq("order_number", trimmed)
+      .maybeSingle();
+
+    if (orderError) {
+      return { success: false, error: orderError.message };
+    }
+    if (!order) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const [{ data: items }, { data: payments }] = await Promise.all([
+      supabase
+        .from("pos_order_items")
+        .select("*")
+        .eq("order_id", order.id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("pos_payments")
+        .select("*")
+        .eq("order_id", order.id)
+        .order("paid_at", { ascending: true }),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        ...mapPosOrder(order),
+        items: (items ?? []).map(mapPosOrderItem),
+        payments: (payments ?? []).map(mapPosPayment),
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to load order",
+    };
+  }
+}
+
+/**
+ * Fetch void audit record for an order (if any).
+ */
+export async function getOrderVoidRecord(orderId: string): Promise<{
+  success: boolean;
+  data?: PosOrderVoid | null;
+  error?: string;
+}> {
+  try {
+    const staff = await requireOrderStaff();
+    if (!staff.authorized) {
+      return { success: false, error: staff.error };
+    }
+
+    const supabase = createOrderAdminClient();
+    const { data, error } = await supabase
+      .from("pos_order_voids")
+      .select("*")
+      .eq("order_id", orderId)
+      .maybeSingle();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    if (!data) {
+      return { success: true, data: null };
+    }
+
+    return {
+      success: true,
+      data: {
+        id: String(data.id),
+        order_id: String(data.order_id),
+        order_number: data.order_number ? String(data.order_number) : null,
+        original_status: String(data.original_status),
+        original_total: toNumber(data.original_total),
+        reason: String(data.reason),
+        voided_by_auth_id: String(data.voided_by_auth_id),
+        voided_by_profile_id: data.voided_by_profile_id
+          ? String(data.voided_by_profile_id)
+          : null,
+        voided_by_email: data.voided_by_email
+          ? String(data.voided_by_email)
+          : null,
+        cashier_user_id: data.cashier_user_id
+          ? String(data.cashier_user_id)
+          : null,
+        shift_id: data.shift_id ? String(data.shift_id) : null,
+        branch_id: data.branch_id ? String(data.branch_id) : null,
+        voided_at: String(data.voided_at),
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to load void record",
     };
   }
 }

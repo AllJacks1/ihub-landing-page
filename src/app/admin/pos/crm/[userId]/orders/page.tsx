@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   CreditCard,
+  Ban,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -20,6 +21,7 @@ import {
   getCrmUser,
   type SessionOrder,
 } from "@/lib/order-actions";
+import { VoidOrderDialog } from "@/components/sections/VoidOrderDialog";
 
 const PAGE_SIZE = 10;
 
@@ -51,6 +53,8 @@ const statusColor: Record<string, string> = {
   ready: "bg-emerald-50 text-emerald-700 border-emerald-200",
   completed: "bg-stone-100 text-stone-700 border-stone-200",
   cancelled: "bg-red-50 text-red-700 border-red-200",
+  voided: "bg-red-50 text-red-800 border-red-300",
+  void: "bg-red-50 text-red-800 border-red-300",
 };
 
 export default function ClientOrdersPage() {
@@ -63,6 +67,7 @@ export default function ClientOrdersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
+  const [voidTarget, setVoidTarget] = useState<SessionOrder | null>(null);
 
   const loadData = useCallback(async () => {
     if (!clientId) return;
@@ -370,6 +375,24 @@ export default function ClientOrdersPage() {
                                 Total {formatMoney(order.total_amount)}
                               </span>
                             </div>
+
+                            {order.status === "completed" && (
+                              <div className="mt-3 flex justify-end border-t border-stone-200/60 pt-3">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setVoidTarget(order);
+                                  }}
+                                >
+                                  <Ban className="mr-1.5 h-3.5 w-3.5" />
+                                  Void order
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </li>
@@ -420,6 +443,20 @@ export default function ClientOrdersPage() {
           )}
         </div>
       </div>
+
+      <VoidOrderDialog
+        open={voidTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setVoidTarget(null);
+        }}
+        orderId={voidTarget?.id ?? ""}
+        orderNumber={voidTarget?.order_number}
+        orderTotal={voidTarget?.total_amount}
+        onVoided={async () => {
+          setVoidTarget(null);
+          await loadData();
+        }}
+      />
     </main>
   );
 }
