@@ -34,6 +34,8 @@ import {
   type MonitoringReportsPayload,
   type PaymentBreakdown,
 } from "@/lib/report-actions";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -124,68 +126,109 @@ function exportExcel(
   );
 }
 
+const BRAND = { r: 243, g: 101, b: 9 }; // #F36509
+const INK = { r: 28, g: 25, b: 23 };
+const MUTED = { r: 120, g: 113, b: 108 };
+const STONE = { r: 250, g: 250, b: 249 };
+const BORDER = { r: 231, g: 229, b: 228 };
+const PAGE_MARGIN = 14;
+const HEADER_Y = 32;
+
 function exportPdf(
   title: string,
   subtitle: string,
   headers: string[],
   rows: (string | number)[][],
 ) {
-  const tableHead = headers
-    .map(
-      (h) =>
-        `<th style="border:1px solid #e7e5e4;background:#fafaf9;padding:8px 10px;text-align:left;font-size:11px;color:#57534e;">${h}</th>`,
-    )
-    .join("");
-  const tableBody = rows
-    .map(
-      (r) =>
-        `<tr>${r
-          .map(
-            (c) =>
-              `<td style="border:1px solid #e7e5e4;padding:7px 10px;font-size:11px;color:#1c1917;">${c ?? ""}</td>`,
-          )
-          .join("")}</tr>`,
-    )
-    .join("");
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const generatedAt = new Date().toLocaleString();
 
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${title}</title>
-  <style>
-    @page { margin: 16mm; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #1c1917; }
-    h1 { font-size: 18px; margin: 0 0 4px; }
-    p.sub { font-size: 12px; color: #78716c; margin: 0 0 16px; }
-    table { border-collapse: collapse; width: 100%; }
-    .brand { color: #F36509; font-weight: 600; font-size: 12px; margin-bottom: 12px; }
-  </style>
-</head>
-<body>
-  <div class="brand">iHub POS · Reports</div>
-  <h1>${title}</h1>
-  <p class="sub">${subtitle}</p>
-  <table>
-    <thead><tr>${tableHead}</tr></thead>
-    <tbody>${tableBody || `<tr><td colspan="${headers.length}" style="padding:16px;text-align:center;color:#a8a29e;">No data</td></tr>`}</tbody>
-  </table>
-  <script>window.onload = function () { window.print(); };</script>
-</body>
-</html>`;
+  // ── Header ──────────────────────────────────────────────
+  doc.setFontSize(9);
+  doc.setTextColor(BRAND.r, BRAND.g, BRAND.b);
+  doc.text("iHub POS · Reports", PAGE_MARGIN, 11);
 
-  const w = window.open(
-    "",
-    "_blank",
-    "noopener,noreferrer,width=1024,height=768",
-  );
+  doc.setFontSize(15);
+  doc.setTextColor(INK.r, INK.g, INK.b);
+  doc.text(title, PAGE_MARGIN, 18);
+
+  doc.setFontSize(9);
+  doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
+  doc.text(subtitle, PAGE_MARGIN, 24);
+  doc.text(`Generated ${generatedAt}`, pageWidth - PAGE_MARGIN, 24, {
+    align: "right",
+  });
+
+  doc.setDrawColor(BORDER.r, BORDER.g, BORDER.b);
+  doc.setLineWidth(0.3);
+  doc.line(PAGE_MARGIN, 27, pageWidth - PAGE_MARGIN, 27);
+
+  // ── Table ───────────────────────────────────────────────
+  autoTable(doc, {
+    startY: HEADER_Y,
+    head: [headers],
+    body: rows.map((r) => r.map((c) => String(c ?? ""))),
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, bottom: 20 },
+    styles: {
+      fontSize: 6.5, // was 8
+      cellPadding: 1.5, // was 2.5
+      textColor: [INK.r, INK.g, INK.b],
+      lineColor: [BORDER.r, BORDER.g, BORDER.b],
+      lineWidth: 0.1,
+      valign: "middle",
+      overflow: "linebreak", // explicit
+    },
+    headStyles: {
+      fillColor: [STONE.r, STONE.g, STONE.b],
+      textColor: [MUTED.r, MUTED.g, MUTED.b],
+      fontStyle: "bold",
+      fontSize: 6.5,
+    },
+    alternateRowStyles: { fillColor: [255, 255, 255] },
+    // Right-align purely-numeric columns so amounts line up
+    columnStyles: Object.fromEntries(
+      headers.map((_, i) => {
+        const isNumeric = rows.every(
+          (r) => typeof r[i] === "number" || r[i] == null,
+        );
+        return [
+          i,
+          isNumeric
+            ? { halign: "right" as const, cellWidth: "wrap", minCellWidth: 12 }
+            : { cellWidth: "auto" },
+        ];
+      }),
+    ),
+    // Repeat the header row + draw footer on every page
+    didDrawPage: () => {
+      const pageCount = doc.getNumberOfPages();
+      const pageH = doc.internal.pageSize.getHeight();
+
+      doc.setFontSize(7.5);
+      doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
+      doc.text("iHub POS · Confidential", PAGE_MARGIN, pageH - 8);
+      doc.text(
+        `Page ${doc.getCurrentPageInfo().pageNumber} of ${pageCount}`,
+        pageWidth - PAGE_MARGIN,
+        pageH - 8,
+        {
+          align: "right",
+        },
+      );
+    },
+  });
+
+  // ── Open / download ─────────────────────────────────────
+  const blob = doc.output("blob");
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank", "noopener");
+
   if (!w) {
-    toast.error("Pop-up blocked. Allow pop-ups to export PDF.");
-    return;
+    toast.error("Pop-up blocked — PDF downloaded instead.");
   }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 // ─── Shared styles ───────────────────────────────────────────────────────────
