@@ -1,5 +1,4 @@
 import { getCurrentUser } from "@/lib/actions";
-import { getReportsData } from "@/lib/report-actions";
 import { getBranchExpenses } from "@/lib/expense-actions";
 import ReportsClient from "./reports-client";
 
@@ -7,7 +6,10 @@ export default async function ReportsPage() {
   const user = await getCurrentUser();
   const userRole = user?.role ?? null;
 
-  if (!userRole || !["management", "partner", "crew"].includes(userRole)) {
+  if (
+    !userRole ||
+    !["management", "partner", "crew", "admin"].includes(userRole)
+  ) {
     return (
       <main className="flex-1 p-8">
         <div className="flex items-center justify-center">
@@ -28,21 +30,9 @@ export default async function ReportsPage() {
     );
   }
 
-  const [result, expensesResult] = await Promise.all([
-    getReportsData(),
-    getBranchExpenses({ limit: 200 }),
-  ]);
-
-  const totalSales = result.success && result.data ? result.data.totalSales : 0;
-  const totalItems = result.success && result.data ? result.data.totalItems : 0;
+  const expensesResult = await getBranchExpenses({ limit: 200 });
   const expenses =
     expensesResult.success && expensesResult.data ? expensesResult.data : [];
 
-  return (
-    <ReportsClient
-      totalSales={totalSales}
-      totalItems={totalItems}
-      expenses={expenses}
-    />
-  );
+  return <ReportsClient expenses={expenses} />;
 }

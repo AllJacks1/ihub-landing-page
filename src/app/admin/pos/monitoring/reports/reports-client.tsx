@@ -1,39 +1,41 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Calendar,
-  Download,
   RefreshCw,
   TrendingUp,
   Receipt,
   RotateCcw,
   Package,
-  BarChart3,
   Users,
   Store,
   Target,
   ChevronLeft,
   ChevronRight,
   Banknote,
+  FileSpreadsheet,
+  FileText,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import type { CashExpense } from "@/lib/expense-actions";
+import {
+  getMonitoringReports,
+  type CashierReportRow,
+  type DailyReportRow,
+  type ReturnReportRow,
+  type ProductReportRow,
+  type ReceiptReportRow,
+  type PerformanceReportRow,
+  type MonitoringReportsPayload,
+  type PaymentBreakdown,
+} from "@/lib/report-actions";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-
-type PaymentBreakdown = {
-  cash?: number;
-  card?: number;
-  gcash?: number;
-  maya?: number;
-  credit?: number;
-  bankTransfer?: number;
-  other?: number;
-};
 
 type ReportTab =
   | "cashier"
@@ -44,89 +46,11 @@ type ReportTab =
   | "performance"
   | "expenses";
 
-type CashierRow = {
-  id: string;
-  name: string;
-  branch: string;
-  transactions: number;
-  items: number;
-  refundsCount: number;
-  refundsAmount: number;
-  grossSales: number;
-  vatableSales: number;
-  vatExemptSales: number;
-  discounts: number;
-  charges: number;
-  vatAmount: number;
-  netSales: number;
-  payments: PaymentBreakdown;
-  avgTicket: number;
-};
-
-type DailyRow = {
-  id: string;
-  date: string;
-  receiptBegin: string;
-  receiptEnd: string;
-  salesBegin: number;
-  salesEnd: number;
-  transactions: number;
-  items: number;
-  vatableSales: number;
-  payments: PaymentBreakdown;
-  discounts: number;
-  net: number;
-};
-
-type ReturnRow = {
-  id: string;
-  receiptNo: string;
-  product: string;
-  cashier: string;
-  qty: number;
-  amount: number;
-  reason: string;
-  status: "refunded" | "replaced" | "pending";
-  date: string;
-};
-
-type ProductRow = {
-  id: string;
-  name: string;
-  category: string;
-  sold: number;
-  returned: number;
-  netQty: number;
-  revenue: number;
-  avgPrice: number;
-};
-
-type ReceiptRow = {
-  id: string;
-  receiptNo: string;
-  cashier: string;
-  branch: string;
-  items: number;
-  total: number;
-  payment: "cash" | "card" | "gcash" | "maya" | "other";
-  date: string;
-};
-
-type PerformanceRow = {
-  id: string;
-  name: string;
-  type: "cashier" | "branch";
-  target: number;
-  actual: number;
-  returns: number;
-  period: string;
-};
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const formatCurrency = (v: number | null | undefined) =>
   v == null
-    ? ""
+    ? "—"
     : new Intl.NumberFormat("en-PH", {
         style: "currency",
         currency: "PHP",
@@ -134,174 +58,148 @@ const formatCurrency = (v: number | null | undefined) =>
 
 const formatNumber = (v: number) => new Intl.NumberFormat("en-PH").format(v);
 
-// ─── Mock data (replace with fetchReportsData(dateRange)) ────────────────────
+const emptyPayments = (): PaymentBreakdown => ({
+  cash: 0,
+  card: 0,
+  gcash: 0,
+  maya: 0,
+  bankTransfer: 0,
+  credit: 0,
+  other: 0,
+});
 
-const MOCK_CASHIERS: CashierRow[] = [
-  {
-    id: "1",
-    name: "Maria Santos",
-    branch: "Main Branch",
-    transactions: 54,
-    items: 128,
-    refundsCount: 2,
-    refundsAmount: 400,
-    grossSales: 72_500,
-    vatableSales: 68_200,
-    vatExemptSales: 1_800,
-    discounts: 2_400,
-    charges: 850,
-    vatAmount: 8184,
-    netSales: 68_200,
-    payments: {
-      cash: 28_400,
-      card: 12_100,
-      gcash: 0,
-      maya: 3_500,
-      other: 1_400,
-    },
-    avgTicket: 1_262.96,
+const emptyPayload = (): MonitoringReportsPayload => ({
+  summary: {
+    totalSales: 0,
+    totalItems: 0,
+    totalTransactions: 0,
+    totalDiscounts: 0,
+    totalVat: 0,
+    totalCharges: 0,
+    payments: emptyPayments(),
   },
-  {
-    id: "2",
-    name: "Juan Dela Cruz",
-    branch: "Main Branch",
-    transactions: 47,
-    items: 105,
-    refundsCount: 1,
-    refundsAmount: 0,
-    grossSales: 63_400,
-    vatableSales: 59_450,
-    vatExemptSales: 0,
-    discounts: 1_800,
-    charges: 500,
-    vatAmount: 7_134,
-    netSales: 59_450,
-    payments: {
-      cash: 24_000,
-      card: 10_450,
-      gcash: 20_000,
-      maya: 4_000,
-      other: 1_000,
-    },
-    avgTicket: 1_264.89,
-  },
-];
+  cashiers: [],
+  daily: [],
+  returns: [],
+  products: [],
+  receipts: [],
+  performance: [],
+});
 
-const MOCK_DAILY: DailyRow[] = [
-  {
-    id: "5",
-    date: "Oct 12, 2026",
-    receiptBegin: "R-10339",
-    receiptEnd: "R-10402",
-    salesBegin: 305_300,
-    salesEnd: 391_700,
-    transactions: 64,
-    items: 141,
-    vatableSales: 83_500,
-    payments: {
-      cash: 34_000,
-      card: 12_000,
-      gcash: 26_000,
-      maya: 6_000,
-      credit: 4_000,
-      bankTransfer: 2_000,
-      other: 0,
-    },
-    discounts: 2_400,
-    net: 84_000,
-  },
-  {
-    id: "4",
-    date: "Oct 11, 2026",
-    receiptBegin: "R-10281",
-    receiptEnd: "R-10338",
-    salesBegin: 227_500,
-    salesEnd: 305_300,
-    transactions: 58,
-    items: 122,
-    vatableSales: 75_800,
-    payments: {
-      cash: 30_000,
-      card: 11_000,
-      gcash: 22_000,
-      maya: 5_000,
-      credit: 5_000,
-      bankTransfer: 3_000,
-      other: 0,
-    },
-    discounts: 1_800,
-    net: 76_000,
-  },
-];
+function escapeCsv(value: unknown): string {
+  const s = value == null ? "" : String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
 
-const MOCK_RETURNS: ReturnRow[] = [
-  {
-    id: "1",
-    receiptNo: "R-10234",
-    product: "Iced Coffee",
-    cashier: "Maria Santos",
-    qty: 1,
-    amount: 200,
-    reason: "Wrong order",
-    status: "refunded",
-    date: "Oct 12, 2026",
-  },
-];
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
-const MOCK_PRODUCTS: ProductRow[] = [
-  {
-    id: "1",
-    name: "Iced Coffee",
-    category: "Beverages",
-    sold: 142,
-    returned: 3,
-    netQty: 139,
-    revenue: 27800,
-    avgPrice: 200,
-  },
-];
+function rowsToCsv(headers: string[], rows: (string | number)[][]): string {
+  const lines = [
+    headers.map(escapeCsv).join(","),
+    ...rows.map((r) => r.map(escapeCsv).join(",")),
+  ];
+  // BOM so Excel opens UTF-8 correctly
+  return "\uFEFF" + lines.join("\r\n");
+}
 
-const MOCK_RECEIPTS: ReceiptRow[] = [
-  {
-    id: "1",
-    receiptNo: "R-10241",
-    cashier: "Maria Santos",
-    branch: "Main Branch",
-    items: 4,
-    total: 890,
-    payment: "gcash",
-    date: "Oct 12, 2026 · 14:32",
-  },
-];
+function exportExcel(
+  filename: string,
+  headers: string[],
+  rows: (string | number)[][],
+) {
+  const csv = rowsToCsv(headers, rows);
+  downloadBlob(
+    filename.endsWith(".csv") ? filename : `${filename}.csv`,
+    new Blob([csv], { type: "text/csv;charset=utf-8;" }),
+  );
+}
 
-const MOCK_PERFORMANCE: PerformanceRow[] = [
-  {
-    id: "1",
-    name: "Maria Santos",
-    type: "cashier",
-    target: 80000,
-    actual: 68200,
-    returns: 400,
-    period: "October 2026",
-  },
-];
+function exportPdf(
+  title: string,
+  subtitle: string,
+  headers: string[],
+  rows: (string | number)[][],
+) {
+  const tableHead = headers
+    .map(
+      (h) =>
+        `<th style="border:1px solid #e7e5e4;background:#fafaf9;padding:8px 10px;text-align:left;font-size:11px;color:#57534e;">${h}</th>`,
+    )
+    .join("");
+  const tableBody = rows
+    .map(
+      (r) =>
+        `<tr>${r
+          .map(
+            (c) =>
+              `<td style="border:1px solid #e7e5e4;padding:7px 10px;font-size:11px;color:#1c1917;">${c ?? ""}</td>`,
+          )
+          .join("")}</tr>`,
+    )
+    .join("");
 
-// ─── Shared bits ─────────────────────────────────────────────────────────────
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${title}</title>
+  <style>
+    @page { margin: 16mm; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #1c1917; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p.sub { font-size: 12px; color: #78716c; margin: 0 0 16px; }
+    table { border-collapse: collapse; width: 100%; }
+    .brand { color: #F36509; font-weight: 600; font-size: 12px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="brand">iHub POS · Reports</div>
+  <h1>${title}</h1>
+  <p class="sub">${subtitle}</p>
+  <table>
+    <thead><tr>${tableHead}</tr></thead>
+    <tbody>${tableBody || `<tr><td colspan="${headers.length}" style="padding:16px;text-align:center;color:#a8a29e;">No data</td></tr>`}</tbody>
+  </table>
+  <script>window.onload = function () { window.print(); };</script>
+</body>
+</html>`;
+
+  const w = window.open(
+    "",
+    "_blank",
+    "noopener,noreferrer,width=1024,height=768",
+  );
+  if (!w) {
+    toast.error("Pop-up blocked. Allow pop-ups to export PDF.");
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
+// ─── Shared styles ───────────────────────────────────────────────────────────
 
 const headCls = "px-5 py-3.5 text-right font-medium text-stone-500";
 const cellRight = "px-5 py-4 text-right tabular-nums";
-const PAYMENT_STYLES: Record<ReceiptRow["payment"], string> = {
-  cash: "border-stone-200 bg-stone-50 text-stone-600",
-  card: "border-sky-200 bg-sky-50 text-sky-700",
-  gcash: "border-blue-200 bg-blue-50 text-blue-700",
-  maya: "border-violet-200 bg-violet-50 text-violet-700",
-  other: "border-stone-200 bg-stone-50 text-stone-600",
-};
-const RETURN_STYLES: Record<ReturnRow["status"], string> = {
+
+const RETURN_STYLES: Record<string, string> = {
   refunded: "border-emerald-200 bg-emerald-50 text-emerald-700",
   replaced: "border-sky-200 bg-sky-50 text-sky-700",
   pending: "border-amber-200 bg-amber-50 text-amber-700",
+  voided: "border-red-200 bg-red-50 text-red-700",
 };
+
 const EXPENSE_STATUS_STYLES: Record<string, string> = {
   paid: "border-emerald-200 bg-emerald-50 text-emerald-700",
   approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -309,6 +207,14 @@ const EXPENSE_STATUS_STYLES: Record<string, string> = {
   draft: "border-stone-200 bg-stone-50 text-stone-600",
   void: "border-red-200 bg-red-50 text-red-700",
   cancelled: "border-red-200 bg-red-50 text-red-700",
+};
+
+const PAYMENT_STYLES: Record<string, string> = {
+  cash: "border-stone-200 bg-stone-50 text-stone-600",
+  card: "border-sky-200 bg-sky-50 text-sky-700",
+  gcash: "border-blue-200 bg-blue-50 text-blue-700",
+  maya: "border-violet-200 bg-violet-50 text-violet-700",
+  other: "border-stone-200 bg-stone-50 text-stone-600",
 };
 
 const TABS: { id: ReportTab; label: string; icon: typeof Users }[] = [
@@ -324,32 +230,48 @@ const TABS: { id: ReportTab; label: string; icon: typeof Users }[] = [
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 type Props = {
-  totalSales: number;
-  totalItems: number;
   expenses?: CashExpense[];
 };
 
-export default function ReportsClient({
-  totalSales,
-  totalItems,
-  expenses = [],
-}: Props) {
+export default function ReportsClient({ expenses = [] }: Props) {
   const [activeTab, setActiveTab] = useState<ReportTab>("cashier");
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<MonitoringReportsPayload>(emptyPayload);
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 14);
     return d.toISOString().slice(0, 10);
   });
-  const [endDate, setEndDate] = useState(() => {
-    return new Date().toISOString().slice(0, 10);
-  });
+  const [endDate, setEndDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
   const [isEditingRange, setIsEditingRange] = useState(false);
 
-  useEffect(() => {
-    const t = setTimeout(() => setIsLoading(false), 500);
-    return () => clearTimeout(t);
+  const loadReports = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await getMonitoringReports({ startDate, endDate });
+      if (!result.success || !result.data) {
+        setError(result.error || "Failed to load reports");
+        setData(emptyPayload());
+        toast.error(result.error || "Failed to load reports");
+      } else {
+        setData(result.data);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load reports";
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setIsLoading(false);
+    }
   }, [startDate, endDate]);
+
+  useEffect(() => {
+    void loadReports();
+  }, [loadReports]);
 
   const shiftRange = (days: number) => {
     const start = new Date(startDate + "T00:00:00");
@@ -358,10 +280,8 @@ export default function ReportsClient({
     end.setDate(end.getDate() + days);
     setStartDate(start.toISOString().slice(0, 10));
     setEndDate(end.toISOString().slice(0, 10));
-    setIsLoading(true);
   };
 
-  // Filter expenses by selected date range (client-side; server already returns recent)
   const filteredExpenses = useMemo(() => {
     const from = new Date(startDate + "T00:00:00").getTime();
     const to = new Date(endDate + "T23:59:59").getTime();
@@ -382,47 +302,48 @@ export default function ReportsClient({
     const voided = filteredExpenses.filter((e) =>
       ["void", "cancelled"].includes(e.status),
     ).length;
-    return {
-      count: active.length,
-      cashTotal,
-      allTotal,
-      voided,
-    };
+    return { count: active.length, cashTotal, allTotal, voided };
   }, [filteredExpenses]);
 
-  const totalVat = MOCK_CASHIERS.reduce((s, c) => s + c.vatAmount, 0);
-  const totalDisc = MOCK_CASHIERS.reduce((s, c) => s + c.discounts, 0);
-  const totalCash =
-    MOCK_CASHIERS?.reduce((s, c) => s + (c?.payments?.cash ?? 0), 0) ?? 0;
+  const rangeLabel = useMemo(() => {
+    const fmt = (d: string) =>
+      new Date(d + "T00:00:00").toLocaleDateString("en-PH", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    return `${fmt(startDate)} – ${fmt(endDate)}`;
+  }, [startDate, endDate]);
 
   const kpis = useMemo(() => {
+    const s = data.summary;
     switch (activeTab) {
       case "cashier":
         return [
           {
             label: "Net Sales",
-            value: formatCurrency(totalSales),
+            value: formatCurrency(s.totalSales - s.totalDiscounts),
             sub: "All cashiers",
             icon: TrendingUp,
             iconCls: "bg-orange-50 text-[#F36509]",
           },
           {
             label: "VAT Amount",
-            value: formatCurrency(totalVat),
-            sub: "12% Output VAT",
+            value: formatCurrency(s.totalVat),
+            sub: "12% Output VAT (est.)",
             icon: Receipt,
             iconCls: "bg-amber-50 text-amber-600",
           },
           {
             label: "Discounts",
-            value: formatCurrency(totalDisc),
+            value: formatCurrency(s.totalDiscounts),
             sub: "Total given",
             icon: RotateCcw,
             iconCls: "bg-red-50 text-red-600",
           },
           {
             label: "Cash Collected",
-            value: formatCurrency(totalCash),
+            value: formatCurrency(s.payments.cash),
             sub: "Physical cash",
             icon: Store,
             iconCls: "bg-emerald-50 text-emerald-600",
@@ -432,219 +353,483 @@ export default function ReportsClient({
         return [
           {
             label: "Gross Sales",
-            value: formatCurrency(391700),
+            value: formatCurrency(s.totalSales),
             sub: "Period shown",
             icon: TrendingUp,
             iconCls: "bg-orange-50 text-[#F36509]",
           },
           {
             label: "Net Sales",
-            value: formatCurrency(381700),
+            value: formatCurrency(s.totalSales - s.totalDiscounts),
             sub: "After discounts",
             icon: Store,
             iconCls: "bg-emerald-50 text-emerald-600",
           },
           {
             label: "Transactions",
-            value: formatNumber(292),
-            sub: "Avg / day",
-            icon: BarChart3,
-            iconCls: "bg-stone-100 text-stone-500",
+            value: formatNumber(s.totalTransactions),
+            sub: "Completed orders",
+            icon: Receipt,
+            iconCls: "bg-sky-50 text-sky-600",
           },
           {
-            label: "Discounts",
-            value: formatCurrency(10000),
-            sub: "Of gross",
-            icon: Receipt,
-            iconCls: "bg-amber-50 text-amber-600",
+            label: "Items Sold",
+            value: formatNumber(s.totalItems),
+            sub: "Line quantities",
+            icon: Package,
+            iconCls: "bg-violet-50 text-violet-600",
           },
         ];
       case "returns":
         return [
           {
-            label: "Total Returns",
-            value: "5",
-            sub: "This period",
+            label: "Returns / Voids",
+            value: formatNumber(data.returns.length),
+            sub: "Line items",
             icon: RotateCcw,
             iconCls: "bg-red-50 text-red-600",
           },
           {
-            label: "Refund Value",
-            value: formatCurrency(3875),
-            sub: "Cash returned",
+            label: "Amount",
+            value: formatCurrency(
+              data.returns.reduce((sum, r) => sum + r.amount, 0),
+            ),
+            sub: "Voided total",
+            icon: Banknote,
+            iconCls: "bg-amber-50 text-amber-600",
+          },
+          {
+            label: "Gross Sales",
+            value: formatCurrency(s.totalSales),
+            sub: "For comparison",
             icon: TrendingUp,
             iconCls: "bg-orange-50 text-[#F36509]",
           },
           {
-            label: "Replaced",
-            value: "1",
-            sub: formatCurrency(800),
-            icon: Package,
-            iconCls: "bg-sky-50 text-sky-600",
-          },
-          {
-            label: "Pending",
-            value: "1",
-            sub: "Awaiting review",
-            icon: Receipt,
-            iconCls: "bg-amber-50 text-amber-600",
+            label: "Net after voids*",
+            value: formatCurrency(
+              s.totalSales - data.returns.reduce((sum, r) => sum + r.amount, 0),
+            ),
+            sub: "*Indicative",
+            icon: Store,
+            iconCls: "bg-emerald-50 text-emerald-600",
           },
         ];
       case "product":
         return [
           {
-            label: "Units Sold",
-            value: formatNumber(totalItems),
-            sub: "Gross",
+            label: "Products",
+            value: formatNumber(data.products.length),
+            sub: "SKUs in range",
             icon: Package,
+            iconCls: "bg-violet-50 text-violet-600",
+          },
+          {
+            label: "Units sold",
+            value: formatNumber(data.products.reduce((a, p) => a + p.sold, 0)),
+            sub: "Gross qty",
+            icon: TrendingUp,
             iconCls: "bg-orange-50 text-[#F36509]",
           },
           {
-            label: "Units Returned",
-            value: "6",
-            sub: "Return rate",
-            icon: RotateCcw,
-            iconCls: "bg-red-50 text-red-600",
-          },
-          {
-            label: "Net Revenue",
-            value: formatCurrency(95800),
-            sub: "After returns",
-            icon: TrendingUp,
+            label: "Revenue",
+            value: formatCurrency(
+              data.products.reduce((a, p) => a + p.revenue, 0),
+            ),
+            sub: "Line totals",
+            icon: Banknote,
             iconCls: "bg-emerald-50 text-emerald-600",
           },
           {
-            label: "Top Product",
-            value: "Iced Coffee",
-            sub: "Net units",
-            icon: BarChart3,
-            iconCls: "bg-stone-100 text-stone-500",
+            label: "Returned qty",
+            value: formatNumber(
+              data.products.reduce((a, p) => a + p.returned, 0),
+            ),
+            sub: "From voids",
+            icon: RotateCcw,
+            iconCls: "bg-red-50 text-red-600",
           },
         ];
       case "receipts":
         return [
           {
             label: "Receipts",
-            value: formatNumber(186),
-            sub: "This period",
+            value: formatNumber(data.receipts.length),
+            sub: "Completed",
             icon: Receipt,
+            iconCls: "bg-sky-50 text-sky-600",
+          },
+          {
+            label: "Gross Sales",
+            value: formatCurrency(s.totalSales),
+            sub: rangeLabel,
+            icon: TrendingUp,
             iconCls: "bg-orange-50 text-[#F36509]",
           },
           {
-            label: "Avg Items / Receipt",
-            value: "2.2",
-            sub: "Per transaction",
+            label: "Avg Ticket",
+            value: formatCurrency(
+              s.totalTransactions > 0 ? s.totalSales / s.totalTransactions : 0,
+            ),
+            sub: "Per receipt",
+            icon: Target,
+            iconCls: "bg-amber-50 text-amber-600",
+          },
+          {
+            label: "Items",
+            value: formatNumber(s.totalItems),
+            sub: "All receipts",
             icon: Package,
-            iconCls: "bg-stone-100 text-stone-500",
-          },
-          {
-            label: "Avg Receipt Value",
-            value: formatCurrency(1337),
-            sub: "Per transaction",
-            icon: TrendingUp,
-            iconCls: "bg-emerald-50 text-emerald-600",
-          },
-          {
-            label: "GCash Share",
-            value: "38%",
-            sub: "Payment method",
-            icon: Store,
-            iconCls: "bg-blue-50 text-blue-700",
+            iconCls: "bg-violet-50 text-violet-600",
           },
         ];
       case "performance":
         return [
           {
-            label: "Avg Attainment",
-            value: "82%",
-            sub: "Across targets",
+            label: "Tracked",
+            value: formatNumber(data.performance.length),
+            sub: "Cashiers / branches",
             icon: Target,
+            iconCls: "bg-amber-50 text-amber-600",
+          },
+          {
+            label: "Actual Sales",
+            value: formatCurrency(
+              data.performance.reduce((a, p) => a + p.actual, 0),
+            ),
+            sub: "Sum of actuals",
+            icon: TrendingUp,
             iconCls: "bg-orange-50 text-[#F36509]",
           },
           {
-            label: "On Track",
-            value: "3 / 4",
-            sub: "≥75% of target",
-            icon: TrendingUp,
-            iconCls: "bg-emerald-50 text-emerald-600",
+            label: "Targets",
+            value: formatCurrency(
+              data.performance.reduce((a, p) => a + p.target, 0),
+            ),
+            sub: "Configured quotas",
+            icon: Store,
+            iconCls: "bg-sky-50 text-sky-600",
           },
           {
-            label: "Total Returns",
-            value: formatCurrency(3875),
-            sub: "Deducted",
+            label: "Returns",
+            value: formatCurrency(
+              data.performance.reduce((a, p) => a + p.returns, 0),
+            ),
+            sub: "Attributed",
             icon: RotateCcw,
             iconCls: "bg-red-50 text-red-600",
-          },
-          {
-            label: "Net Attainment",
-            value: "80%",
-            sub: "After returns",
-            icon: BarChart3,
-            iconCls: "bg-stone-100 text-stone-500",
           },
         ];
       case "expenses":
         return [
           {
-            label: "Expenses",
+            label: "Expense count",
             value: formatNumber(expenseStats.count),
-            sub: "In date range",
+            sub: "Active in range",
             icon: Banknote,
-            iconCls: "bg-orange-50 text-[#F36509]",
-          },
-          {
-            label: "Cash from till",
-            value: formatCurrency(expenseStats.cashTotal),
-            sub: "Reduces expected cash",
-            icon: Store,
             iconCls: "bg-amber-50 text-amber-600",
           },
           {
-            label: "All methods",
+            label: "Total amount",
             value: formatCurrency(expenseStats.allTotal),
-            sub: "Cash + non-cash",
+            sub: "All methods",
             icon: TrendingUp,
-            iconCls: "bg-stone-100 text-stone-500",
+            iconCls: "bg-orange-50 text-[#F36509]",
+          },
+          {
+            label: "Cash expenses",
+            value: formatCurrency(expenseStats.cashTotal),
+            sub: "Cash drawer impact",
+            icon: Store,
+            iconCls: "bg-emerald-50 text-emerald-600",
           },
           {
             label: "Voided",
             value: formatNumber(expenseStats.voided),
-            sub: "Not counted",
+            sub: "Excluded from totals",
             icon: RotateCcw,
             iconCls: "bg-red-50 text-red-600",
           },
         ];
+      default:
+        return [];
     }
-  }, [
-    activeTab,
-    totalSales,
-    totalItems,
-    totalVat,
-    totalDisc,
-    totalCash,
-    expenseStats,
-  ]);
+  }, [activeTab, data, expenseStats, rangeLabel]);
+
+  // ─── Export builders ───────────────────────────────────────────────────────
+
+  const buildExport = useCallback((): {
+    title: string;
+    headers: string[];
+    rows: (string | number)[][];
+  } => {
+    switch (activeTab) {
+      case "cashier":
+        return {
+          title: "Cashier Sales Report",
+          headers: [
+            "Cashier",
+            "Branch",
+            "Gross Sales",
+            "Vatable Sales",
+            "Discounts",
+            "Charges",
+            "VAT Amount",
+            "Net Sales",
+            "Cash",
+            "Card",
+            "GCash",
+            "Maya",
+            "Other",
+            "Txns",
+            "Items",
+            "Refunds",
+            "Avg Ticket",
+          ],
+          rows: data.cashiers.map((r: CashierReportRow) => [
+            r.name,
+            r.branch,
+            r.grossSales,
+            r.vatableSales,
+            r.discounts,
+            r.charges,
+            r.vatAmount,
+            r.netSales,
+            r.payments.cash,
+            r.payments.card,
+            r.payments.gcash,
+            r.payments.maya,
+            r.payments.other + r.payments.bankTransfer + r.payments.credit,
+            r.transactions,
+            r.items,
+            r.refundsAmount,
+            r.avgTicket,
+          ]),
+        };
+      case "daily":
+        return {
+          title: "Daily Sales Report",
+          headers: [
+            "Date",
+            "Receipt Begin",
+            "Receipt End",
+            "Sales Begin",
+            "Sales End",
+            "Vatable Sales",
+            "Cash",
+            "Card",
+            "GCash",
+            "PayMaya",
+            "Credit",
+            "Bank Transfer",
+            "Discount",
+            "Net",
+            "Txns",
+            "Items",
+          ],
+          rows: data.daily.map((r: DailyReportRow) => [
+            r.date,
+            r.receiptBegin,
+            r.receiptEnd,
+            r.salesBegin,
+            r.salesEnd,
+            r.vatableSales,
+            r.payments.cash,
+            r.payments.card,
+            r.payments.gcash,
+            r.payments.maya,
+            r.payments.credit,
+            r.payments.bankTransfer,
+            r.discounts,
+            r.net,
+            r.transactions,
+            r.items,
+          ]),
+        };
+      case "returns":
+        return {
+          title: "Customer Returns / Voids Report",
+          headers: [
+            "Receipt",
+            "Product",
+            "Cashier",
+            "Qty",
+            "Amount",
+            "Reason",
+            "Status",
+            "Date",
+          ],
+          rows: data.returns.map((r: ReturnReportRow) => [
+            r.receiptNo,
+            r.product,
+            r.cashier,
+            r.qty,
+            r.amount,
+            r.reason,
+            r.status,
+            r.date,
+          ]),
+        };
+      case "product":
+        return {
+          title: "Product Sales Report",
+          headers: [
+            "Product",
+            "Category",
+            "Sold",
+            "Returned",
+            "Net Qty",
+            "Revenue",
+            "Avg Price",
+          ],
+          rows: data.products.map((r: ProductReportRow) => [
+            r.name,
+            r.category,
+            r.sold,
+            r.returned,
+            r.netQty,
+            r.revenue,
+            r.avgPrice,
+          ]),
+        };
+      case "receipts":
+        return {
+          title: "Receipt Details Report",
+          headers: [
+            "Receipt",
+            "Cashier",
+            "Branch",
+            "Items",
+            "Total",
+            "Payment",
+            "Date",
+          ],
+          rows: data.receipts.map((r: ReceiptReportRow) => [
+            r.receiptNo,
+            r.cashier,
+            r.branch,
+            r.items,
+            r.total,
+            r.payment,
+            r.date,
+          ]),
+        };
+      case "performance":
+        return {
+          title: "Performance Report",
+          headers: [
+            "Name",
+            "Type",
+            "Target",
+            "Actual",
+            "Returns",
+            "Net",
+            "Progress %",
+            "Period",
+          ],
+          rows: data.performance.map((r: PerformanceReportRow) => {
+            const net = r.actual - r.returns;
+            const progress =
+              r.target > 0
+                ? Number(((r.actual / r.target) * 100).toFixed(1))
+                : 0;
+            return [
+              r.name,
+              r.type,
+              r.target,
+              r.actual,
+              r.returns,
+              net,
+              progress,
+              r.period,
+            ];
+          }),
+        };
+      case "expenses":
+        return {
+          title: "Expenses Report",
+          headers: [
+            "When",
+            "Description",
+            "Category",
+            "Shift",
+            "Method",
+            "Reference",
+            "Status",
+            "Amount",
+          ],
+          rows: filteredExpenses.map((e) => [
+            new Date(e.occurred_at).toLocaleString("en-PH"),
+            e.description,
+            e.category_name || "—",
+            e.shift_number || e.shift_id?.slice(0, 8) || "—",
+            e.payment_method,
+            e.reference_number || "—",
+            e.status,
+            e.amount,
+          ]),
+        };
+      default:
+        return { title: "Report", headers: [], rows: [] };
+    }
+  }, [activeTab, data, filteredExpenses]);
+
+  const handleExportExcel = () => {
+    const { title, headers, rows } = buildExport();
+    if (!headers.length) {
+      toast.error("Nothing to export");
+      return;
+    }
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    exportExcel(`ihub-${slug}-${startDate}_to_${endDate}`, headers, rows);
+    toast.success("Excel (CSV) download started");
+  };
+
+  const handleExportPdf = () => {
+    const { title, headers, rows } = buildExport();
+    if (!headers.length) {
+      toast.error("Nothing to export");
+      return;
+    }
+    // Format numbers for readable PDF
+    const pretty = rows.map((r) =>
+      r.map((c) =>
+        typeof c === "number"
+          ? Number.isInteger(c)
+            ? formatNumber(c)
+            : formatCurrency(c)
+          : c,
+      ),
+    );
+    exportPdf(title, rangeLabel, headers, pretty);
+    toast.success("PDF print dialog opened");
+  };
+
+  const isEmpty =
+    !isLoading &&
+    ((activeTab === "cashier" && data.cashiers.length === 0) ||
+      (activeTab === "daily" && data.daily.length === 0) ||
+      (activeTab === "returns" && data.returns.length === 0) ||
+      (activeTab === "product" && data.products.length === 0) ||
+      (activeTab === "receipts" && data.receipts.length === 0) ||
+      (activeTab === "performance" && data.performance.length === 0) ||
+      (activeTab === "expenses" && filteredExpenses.length === 0));
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-1 flex-col bg-stone-50">
-      {/* Header */}
-      <div className="border-b border-stone-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
+    <main className="flex min-h-0 flex-1 flex-col">
+      <div className="border-b border-stone-200 bg-white px-4 py-4 sm:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#F36509]">
-              Analytics / Reports
-            </p>
-            <h1 className="mt-1 font-serif text-xl font-semibold text-stone-900 sm:text-2xl">
-              Reports
+            <h1 className="text-xl font-bold text-stone-900 sm:text-2xl">
+              POS Reports
             </h1>
-            <p className="mt-1 text-sm text-stone-500">
-              Cashier, daily, returns, product, receipt, performance &amp;
-              expenses
+            <p className="mt-0.5 text-sm text-stone-500">
+              Sales, returns, products, receipts, performance, and expenses
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 justify-end">
-            <div className="flex h-11 overflow-hidden rounded-xl border border-stone-200 bg-white focus-within:border-[#F36509]/50 focus-within:ring-2 focus-within:ring-[#F36509]/20">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex h-11 overflow-hidden rounded-xl border border-stone-200 bg-white">
               <button
                 type="button"
                 onClick={() => shiftRange(-15)}
@@ -653,25 +838,14 @@ export default function ReportsClient({
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <div className="flex flex-1 items-center justify-center">
+              <div className="flex min-w-0 flex-1 items-center">
                 {isEditingRange ? (
-                  <div
-                    className="flex items-center gap-1.5 px-2"
-                    onBlur={(e) => {
-                      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                        setIsEditingRange(false);
-                      }
-                    }}
-                  >
+                  <div className="flex items-center gap-1 px-2">
                     <input
                       type="date"
                       value={startDate}
                       max={endDate}
-                      autoFocus
-                      onChange={(e) => {
-                        setStartDate(e.target.value);
-                        setIsLoading(true);
-                      }}
+                      onChange={(e) => setStartDate(e.target.value)}
                       className="h-8 w-[130px] rounded-md border border-stone-200 bg-white px-2 text-sm font-medium text-stone-800 outline-none focus:border-[#F36509]"
                     />
                     <span className="text-stone-400">–</span>
@@ -679,12 +853,17 @@ export default function ReportsClient({
                       type="date"
                       value={endDate}
                       min={startDate}
-                      onChange={(e) => {
-                        setEndDate(e.target.value);
-                        setIsLoading(true);
-                      }}
+                      onChange={(e) => setEndDate(e.target.value)}
                       className="h-8 w-[130px] rounded-md border border-stone-200 bg-white px-2 text-sm font-medium text-stone-800 outline-none focus:border-[#F36509]"
                     />
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8 bg-[#F36509] hover:bg-[#d95a08]"
+                      onClick={() => setIsEditingRange(false)}
+                    >
+                      Apply
+                    </Button>
                   </div>
                 ) : (
                   <button
@@ -723,19 +902,28 @@ export default function ReportsClient({
               type="button"
               variant="outline"
               className="h-11 rounded-xl border-stone-200"
+              onClick={handleExportExcel}
+              title="Download current report as Excel-compatible CSV"
             >
-              <Download className="mr-2 h-4 w-4" />
-              Export
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              Excel
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 rounded-xl border-stone-200"
+              onClick={handleExportPdf}
+              title="Open printable PDF for current report"
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              PDF
             </Button>
 
             <Button
               type="button"
               variant="outline"
               className="h-11 rounded-xl border-stone-200"
-              onClick={() => {
-                setIsLoading(true);
-                setTimeout(() => setIsLoading(false), 500);
-              }}
+              onClick={() => void loadReports()}
             >
               <RefreshCw
                 className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
@@ -786,6 +974,12 @@ export default function ReportsClient({
           ))}
         </div>
 
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
         <Card className="border-stone-200 bg-white">
           <CardContent className="p-0">
             {isLoading ? (
@@ -793,6 +987,15 @@ export default function ReportsClient({
                 <RefreshCw className="h-6 w-6 animate-spin text-[#F36509]" />
                 <p className="mt-4 text-sm font-medium text-stone-900">
                   Loading report...
+                </p>
+              </div>
+            ) : isEmpty ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <p className="text-sm font-medium text-stone-900">
+                  No data for this period
+                </p>
+                <p className="mt-1 text-xs text-stone-500">
+                  Try a different date range or refresh after new sales.
                 </p>
               </div>
             ) : (
@@ -884,7 +1087,7 @@ export default function ReportsClient({
                       {activeTab === "receipts" && (
                         <>
                           <th className="px-5 py-3.5 font-medium text-stone-500">
-                            Receipt No.
+                            Receipt
                           </th>
                           <th className="px-5 py-3.5 font-medium text-stone-500">
                             Cashier
@@ -947,7 +1150,7 @@ export default function ReportsClient({
                   </thead>
                   <tbody>
                     {activeTab === "cashier" &&
-                      MOCK_CASHIERS.map((r) => (
+                      data.cashiers.map((r) => (
                         <tr
                           key={r.id}
                           className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
@@ -991,7 +1194,11 @@ export default function ReportsClient({
                             {formatCurrency(r.payments.maya)}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
-                            {formatCurrency(r.payments.other)}
+                            {formatCurrency(
+                              r.payments.other +
+                                r.payments.bankTransfer +
+                                r.payments.credit,
+                            )}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
                             {r.transactions}
@@ -1000,12 +1207,7 @@ export default function ReportsClient({
                             {r.items}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
-                            {r.refundsCount}
-                            {r.refundsAmount > 0 && (
-                              <span className="ml-1 text-xs text-red-500">
-                                ({formatCurrency(r.refundsAmount)})
-                              </span>
-                            )}
+                            {formatCurrency(r.refundsAmount)}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
                             {formatCurrency(r.avgTicket)}
@@ -1014,7 +1216,7 @@ export default function ReportsClient({
                       ))}
 
                     {activeTab === "daily" &&
-                      MOCK_DAILY.map((r) => (
+                      data.daily.map((r) => (
                         <tr
                           key={r.id}
                           className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
@@ -1022,18 +1224,16 @@ export default function ReportsClient({
                           <td className="px-5 py-4 font-medium text-stone-900">
                             {r.date}
                           </td>
-                          <td className={`${cellRight} text-stone-500`}>
+                          <td className={`${cellRight} text-stone-600`}>
                             {r.receiptBegin}
                           </td>
-                          <td className={`${cellRight} text-stone-500`}>
+                          <td className={`${cellRight} text-stone-600`}>
                             {r.receiptEnd}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
                             {formatCurrency(r.salesBegin)}
                           </td>
-                          <td
-                            className={`${cellRight} font-semibold text-stone-900`}
-                          >
+                          <td className={`${cellRight} text-stone-600`}>
                             {formatCurrency(r.salesEnd)}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
@@ -1051,7 +1251,7 @@ export default function ReportsClient({
                           <td className={`${cellRight} text-stone-600`}>
                             {formatCurrency(r.payments.maya)}
                           </td>
-                          <td className={`${cellRight} text-amber-700`}>
+                          <td className={`${cellRight} text-stone-600`}>
                             {formatCurrency(r.payments.credit)}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
@@ -1064,7 +1264,7 @@ export default function ReportsClient({
                       ))}
 
                     {activeTab === "returns" &&
-                      MOCK_RETURNS.map((r) => (
+                      data.returns.map((r) => (
                         <tr
                           key={r.id}
                           className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
@@ -1072,7 +1272,7 @@ export default function ReportsClient({
                           <td className="px-5 py-4 font-medium text-stone-900">
                             {r.receiptNo}
                           </td>
-                          <td className="px-5 py-4 text-stone-600">
+                          <td className="px-5 py-4 text-stone-700">
                             {r.product}
                           </td>
                           <td className="px-5 py-4 text-stone-500">
@@ -1081,9 +1281,7 @@ export default function ReportsClient({
                           <td className={`${cellRight} text-stone-600`}>
                             {r.qty}
                           </td>
-                          <td
-                            className={`${cellRight} font-semibold text-stone-900`}
-                          >
+                          <td className={`${cellRight} text-stone-600`}>
                             {formatCurrency(r.amount)}
                           </td>
                           <td className="px-5 py-4 text-stone-500">
@@ -1092,7 +1290,9 @@ export default function ReportsClient({
                           <td className="px-5 py-4">
                             <Badge
                               variant="outline"
-                              className={RETURN_STYLES[r.status]}
+                              className={
+                                RETURN_STYLES[r.status] || RETURN_STYLES.voided
+                              }
                             >
                               {r.status}
                             </Badge>
@@ -1104,7 +1304,7 @@ export default function ReportsClient({
                       ))}
 
                     {activeTab === "product" &&
-                      MOCK_PRODUCTS.map((r) => (
+                      data.products.map((r) => (
                         <tr
                           key={r.id}
                           className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
@@ -1112,20 +1312,13 @@ export default function ReportsClient({
                           <td className="px-5 py-4 font-medium text-stone-900">
                             {r.name}
                           </td>
-                          <td className="px-5 py-4">
-                            <Badge
-                              variant="outline"
-                              className="border-stone-200 bg-stone-50 text-stone-600"
-                            >
-                              {r.category}
-                            </Badge>
+                          <td className="px-5 py-4 text-stone-500">
+                            {r.category}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
                             {r.sold}
                           </td>
-                          <td
-                            className={`${cellRight} ${r.returned > 0 ? "text-red-600" : "text-stone-400"}`}
-                          >
+                          <td className={`${cellRight} text-stone-600`}>
                             {r.returned}
                           </td>
                           <td className={`${cellRight} text-stone-600`}>
@@ -1143,15 +1336,15 @@ export default function ReportsClient({
                       ))}
 
                     {activeTab === "receipts" &&
-                      MOCK_RECEIPTS.map((r) => (
+                      data.receipts.map((r) => (
                         <tr
                           key={r.id}
                           className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
                         >
-                          <td className="px-5 py-4 font-medium text-[#F36509]">
+                          <td className="px-5 py-4 font-medium text-stone-900">
                             {r.receiptNo}
                           </td>
-                          <td className="px-5 py-4 text-stone-600">
+                          <td className="px-5 py-4 text-stone-700">
                             {r.cashier}
                           </td>
                           <td className="px-5 py-4 text-stone-500">
@@ -1168,7 +1361,10 @@ export default function ReportsClient({
                           <td className="px-5 py-4">
                             <Badge
                               variant="outline"
-                              className={PAYMENT_STYLES[r.payment]}
+                              className={
+                                PAYMENT_STYLES[r.payment] ||
+                                PAYMENT_STYLES.other
+                              }
                             >
                               {r.payment}
                             </Badge>
@@ -1180,12 +1376,12 @@ export default function ReportsClient({
                       ))}
 
                     {activeTab === "performance" &&
-                      MOCK_PERFORMANCE.map((r) => {
+                      data.performance.map((r) => {
                         const net = r.actual - r.returns;
-                        const progress = Math.min(
-                          100,
-                          Math.round((net / r.target) * 100),
-                        );
+                        const pct =
+                          r.target > 0
+                            ? Math.min(100, (r.actual / r.target) * 100)
+                            : 0;
                         return (
                           <tr
                             key={r.id}
@@ -1194,138 +1390,90 @@ export default function ReportsClient({
                             <td className="px-5 py-4 font-medium text-stone-900">
                               {r.name}
                             </td>
-                            <td className="px-5 py-4">
-                              <Badge
-                                variant="outline"
-                                className={
-                                  r.type === "cashier"
-                                    ? "border-blue-200 bg-blue-50 text-blue-700"
-                                    : "border-purple-200 bg-purple-50 text-purple-700"
-                                }
-                              >
-                                {r.type}
-                              </Badge>
+                            <td className="px-5 py-4 capitalize text-stone-500">
+                              {r.type}
                             </td>
                             <td className={`${cellRight} text-stone-600`}>
-                              {formatCurrency(r.target)}
+                              {r.target > 0 ? formatCurrency(r.target) : "—"}
+                            </td>
+                            <td className={`${cellRight} text-stone-600`}>
+                              {formatCurrency(r.actual)}
+                            </td>
+                            <td className={`${cellRight} text-stone-600`}>
+                              {formatCurrency(r.returns)}
                             </td>
                             <td
                               className={`${cellRight} font-semibold text-stone-900`}
                             >
-                              {formatCurrency(r.actual)}
-                            </td>
-                            <td className={`${cellRight} text-red-600`}>
-                              -{formatCurrency(r.returns)}
-                            </td>
-                            <td className={`${cellRight} text-stone-600`}>
                               {formatCurrency(net)}
                             </td>
                             <td className="px-5 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
-                                  <div
-                                    className={`h-full rounded-full ${
-                                      progress >= 100
-                                        ? "bg-emerald-500"
-                                        : progress >= 75
-                                          ? "bg-[#F36509]"
-                                          : progress >= 50
-                                            ? "bg-amber-500"
-                                            : "bg-stone-300"
-                                    }`}
-                                    style={{ width: `${progress}%` }}
-                                  />
+                              {r.target > 0 ? (
+                                <div className="flex min-w-[120px] items-center gap-2">
+                                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
+                                    <div
+                                      className="h-full rounded-full bg-[#F36509]"
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-xs tabular-nums text-stone-500">
+                                    {pct.toFixed(0)}%
+                                  </span>
                                 </div>
-                                <span
-                                  className={`w-12 text-right text-xs tabular-nums ${progress >= 100 ? "font-semibold text-emerald-600" : "text-stone-500"}`}
-                                >
-                                  {progress}%
+                              ) : (
+                                <span className="text-xs text-stone-400">
+                                  No target
                                 </span>
-                              </div>
+                              )}
                             </td>
                           </tr>
                         );
                       })}
 
                     {activeTab === "expenses" &&
-                      (filteredExpenses.length === 0 ? (
-                        <tr>
+                      filteredExpenses.map((e) => (
+                        <tr
+                          key={e.id}
+                          className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
+                        >
+                          <td className="px-5 py-4 text-stone-600">
+                            {new Date(e.occurred_at).toLocaleString("en-PH", {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            })}
+                          </td>
+                          <td className="px-5 py-4 font-medium text-stone-900">
+                            {e.description}
+                          </td>
+                          <td className="px-5 py-4 text-stone-500">
+                            {e.category_name || "—"}
+                          </td>
+                          <td className="px-5 py-4 text-stone-500">
+                            {e.shift_number || "—"}
+                          </td>
+                          <td className="px-5 py-4 capitalize text-stone-500">
+                            {e.payment_method}
+                          </td>
+                          <td className="px-5 py-4 text-stone-500">
+                            {e.reference_number || "—"}
+                          </td>
+                          <td className="px-5 py-4">
+                            <Badge
+                              variant="outline"
+                              className={
+                                EXPENSE_STATUS_STYLES[e.status] ||
+                                "border-stone-200 bg-stone-50 text-stone-600"
+                              }
+                            >
+                              {e.status}
+                            </Badge>
+                          </td>
                           <td
-                            colSpan={8}
-                            className="px-5 py-16 text-center text-sm text-stone-400"
+                            className={`${cellRight} font-semibold text-stone-900`}
                           >
-                            No expenses in this date range.
+                            {formatCurrency(e.amount)}
                           </td>
                         </tr>
-                      ) : (
-                        filteredExpenses.map((e) => (
-                          <tr
-                            key={e.id}
-                            className="border-b border-stone-50 last:border-0 hover:bg-stone-50/50"
-                          >
-                            <td className="px-5 py-4 text-stone-500 whitespace-nowrap">
-                              {new Date(e.occurred_at).toLocaleString("en-PH", {
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </td>
-                            <td className="px-5 py-4">
-                              <p className="font-medium text-stone-900">
-                                {e.description}
-                              </p>
-                              {e.notes && (
-                                <p className="mt-0.5 text-xs text-stone-400">
-                                  {e.notes}
-                                </p>
-                              )}
-                            </td>
-                            <td className="px-5 py-4 text-stone-600">
-                              {e.category_name ?? "—"}
-                            </td>
-                            <td className="px-5 py-4 text-stone-500">
-                              {e.shift_number ?? e.shift_id.slice(0, 8)}
-                            </td>
-                            <td className="px-5 py-4">
-                              <Badge
-                                variant="outline"
-                                className={
-                                  PAYMENT_STYLES[
-                                    (e.payment_method as ReceiptRow["payment"]) ||
-                                      "other"
-                                  ] ?? PAYMENT_STYLES.other
-                                }
-                              >
-                                {e.payment_method}
-                              </Badge>
-                            </td>
-                            <td className="px-5 py-4 text-stone-500">
-                              {e.reference_number ?? "—"}
-                            </td>
-                            <td className="px-5 py-4">
-                              <Badge
-                                variant="outline"
-                                className={
-                                  EXPENSE_STATUS_STYLES[e.status] ??
-                                  EXPENSE_STATUS_STYLES.draft
-                                }
-                              >
-                                {e.status}
-                              </Badge>
-                            </td>
-                            <td
-                              className={`${cellRight} font-semibold ${
-                                ["void", "cancelled"].includes(e.status)
-                                  ? "text-stone-400 line-through"
-                                  : "text-stone-900"
-                              }`}
-                            >
-                              {formatCurrency(e.amount)}
-                            </td>
-                          </tr>
-                        ))
                       ))}
                   </tbody>
                 </table>
