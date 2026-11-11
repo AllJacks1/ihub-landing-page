@@ -16,8 +16,15 @@ import {
   Banknote,
   FileSpreadsheet,
   FileText,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -599,6 +606,60 @@ export default function ReportsClient({ expenses = [] }: Props) {
     }
   }, [activeTab, data, expenseStats, rangeLabel]);
 
+  /** Map a receipt row to the Transactions spreadsheet columns. */
+  const receiptToTransactionRow = (
+    r: ReceiptReportRow,
+  ): (string | number)[] => {
+    const p = (r as ReceiptReportRow & { payments?: PaymentBreakdown })
+      .payments;
+    const cash = p?.cash ?? (r.payment === "cash" ? r.total : 0);
+    const gcash = p?.gcash ?? (r.payment === "gcash" ? r.total : 0);
+    const maya = p?.maya ?? (r.payment === "maya" ? r.total : 0);
+    const charge =
+      (p?.credit ?? 0) +
+      (p?.other ?? 0) +
+      (p?.bankTransfer ?? 0) +
+      (p?.card ?? 0) +
+      (r.payment === "other" || r.payment === "card" ? (p ? 0 : r.total) : 0);
+
+    const blankIfZero = (n: number) =>
+      n && Math.abs(n) > 0.0001 ? Number(Number(n).toFixed(2)) : "";
+
+    let dateStr = r.date;
+    const raw = (r as ReceiptReportRow & { dateRaw?: string }).dateRaw;
+    if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const [y, m, d] = raw.split("-");
+      dateStr = `${Number(m)}/${Number(d)}/${y}`;
+    } else if (r.date) {
+      const parsed = new Date(r.date);
+      if (!Number.isNaN(parsed.getTime())) {
+        dateStr = `${parsed.getMonth() + 1}/${parsed.getDate()}/${parsed.getFullYear()}`;
+      }
+    }
+
+    const discounts =
+      (r as ReceiptReportRow & { discounts?: number }).discounts ?? 0;
+    const vat = (r as ReceiptReportRow & { vatAmount?: number }).vatAmount ?? 0;
+    const net =
+      (r as ReceiptReportRow & { netSales?: number }).netSales ?? r.total;
+    const customer =
+      (r as ReceiptReportRow & { customer?: string }).customer ?? "";
+
+    return [
+      r.receiptNo,
+      dateStr,
+      r.cashier,
+      customer,
+      blankIfZero(Number(cash) || 0),
+      blankIfZero(Number(gcash) || 0),
+      blankIfZero(Number(maya) || 0),
+      blankIfZero(Number(charge) || 0),
+      blankIfZero(Number(discounts) || 0),
+      blankIfZero(Number(vat) || 0),
+      Number(Number(net).toFixed(2)),
+    ];
+  };
+
   // ─── Export builders ───────────────────────────────────────────────────────
 
   const buildExport = useCallback((): {
@@ -623,7 +684,7 @@ export default function ReportsClient({ expenses = [] }: Props) {
             "Card",
             "GCash",
             "Maya",
-            "Other",
+            "Employee Charge",
             "Txns",
             "Items",
             "Refunds",
@@ -663,7 +724,7 @@ export default function ReportsClient({ expenses = [] }: Props) {
             "Card",
             "GCash",
             "PayMaya",
-            "Credit",
+            "Employee Charge",
             "Bank Transfer",
             "Discount",
             "Net",
@@ -737,25 +798,23 @@ export default function ReportsClient({ expenses = [] }: Props) {
         };
       case "receipts":
         return {
-          title: "Receipt Details Report",
+          title: "Transactions",
           headers: [
-            "Receipt",
-            "Cashier",
-            "Branch",
-            "Items",
-            "Total",
-            "Payment",
+            "Receipt Number",
             "Date",
+            "Cashier",
+            "Customer",
+            "Cash",
+            "GCash",
+            "PayMaya",
+            "Charge",
+            "SC Discount",
+            "VAT",
+            "Net Sales",
           ],
-          rows: data.receipts.map((r: ReceiptReportRow) => [
-            r.receiptNo,
-            r.cashier,
-            r.branch,
-            r.items,
-            r.total,
-            r.payment,
-            r.date,
-          ]),
+          rows: data.receipts.map((r: ReceiptReportRow) =>
+            receiptToTransactionRow(r),
+          ),
         };
       case "performance":
         return {
@@ -846,6 +905,33 @@ export default function ReportsClient({ expenses = [] }: Props) {
     );
     exportPdf(title, rangeLabel, headers, pretty);
     toast.success("PDF print dialog opened");
+  };
+
+  /** Transaction-level export matching POS "Transactions" spreadsheet layout */
+  const handleExportTransactions = () => {
+    const receipts = data.receipts ?? [];
+    if (receipts.length === 0) {
+      toast.error("No transactions to export for this date range");
+      return;
+    }
+
+    const headers = [
+      "Receipt Number",
+      "Date",
+      "Cashier",
+      "Customer",
+      "Cash",
+      "GCash",
+      "PayMaya",
+      "Charge",
+      "SC Discount",
+      "VAT",
+      "Net Sales",
+    ];
+    const rows = receipts.map((r) => receiptToTransactionRow(r));
+
+    exportExcel(`Transactions_${startDate}_to_${endDate}`, headers, rows);
+    toast.success("Transactions export started");
   };
 
   const isEmpty =
@@ -941,26 +1027,36 @@ export default function ReportsClient({ expenses = [] }: Props) {
               </button>
             </div>
 
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 rounded-xl border-stone-200"
-              onClick={handleExportExcel}
-              title="Download current report as Excel-compatible CSV"
-            >
-              <FileSpreadsheet className="mr-2 h-4 w-4" />
-              Excel
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 rounded-xl border-stone-200"
-              onClick={handleExportPdf}
-              title="Open printable PDF for current report"
-            >
-              <FileText className="mr-2 h-4 w-4" />
-              PDF
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 rounded-xl border-stone-200"
+                >
+                  <FileSpreadsheet className="mr-2 h-4 w-4" />
+                  Export
+                  <ChevronDown className="ml-2 h-4 w-4 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onClick={handleExportExcel}>
+                  <FileSpreadsheet className="mr-2 h-4 w-4" />
+                  Export as Excel
+                </DropdownMenuItem>
+
+                <DropdownMenuItem onClick={handleExportPdf}>
+                  <FileText className="mr-2 h-4 w-4" />
+                  Export as PDF
+                </DropdownMenuItem>
+
+                <DropdownMenuItem onClick={handleExportTransactions}>
+                  <FileSpreadsheet className="mr-2 h-4 w-4" />
+                  Export all transactions
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <Button
               type="button"

@@ -926,6 +926,7 @@ const paymentSchema = z.object({
     "bank_transfer",
     "other",
     "employee_charge",
+    "ewb",
   ]),
   amount: z.coerce.number().positive(),
   received_amount: z.coerce.number().min(0).optional().nullable(),

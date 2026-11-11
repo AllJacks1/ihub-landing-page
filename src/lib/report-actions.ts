@@ -89,6 +89,12 @@ export type ReceiptReportRow = {
   total: number;
   payment: "cash" | "card" | "gcash" | "maya" | "other";
   date: string;
+  dateRaw: string;
+  customer: string;
+  payments: PaymentBreakdown;
+  discounts: number;
+  vatAmount: number;
+  netSales: number;
 };
 
 export type PerformanceReportRow = {
@@ -720,6 +726,18 @@ export async function getMonitoringReports(input?: {
       dAcc.discounts += discounts;
       for (const p of pays) addPayment(dAcc.payments, p.method, p.amount);
 
+      const orderPayments = emptyPayments();
+      for (const p of pays) addPayment(orderPayments, p.method, p.amount);
+
+      const netSales = Math.max(0, orderTotal - discounts);
+      const vatAmount = Number((netSales - netSales / 1.12).toFixed(2));
+
+      const customerName = String(
+        (order as { customer_name?: string }).customer_name ??
+          (order as { customer?: string }).customer ??
+          "",
+      ).trim();
+
       receipts.push({
         id: oid,
         receiptNo,
@@ -729,6 +747,20 @@ export async function getMonitoringReports(input?: {
         total: orderTotal,
         payment: primaryPaymentMethod(pays),
         date: formatDisplayDateTime(when),
+        dateRaw: localDateKey(when),
+        customer: customerName,
+        payments: {
+          cash: Number(orderPayments.cash.toFixed(2)),
+          card: Number(orderPayments.card.toFixed(2)),
+          gcash: Number(orderPayments.gcash.toFixed(2)),
+          maya: Number(orderPayments.maya.toFixed(2)),
+          bankTransfer: Number(orderPayments.bankTransfer.toFixed(2)),
+          credit: Number(orderPayments.credit.toFixed(2)),
+          other: Number(orderPayments.other.toFixed(2)),
+        },
+        discounts: Number(discounts.toFixed(2)),
+        vatAmount,
+        netSales: Number(netSales.toFixed(2)),
       });
 
       totalSales += orderTotal;

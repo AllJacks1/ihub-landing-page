@@ -1667,6 +1667,7 @@ export type ShiftCashSummary = {
     gcash: number;
     maya: number;
     employee_charge: number;
+    ewb: number;
     other: number;
   };
   order_count: number;
@@ -1762,6 +1763,7 @@ export async function getShiftCashSummary(shiftId: string): Promise<{
       card: 0,
       gcash: 0,
       maya: 0,
+      ewb: 0,
       employee_charge: 0,
       other: 0,
     };
@@ -1792,6 +1794,8 @@ export async function getShiftCashSummary(shiftId: string): Promise<{
           breakdown.gcash += amt;
         } else if (method === "maya") {
           breakdown.maya += amt;
+        } else if (method === "ewb") {
+          breakdown.ewb += amt;
         } else if (method === "employee_charge") {
           breakdown.employee_charge += amt;
         } else {
@@ -1873,6 +1877,7 @@ export async function getShiftCashSummary(shiftId: string): Promise<{
           card: Number(breakdown.card.toFixed(2)),
           gcash: Number(breakdown.gcash.toFixed(2)),
           maya: Number(breakdown.maya.toFixed(2)),
+          ewb: Number(breakdown.maya.toFixed(2)),
           employee_charge: Number(breakdown.employee_charge.toFixed(2)),
           other: Number(breakdown.other.toFixed(2)),
         },

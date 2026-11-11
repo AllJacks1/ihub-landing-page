@@ -136,7 +136,13 @@ export default function PrimaryTerminalPage() {
   const [branchName, setBranchName] = useState("");
   const [terminalName, setTerminalName] = useState("");
 
-  type PaymentMethod = "cash" | "card" | "gcash" | "maya" | "employee_charge";
+  type PaymentMethod =
+    | "cash"
+    | "card"
+    | "gcash"
+    | "maya"
+    | "employee_charge"
+    | "ewb";
 
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   // Preserved for the same unresolved payment attempt across dialog open/close.
@@ -2513,6 +2519,7 @@ export default function PrimaryTerminalPage() {
                     { id: "card" as const, label: "Card", icon: CreditCard },
                     { id: "gcash" as const, label: "GCash", icon: CreditCard },
                     { id: "maya" as const, label: "Maya", icon: CreditCard },
+                    { id: "ewb" as const, label: "EWB", icon: CreditCard },
                     {
                       id: "employee_charge" as const,
                       label: "Employee Charge",
